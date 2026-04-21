@@ -1,0 +1,12 @@
+[
+  {
+    "farm_id": "local-farm-1",
+    "name": "ליפוף ",
+    "category": "cultivation",
+    "price_per_dunam": null,
+    "unit": "per_dunam",
+    "description": "",
+    "id": "4cc48744-56fc-4303-9ba9-7b232190be44",
+    "created_date": "2026-03-17T16:40:58.753Z"
+  }
+]

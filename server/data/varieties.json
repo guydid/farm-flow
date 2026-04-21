@@ -1,0 +1,59 @@
+[
+  {
+    "name": "פלרמו",
+    "crop_type": "פלפל",
+    "marketing_company": "",
+    "manufacturer": "",
+    "recommended_planting_start": "",
+    "recommended_planting_end": "",
+    "notes": "",
+    "farm_id": "local-farm-1",
+    "id": "70bc47da-dc95-4cd5-9b64-ffdbf05c2486",
+    "created_date": "2026-03-17T16:39:48.675Z"
+  },
+  {
+    "name": "סיקסטו",
+    "crop_type": "פלפל",
+    "marketing_company": "",
+    "manufacturer": "",
+    "recommended_planting_start": "",
+    "recommended_planting_end": "",
+    "notes": "",
+    "farm_id": "local-farm-1",
+    "id": "ff377381-3e15-43aa-822e-2294f5c47a33",
+    "created_date": "2026-03-17T16:39:56.291Z"
+  },
+  {
+    "name": "גלובל",
+    "crop_type": "מלפפון",
+    "marketing_company": "",
+    "manufacturer": "",
+    "recommended_planting_start": "",
+    "recommended_planting_end": "",
+    "notes": "",
+    "farm_id": "local-farm-1",
+    "id": "0cffd671-9fdb-43d8-a104-39a9b7cec079",
+    "created_date": "2026-03-17T16:40:21.636Z"
+  },
+  {
+    "name": "מיליון",
+    "crop_type": "מלפפון",
+    "marketing_company": "",
+    "manufacturer": "",
+    "recommended_planting_start": "",
+    "recommended_planting_end": "",
+    "notes": "",
+    "farm_id": "local-farm-1",
+    "id": "b4d0b946-3bee-4f2d-b261-ec60d175c294",
+    "created_date": "2026-03-17T16:40:32.405Z"
+  },
+  {
+    "name": "לובלו",
+    "marketing_company": "",
+    "manufacturer": "",
+    "crop_type": "עגבניה צרי",
+    "farm_id": "local-farm-1",
+    "id": "a7a29272-c782-4ecf-8f5e-f9d3518eadb3",
+    "created_date": "2026-03-17T19:52:50.438Z"
+  }
+]

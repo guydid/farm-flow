@@ -1,0 +1,12 @@
+[
+  {
+    "id": "local-user-1",
+    "full_name": "משתמש מקומי",
+    "email": "admin@farmflow.local",
+    "farm_ids": [
+      "local-farm-1"
+    ],
+    "current_farm_id": "local-farm-1",
+    "role": "admin"
+  }
+]

@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+
+# Database & uploads (sensitive / runtime data)
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
+backend/uploads/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+.jwt_secret
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vite / IDE
+.vite/
+.idea/
+.vscode/
+*.suo
+*.user
+
+# Temp / archive files
+*.zip
+farm-flow-49ecc86e.zip
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local test / diagnostic scripts
+check_groq.py
+search_bundle.py
+explore_db.js
+test_*.js
+test_*.py
+import_workers.py

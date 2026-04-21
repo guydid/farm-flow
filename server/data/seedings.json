@@ -1,0 +1,24 @@
+[
+  {
+    "name": "עגבניה צרי שרביט לובלו",
+    "crop_type": "עגבניה צרי",
+    "start_date": "2025-01-08",
+    "planting_date": "2025-09-01",
+    "status": "ordered",
+    "notes": "",
+    "varieties": [
+      {
+        "variety_id": "a7a29272-c782-4ecf-8f5e-f9d3518eadb3",
+        "seedling_quantity": 25000,
+        "seedling_type": "regular",
+        "name": "לובלו",
+        "marketing_company": ""
+      }
+    ],
+    "days_from_planting_to_harvest": "60",
+    "total_area": 9,
+    "farm_id": "local-farm-1",
+    "id": "328bf196-d206-4666-baa4-f5cca3eafc2d",
+    "created_date": "2026-03-17T19:53:31.815Z"
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "product_id": "791fbff7-0271-4423-8c21-555a09fdbe6c",
+    "product_name": "פלפל שושקה",
+    "quality": "א",
+    "packaging_type": "קרטון שושקה",
+    "package_count": 60,
+    "pallet_type": "זר 15",
+    "gross_weight": 600,
+    "pricing_method": "per_kg",
+    "price_per_unit": 10,
+    "discount_percentage": 0,
+    "tare_weight": 15,
+    "net_weight": 585,
+    "item_total": 5850,
+    "farm_id": "local-farm-1",
+    "certificate_id": "d198e746-036b-4f17-8590-18dbafc55b54",
+    "barcode": "ITEM-1773779372167-84yq1",
+    "id": "967bcf45-e314-47c8-bb66-0c1bc28037a9",
+    "created_date": "2026-03-17T20:29:32.170Z"
+  },
+  {
+    "product_id": "791fbff7-0271-4423-8c21-555a09fdbe6c",
+    "product_name": "פלפל שושקה",
+    "quality": "א",
+    "packaging_type": "קרטון שושקה",
+    "package_count": 66,
+    "pallet_type": "זר 15",
+    "gross_weight": 650,
+    "pricing_method": "per_kg",
+    "price_per_unit": 10,
+    "discount_percentage": 0,
+    "tare_weight": 15,
+    "net_weight": 635,
+    "item_total": 6350,
+    "farm_id": "local-farm-1",
+    "certificate_id": "d198e746-036b-4f17-8590-18dbafc55b54",
+    "barcode": "ITEM-1773779448269-g3t6b",
+    "id": "02291fb3-b191-431b-a3fc-f79a3c4b0695",
+    "created_date": "2026-03-17T20:30:48.277Z"
+  }
+]

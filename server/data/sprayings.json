@@ -1,0 +1,47 @@
+[
+  {
+    "seeding_id": "328bf196-d206-4666-baa4-f5cca3eafc2d",
+    "farm_id": "local-farm-1",
+    "date": "2026-03-17",
+    "notes": "",
+    "treatment_type": "mechanized",
+    "treatment_time": "morning",
+    "area_covered": 9,
+    "performed_by": "",
+    "applied_pesticides": [
+      {
+        "pesticide_id": "50d7cd4b-72d2-46d1-b664-19b0254d67c9",
+        "pesticide_name": "בראבו 720",
+        "quantity": 1800,
+        "unit": "מ\"ל",
+        "cost_per_unit": 0,
+        "active_ingredient": "CHLOROTHALONIL",
+        "concentration": "720 גרם/ליטר",
+        "formulation": "תרכיז רחיף"
+      },
+      {
+        "pesticide_id": "3acefc5e-11a9-48d1-95ad-703edc57a6ac",
+        "pesticide_name": "מרפאן 50",
+        "quantity": 2.25,
+        "unit": "מ\"ל",
+        "cost_per_unit": 0,
+        "active_ingredient": "CAPTAN",
+        "concentration": "50 אחוז",
+        "formulation": "אבקה רטיבה"
+      },
+      {
+        "pesticide_id": "f3100db9-b6da-426b-936a-aecbe543bf19",
+        "pesticide_name": "דפנדר",
+        "quantity": 0.9,
+        "unit": "מ\"ל",
+        "cost_per_unit": 0,
+        "active_ingredient": "CYFLUMETOFEN",
+        "concentration": "215 גרם/ליטר",
+        "formulation": "תרכיז רחיף"
+      }
+    ],
+    "total_cost": 0,
+    "id": "48133f17-106b-4a9c-b72d-8fdb3e95171a",
+    "created_date": "2026-03-17T20:32:15.492Z"
+  }
+]

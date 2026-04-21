@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":5173\")",
+      "Bash(BASE44_LEGACY_SDK_IMPORTS=true npm run dev)",
+      "Bash(sed 's/:import.*//')",
+      "Bash(sed 's/import //g')",
+      "Bash(grep -rh \"from ''''@/entities/all''''\" src/ --include=\"*.jsx\" --include=\"*.js\")",
+      "Bash(tr -d '{}')",
+      "Bash(grep -v '^$')",
+      "Bash(grep -o \"import.*from ''''@/entities/all''''\" src/**/*.jsx)",
+      "Bash(tr '{' ' ')",
+      "Bash(tr '}' ' ')",
+      "Bash(where ssh:*)",
+      "Bash(where scp:*)",
+      "Bash(winget install:*)",
+      "Bash(choco install:*)",
+      "Bash(python deploy.py)"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "farm_id": "local-farm-1",
+    "name": "זר 20 קג",
+    "weight": 20,
+    "id": "fdae00cc-fc12-4f1d-8467-d75f7926ec12",
+    "created_date": "2026-03-17T20:26:28.081Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "זר 15",
+    "weight": 15,
+    "id": "a5905c82-02c5-4b90-8ed2-ed5f26a51f40",
+    "created_date": "2026-03-17T20:26:38.440Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "זר 12",
+    "weight": 12,
+    "id": "389ef943-c80e-4e32-8332-7c9535f56cc5",
+    "created_date": "2026-03-17T20:26:46.965Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "טש",
+    "weight": 15,
+    "id": "11adf6c5-2eb5-4cdd-8f1e-bec9680c950d",
+    "created_date": "2026-03-17T20:26:54.182Z"
+  }
+]

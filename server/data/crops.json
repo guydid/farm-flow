@@ -1,0 +1,26 @@
+[
+  {
+    "farm_id": "local-farm-1",
+    "name": "פלפל",
+    "id": "67971504-895d-41a4-b313-5eab16e9aafb",
+    "created_date": "2026-03-17T16:37:37.134Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "תות שדה",
+    "id": "313580e2-14f2-49f6-a885-f863bc008766",
+    "created_date": "2026-03-17T16:37:42.648Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "עגבניה צרי",
+    "id": "94b6b12b-1aac-4054-a5fc-6388a22c91bb",
+    "created_date": "2026-03-17T16:37:59.683Z"
+  },
+  {
+    "farm_id": "local-farm-1",
+    "name": "מלפפון",
+    "id": "b799a255-51d3-4cc2-96b8-380350555504",
+    "created_date": "2026-03-17T16:40:07.667Z"
+  }
+]

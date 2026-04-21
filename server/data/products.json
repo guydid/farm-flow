@@ -1,0 +1,29 @@
+[
+  {
+    "name": "תות שדה 4קג",
+    "crop_type": "תות שדה",
+    "default_pricing_method": "per_unit",
+    "weighable": true,
+    "farm_id": "local-farm-1",
+    "id": "b82c5390-f51a-4d9d-9252-fb724de60ce8",
+    "created_date": "2026-03-17T16:36:38.618Z"
+  },
+  {
+    "name": "שרי לובולו",
+    "crop_type": "שרי לובלו",
+    "default_pricing_method": "per_kg",
+    "weighable": true,
+    "farm_id": "local-farm-1",
+    "id": "d2b62d11-e399-4d11-8e97-90a685e1fc15",
+    "created_date": "2026-03-17T16:37:01.437Z"
+  },
+  {
+    "name": "פלפל שושקה",
+    "crop_type": "פלפל ",
+    "default_pricing_method": "per_kg",
+    "weighable": true,
+    "farm_id": "local-farm-1",
+    "id": "791fbff7-0271-4423-8c21-555a09fdbe6c",
+    "created_date": "2026-03-17T16:37:26.437Z"
+  }
+]

@@ -1,0 +1,245 @@
+{
+  "fetched_at": "2026-03-17T20:17:49.467Z",
+  "prices": [
+    {
+      "date": "17/03/26",
+      "name": "אבטיח",
+      "grade_a": 7,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "אבטיח אישי",
+      "grade_a": 7,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "בטטות איכות מעולה",
+      "grade_a": 8.5,
+      "premium": 9
+    },
+    {
+      "date": "17/03/26",
+      "name": "בצל ירוק",
+      "grade_a": 12,
+      "premium": 13
+    },
+    {
+      "date": "17/03/26",
+      "name": "ברוקולי באריזה קמעונית",
+      "grade_a": 10,
+      "premium": 11
+    },
+    {
+      "date": "17/03/26",
+      "name": "גזר באריזה קמעונית",
+      "grade_a": 3.8,
+      "premium": 4.2
+    },
+    {
+      "date": "17/03/26",
+      "name": "גזר באריזה קמעונית איכות מעולה",
+      "grade_a": 4.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "גזר בשקים",
+      "grade_a": 3.3,
+      "premium": 3.7
+    },
+    {
+      "date": "17/03/26",
+      "name": "דלורית",
+      "grade_a": 5.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "דלעת",
+      "grade_a": 5.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "זוקיני ירוק",
+      "grade_a": 6,
+      "premium": 6.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "חסה 8 יחידות",
+      "grade_a": 33,
+      "premium": 34
+    },
+    {
+      "date": "17/03/26",
+      "name": "חציל בלאדי",
+      "grade_a": 7,
+      "premium": 7.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "חצילים",
+      "grade_a": 5.2,
+      "premium": 5.7
+    },
+    {
+      "date": "17/03/26",
+      "name": "כרוב אדום",
+      "grade_a": 3.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "כרוב לבן",
+      "grade_a": 4.2,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "כרובית",
+      "grade_a": 8,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "לוף",
+      "grade_a": 9,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "לפת איכות מעולה",
+      "grade_a": 6.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "מלון גליה מעולה",
+      "grade_a": 8.5,
+      "premium": 9
+    },
+    {
+      "date": "17/03/26",
+      "name": "מלון כתום",
+      "grade_a": 8.5,
+      "premium": 9
+    },
+    {
+      "date": "17/03/26",
+      "name": "מלפפון חממה",
+      "grade_a": 6.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "סלק",
+      "grade_a": 4,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "עגבניות באשכולות",
+      "grade_a": 10.5,
+      "premium": 11
+    },
+    {
+      "date": "17/03/26",
+      "name": "עגבניות חממה",
+      "grade_a": 10,
+      "premium": 10.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "עגבניות שרי אשכולות אכות מעולה",
+      "grade_a": 16.5,
+      "premium": 17.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "עגבניות שרי תמר",
+      "grade_a": 16.5,
+      "premium": 17.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל אדום איכות מעולה",
+      "grade_a": 10,
+      "premium": 10.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל בהיר",
+      "grade_a": 8,
+      "premium": 8.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל חריף",
+      "grade_a": 6.5,
+      "premium": 7
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל ירוק מזני בלוקי",
+      "grade_a": 6.5,
+      "premium": 7
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל כתום",
+      "grade_a": 8,
+      "premium": 8.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "פלפל צהוב איכות מעולה",
+      "grade_a": 8,
+      "premium": 8.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "צנון",
+      "grade_a": 6.5,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "קולורבי",
+      "grade_a": 4.5,
+      "premium": 5
+    },
+    {
+      "date": "17/03/26",
+      "name": "קישואים איכות מעולה",
+      "grade_a": 4.5,
+      "premium": 5
+    },
+    {
+      "date": "17/03/26",
+      "name": "שום",
+      "grade_a": 18,
+      "premium": null
+    },
+    {
+      "date": "17/03/26",
+      "name": "שומר",
+      "grade_a": 7,
+      "premium": 7.5
+    },
+    {
+      "date": "17/03/26",
+      "name": "שעועית ירוקה",
+      "grade_a": 14,
+      "premium": 15
+    },
+    {
+      "date": "17/03/26",
+      "name": "תירס באריזה קמעונית",
+      "grade_a": 18,
+      "premium": 19
+    }
+  ]
+}

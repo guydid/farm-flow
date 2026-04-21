@@ -1,0 +1,42 @@
+[
+  {
+    "name": "קרטון שרי",
+    "tare_weight": 0,
+    "expected_weight": 7.5,
+    "farm_id": "local-farm-1",
+    "id": "7cc4a880-4aac-4734-9c3d-0d6f70969190",
+    "created_date": "2026-03-17T20:10:15.453Z"
+  },
+  {
+    "name": "קרטון תות 4 ק\"ג",
+    "tare_weight": 0,
+    "expected_weight": 4,
+    "farm_id": "local-farm-1",
+    "id": "504d18c9-78b9-4f8a-b15c-38585dc19315",
+    "created_date": "2026-03-17T20:27:30.867Z"
+  },
+  {
+    "name": "קרטון תות 3 גק",
+    "tare_weight": 0,
+    "expected_weight": 3,
+    "farm_id": "local-farm-1",
+    "id": "1a239544-64a5-47a1-b06b-021808863ca2",
+    "created_date": "2026-03-17T20:27:42.602Z"
+  },
+  {
+    "name": "קרטון שושקה",
+    "tare_weight": 0,
+    "expected_weight": 8,
+    "farm_id": "local-farm-1",
+    "id": "8247df67-7487-4fdd-897f-f77b3417efef",
+    "created_date": "2026-03-17T20:28:05.992Z"
+  },
+  {
+    "name": "קרטון מלפפון",
+    "tare_weight": 0,
+    "expected_weight": 11,
+    "farm_id": "local-farm-1",
+    "id": "0c7930df-71e8-4b52-b589-c9a252f4b377",
+    "created_date": "2026-03-17T20:28:25.499Z"
+  }
+]
