@@ -18,7 +18,7 @@ const SIDEBAR_W    = 160;  // px left sidebar width
 
 const TYPE_CFG = {
   harvest:  { bg: "bg-green-500",  Icon: Leaf,     label: "קטיף"   },
-  spraying: { bg: "bg-blue-500",   Icon: Droplets, label: "ריסוס"  },
+  spraying: { bg: "bg-blue-500",   Icon: Droplets, label: "הדברה"  },
   activity: { bg: "bg-orange-500", Icon: Tractor,  label: "פעילות" },
 };
 
@@ -62,7 +62,8 @@ export default function SeedingsGanttChart({ activeSeedings, activities, harvest
       try {
         const pd = s.planting_date      ? parseISO(s.planting_date)      : null;
         const sd = s.start_date         ? parseISO(s.start_date)         : null;
-        const ed = s.estimated_end_date ? parseISO(s.estimated_end_date) : null;
+        const edIso = s.end_date || s.estimated_end_date;
+        const ed = edIso ? parseISO(edIso) : null;
         if (pd && pd < minDate) minDate = pd;
         if (sd && sd < minDate) minDate = sd;
         if (ed && ed > maxDate) maxDate = ed;
@@ -90,7 +91,8 @@ export default function SeedingsGanttChart({ activeSeedings, activities, harvest
     /* ── process each seeding ── */
     const rows = seedings.map(s => {
       const plantDate  = s.planting_date      ? parseISO(s.planting_date)      : null;
-      const endDate    = s.estimated_end_date ? parseISO(s.estimated_end_date) : null;
+      const endIso     = s.end_date || s.estimated_end_date;
+      const endDate    = endIso ? parseISO(endIso) : null;
 
       const seedHarvs  = allHarvs .filter(h => h.seeding_id === s.id && h.date);
       const seedSprays = allSprays.filter(p => p.seeding_id === s.id && p.date);
@@ -389,7 +391,7 @@ export default function SeedingsGanttChart({ activeSeedings, activities, harvest
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500" />
-              ריסוס
+              הדברה
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-2.5 h-2.5 rounded-sm bg-orange-500" />

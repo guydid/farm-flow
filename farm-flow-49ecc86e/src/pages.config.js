@@ -1,24 +1,32 @@
-import Dashboard from './pages/Dashboard';
-import Plots from './pages/Plots';
-import Seedings from './pages/Seedings';
-import SeedingDetail from './pages/SeedingDetail';
-import WeighingCertificates from './pages/WeighingCertificates';
-import WeighingDetail from './pages/WeighingDetail';
-import Settings from './pages/Settings';
-import Sheets from './pages/Sheets';
-import Employees from './pages/Employees';
-import EmployeeDetail from './pages/EmployeeDetail';
-import Subscription from './pages/Subscription';
-import AddEmployee from './pages/AddEmployee';
-import EditEmployee from './pages/EditEmployee';
-import Vehicles from './pages/Vehicles';
-import AddVehicle from './pages/AddVehicle';
-import VehicleDetail from './pages/VehicleDetail';
-import EditVehicle from './pages/EditVehicle';
-import FieldWorker from './pages/FieldWorker';
-import AdminPanel from './pages/AdminPanel';
-import FarmMembers from './pages/FarmMembers';
+import { lazy } from 'react';
 import __Layout from './Layout.jsx';
+
+// Route components are lazy-loaded so each page ships as its own chunk —
+// the login screen and first paint no longer drag in every page + its deps.
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Plots = lazy(() => import('./pages/Plots'));
+const Seedings = lazy(() => import('./pages/Seedings'));
+const SeedingDetail = lazy(() => import('./pages/SeedingDetail'));
+const WeighingCertificates = lazy(() => import('./pages/WeighingCertificates'));
+const WeighingDetail = lazy(() => import('./pages/WeighingDetail'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Sheets = lazy(() => import('./pages/Sheets'));
+const Employees = lazy(() => import('./pages/Employees'));
+const EmployeeDetail = lazy(() => import('./pages/EmployeeDetail'));
+const Subscription = lazy(() => import('./pages/Subscription'));
+const AddEmployee = lazy(() => import('./pages/AddEmployee'));
+const EditEmployee = lazy(() => import('./pages/EditEmployee'));
+const Vehicles = lazy(() => import('./pages/Vehicles'));
+const AddVehicle = lazy(() => import('./pages/AddVehicle'));
+const VehicleDetail = lazy(() => import('./pages/VehicleDetail'));
+const EditVehicle = lazy(() => import('./pages/EditVehicle'));
+const FieldWorker = lazy(() => import('./pages/FieldWorker'));
+const AdminPanel = lazy(() => import('./pages/AdminPanel'));
+const FarmMembers = lazy(() => import('./pages/FarmMembers'));
+const Suppliers = lazy(() => import('./pages/Suppliers'));
+const Invoices = lazy(() => import('./pages/Invoices'));
+const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'));
+const Attendance = lazy(() => import('./pages/Attendance'));
 
 
 export const PAGES = {
@@ -42,6 +50,10 @@ export const PAGES = {
     "FieldWorker": FieldWorker,
     "AdminPanel": AdminPanel,
     "FarmMembers": FarmMembers,
+    "Suppliers": Suppliers,
+    "Invoices": Invoices,
+    "InvoiceDetail": InvoiceDetail,
+    "Attendance": Attendance,
 }
 
 export const pagesConfig = {

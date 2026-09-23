@@ -33,6 +33,31 @@ async function uploadFile(file) {
   return res.json();
 }
 
+// מקטין תמונה בדפדפן לפני העלאה — צילום רשיון מהנייד יכול להיות 10MP+,
+// וההעלאה + עיבוד השרת איטיים. 2000px שומר על איכות לקריאת מספר רישוי/תאריכים.
+async function downscaleImage(file, maxSide = 2000) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  if (file.size < 700 * 1024) return file;
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file);
+    });
+    const img = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    if (scale >= 1) return file;
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (!blob) return file;
+    const baseName = (file.name || 'license').replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  } catch { return file; }
+}
+
 const vehicleTypeTranslations = {
     tractor: "טרקטור",
     private_car: "רכב פרטי",
@@ -49,11 +74,13 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
         name: '', type: 'tractor', license_plate: '', purchase_date: '',
         year: '', manufacturer: '', model: '', status: 'active', notes: '', photo_url: '',
         insurance_info: { policy_number: '', provider: '', start_date: '', end_date: '', cost: '', policy_url: '' },
+        insurance_compulsory: { policy_number: '', provider: '', start_date: '', end_date: '', cost: '', policy_url: '' },
         licensing_info: { last_test_date: '', next_test_date: '' }
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isProcessingLicense, setIsProcessingLicense] = useState(false);
     const [licenseImageUrl, setLicenseImageUrl] = useState(null);
+    const [processingPolicy, setProcessingPolicy] = useState(null); // 'insurance_info' | 'insurance_compulsory' | null
 
     useEffect(() => {
         const initialData = {
@@ -74,6 +101,14 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                 end_date: vehicle?.insurance_info?.end_date ? format(new Date(vehicle.insurance_info.end_date), 'yyyy-MM-dd') : '',
                 cost: vehicle?.insurance_info?.cost || '',
                 policy_url: vehicle?.insurance_info?.policy_url || ''
+            },
+            insurance_compulsory: {
+                policy_number: vehicle?.insurance_compulsory?.policy_number || '',
+                provider: vehicle?.insurance_compulsory?.provider || '',
+                start_date: vehicle?.insurance_compulsory?.start_date ? format(new Date(vehicle.insurance_compulsory.start_date), 'yyyy-MM-dd') : '',
+                end_date: vehicle?.insurance_compulsory?.end_date ? format(new Date(vehicle.insurance_compulsory.end_date), 'yyyy-MM-dd') : '',
+                cost: vehicle?.insurance_compulsory?.cost || '',
+                policy_url: vehicle?.insurance_compulsory?.policy_url || ''
             },
             licensing_info: {
                 last_test_date: vehicle?.licensing_info?.last_test_date ? format(new Date(vehicle.licensing_info.last_test_date), 'yyyy-MM-dd') : '',
@@ -119,8 +154,9 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
         toast({ title: "מעלה רשיון רכב...", description: file.name });
 
         try {
-            // Step 1: Upload
-            const { file_url } = await uploadFile(file);
+            // Step 1: הקטנה בדפדפן ואז העלאה (מהיר בנייד)
+            const toUpload = await downscaleImage(file);
+            const { file_url } = await uploadFile(toUpload);
             setLicenseImageUrl(file_url);
             setFormData(prev => ({ ...prev, insurance_info: { ...prev.insurance_info, policy_url: file_url } }));
 
@@ -161,7 +197,59 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
             setIsProcessingLicense(false);
         }
     };
-    
+
+    // העלאת פוליסת ביטוח + חילוץ נתונים אוטומטי (חברה, מס' פוליסה, תאריכים, עלות)
+    // target: 'insurance_info' (מקיף) או 'insurance_compulsory' (חובה)
+    const handlePolicyUpload = (target) => async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        const allowed = /^image\//i.test(file.type) || /\.(jpg|jpeg|png|gif|webp|pdf)$/i.test(file.name);
+        if (!allowed) {
+            toast({ title: "שגיאה", description: "נא להעלות תמונה או PDF", variant: "destructive" });
+            return;
+        }
+        setProcessingPolicy(target);
+        toast({ title: "מעלה פוליסה...", description: file.name });
+        try {
+            const toUpload = await downscaleImage(file);
+            const { file_url } = await uploadFile(toUpload);
+            setFormData(prev => ({ ...prev, [target]: { ...prev[target], policy_url: file_url } }));
+
+            toast({ title: "מחלץ נתוני ביטוח...", description: "סורק את הפוליסה..." });
+            const res = await fetch(`${BASE_URL}/extract-document`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+                body: JSON.stringify({ file_url, document_type: 'insurance_policy' })
+            });
+            const result = await res.json();
+            if (result.success && result.data) {
+                const d = result.data;
+                const cur = formData[target] || {};
+                const ins = {};
+                if (d.provider      && !cur.provider)      ins.provider      = d.provider;
+                if (d.policy_number && !cur.policy_number) ins.policy_number = d.policy_number;
+                if (d.start_date    && !cur.start_date)    ins.start_date    = d.start_date;
+                if (d.end_date      && !cur.end_date)      ins.end_date      = d.end_date;
+                if (d.cost != null  && !cur.cost)          ins.cost          = String(d.cost);
+                const vehUpd = {};
+                if (d.license_plate && !formData.license_plate) vehUpd.license_plate = d.license_plate;
+                setFormData(prev => ({ ...prev, ...vehUpd, [target]: { ...prev[target], ...ins } }));
+                const count = Object.keys(ins).length + Object.keys(vehUpd).length;
+                toast({
+                    title: count > 0 ? `חולצו ${count} שדות מהפוליסה!` : "הפוליסה הועלתה",
+                    description: count > 0 ? "בדוק את הנתונים ותקן במידת הצורך" : "מלא את פרטי הביטוח ידנית"
+                });
+            } else {
+                toast({ title: "הפוליסה הועלתה", description: result.error || "מלא את פרטי הביטוח ידנית" });
+            }
+        } catch (error) {
+            toast({ title: "שגיאה", description: error.message, variant: "destructive" });
+        } finally {
+            setProcessingPolicy(null);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
@@ -173,6 +261,10 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                 insurance_info: {
                     ...formData.insurance_info,
                     cost: formData.insurance_info.cost ? parseFloat(formData.insurance_info.cost) : null,
+                },
+                insurance_compulsory: {
+                    ...formData.insurance_compulsory,
+                    cost: formData.insurance_compulsory?.cost ? parseFloat(formData.insurance_compulsory.cost) : null,
                 }
             };
             if (vehicle?.id) {
@@ -267,9 +359,55 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
             </Card>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* ביטוח חובה */}
                 <Card>
-                    <CardHeader><CardTitle>פרטי ביטוח</CardTitle></CardHeader>
+                    <CardHeader><CardTitle>ביטוח חובה</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
+                        {/* העלאת פוליסה + חילוץ אוטומטי */}
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                            <label
+                                htmlFor="policy-upload-compulsory"
+                                className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-md text-sm font-medium border border-indigo-300 bg-white hover:bg-indigo-100 h-10 px-4 cursor-pointer ${processingPolicy === 'insurance_compulsory' ? 'opacity-60 pointer-events-none' : ''}`}
+                            >
+                                {processingPolicy === 'insurance_compulsory' ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Upload className="w-4 h-4 ml-2" />}
+                                {processingPolicy === 'insurance_compulsory' ? 'מעבד פוליסה...' : 'העלה פוליסה וזהה נתונים'}
+                            </label>
+                            <input id="policy-upload-compulsory" type="file" accept="image/*,application/pdf" className="hidden" onChange={handlePolicyUpload('insurance_compulsory')} disabled={processingPolicy === 'insurance_compulsory'} />
+                            <p className="text-xs text-indigo-700">צלם/העלה את פוליסת החובה — חברת הביטוח, מס' פוליסה, תאריכים ועלות יחולצו אוטומטית.</p>
+                            {formData.insurance_compulsory?.policy_url && (
+                                <a href={withToken(formData.insurance_compulsory.policy_url)} target="_blank" rel="noopener noreferrer" className="text-sm text-indigo-600 hover:underline inline-flex items-center gap-1">
+                                    <FileText className="w-3.5 h-3.5" /> צפה בפוליסה שהועלתה
+                                </a>
+                            )}
+                        </div>
+                        <div><Label>חברת ביטוח</Label><Input name="provider" value={formData.insurance_compulsory?.provider || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>מספר פוליסה</Label><Input name="policy_number" value={formData.insurance_compulsory?.policy_number || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>תאריך תחילת ביטוח</Label><Input type="date" name="start_date" value={formData.insurance_compulsory?.start_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>תאריך סיום ביטוח</Label><Input type="date" name="end_date" value={formData.insurance_compulsory?.end_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>עלות</Label><Input type="number" name="cost" value={formData.insurance_compulsory?.cost || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                    </CardContent>
+                </Card>
+                {/* ביטוח מקיף */}
+                <Card>
+                    <CardHeader><CardTitle>ביטוח מקיף</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                        {/* העלאת פוליסה + חילוץ אוטומטי */}
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                            <label
+                                htmlFor="policy-upload"
+                                className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-md text-sm font-medium border border-indigo-300 bg-white hover:bg-indigo-100 h-10 px-4 cursor-pointer ${processingPolicy === 'insurance_info' ? 'opacity-60 pointer-events-none' : ''}`}
+                            >
+                                {processingPolicy === 'insurance_info' ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Upload className="w-4 h-4 ml-2" />}
+                                {processingPolicy === 'insurance_info' ? 'מעבד פוליסה...' : 'העלה פוליסה וזהה נתונים'}
+                            </label>
+                            <input id="policy-upload" type="file" accept="image/*,application/pdf" className="hidden" onChange={handlePolicyUpload('insurance_info')} disabled={processingPolicy === 'insurance_info'} />
+                            <p className="text-xs text-indigo-700">צלם/העלה את הפוליסה — חברת הביטוח, מס' פוליסה, תאריכים ועלות יחולצו אוטומטית.</p>
+                            {formData.insurance_info?.policy_url && (
+                                <a href={withToken(formData.insurance_info.policy_url)} target="_blank" rel="noopener noreferrer" className="text-sm text-indigo-600 hover:underline inline-flex items-center gap-1">
+                                    <FileText className="w-3.5 h-3.5" /> צפה בפוליסה שהועלתה
+                                </a>
+                            )}
+                        </div>
                         <div><Label>חברת ביטוח</Label><Input name="provider" value={formData.insurance_info?.provider || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                         <div><Label>מספר פוליסה</Label><Input name="policy_number" value={formData.insurance_info?.policy_number || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                         <div><Label>תאריך תחילת ביטוח</Label><Input type="date" name="start_date" value={formData.insurance_info?.start_date || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
@@ -277,9 +415,9 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                         <div><Label>עלות</Label><Input type="number" name="cost" value={formData.insurance_info?.cost || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                     </CardContent>
                 </Card>
-                <Card>
+                <Card className="lg:col-span-2">
                     <CardHeader><CardTitle>פרטי רישוי (טסט)</CardTitle></CardHeader>
-                    <CardContent className="space-y-4">
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div><Label>תאריך טסט אחרון</Label><Input type="date" name="last_test_date" value={formData.licensing_info?.last_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
                         <div><Label>תאריך טסט הבא</Label><Input type="date" name="next_test_date" value={formData.licensing_info?.next_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
                     </CardContent>

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Employee, ManpowerCompany, User, Farm } from '@/entities/all';
+import { getMeCached, getFarmCached } from '@/api/cachedReads';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Button } from '@/components/ui/button';
@@ -29,7 +30,7 @@ export default function Employees() {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const user = await User.me();
+            const user = await getMeCached();
             if (!user.current_farm_id) {
                 console.warn("No current farm ID found for the user.");
                 setIsLoading(false);
@@ -40,7 +41,7 @@ export default function Employees() {
                 return;
             }
 
-            const farm = await Farm.get(user.current_farm_id);
+            const farm = await getFarmCached(user.current_farm_id);
             setCurrentFarm(farm);
 
             const farmFilter = { farm_id: user.current_farm_id };

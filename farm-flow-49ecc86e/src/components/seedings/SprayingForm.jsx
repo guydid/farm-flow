@@ -18,6 +18,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
   const [formData, setFormData] = useState({
     id: initialData?.id || null, // Added id for update operations
     date: initialData?.date || format(new Date(), 'yyyy-MM-dd'),
+    control_method: initialData?.control_method || 'chemical', // כימית / ביולוגית
     plot_id: initialData?.plot_id || '', // Added plot_id for associating with a specific plot
     treatment_type: initialData?.treatment_type || 'mechanized',
     treatment_time: initialData?.treatment_time || 'morning',
@@ -194,6 +195,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
     const sprayingData = {
       id: formData.id, // Include id for update operations
       date: formData.date,
+      control_method: formData.control_method,
       plot_id: formData.plot_id === '' ? null : formData.plot_id, // Convert empty string to null for optional plot_id
       treatment_type: formData.treatment_type,
       treatment_time: formData.treatment_time,
@@ -218,8 +220,14 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
   };
 
   const safePesticides = Array.isArray(pesticides) ? pesticides : [];
+  const isBiological = formData.control_method === 'biological';
 
-  const filteredPesticides = safePesticides.filter(p =>
+  // סינון לפי סוג ההדברה: ביולוגית מציגה רק תכשירים ביולוגיים, כימית — את השאר
+  const methodPesticides = safePesticides.filter(p =>
+    p && (isBiological ? p.control_type === 'biological' : p.control_type !== 'biological')
+  );
+
+  const filteredPesticides = methodPesticides.filter(p =>
     p && (
       (p.product_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (p.active_ingredients?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
@@ -259,12 +267,31 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* חלק עליון - פרטי הריסוס */}
+      {/* חלק עליון - פרטי ההדברה */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">פרטי הריסוס</CardTitle>
+          <CardTitle className="text-lg">פרטי ההדברה</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* בחירת סוג הדברה: כימית / ביולוגית — קובעת אילו תכשירים יוצגו */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setFormData(prev => prev.control_method === 'chemical' ? prev : ({ ...prev, control_method: 'chemical', applied_pesticides: [] }))}
+              className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${formData.control_method === 'chemical' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200'}`}
+            >
+              הדברה כימית
+              <div className={`text-[10px] mt-0.5 ${formData.control_method === 'chemical' ? 'text-blue-200' : 'text-gray-400'}`}>תכשירים כימיים</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormData(prev => prev.control_method === 'biological' ? prev : ({ ...prev, control_method: 'biological', applied_pesticides: [] }))}
+              className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${formData.control_method === 'biological' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-200'}`}
+            >
+              הדברה ביולוגית
+              <div className={`text-[10px] mt-0.5 ${formData.control_method === 'biological' ? 'text-green-200' : 'text-gray-400'}`}>אויבים טבעיים ותכשירים ביולוגיים</div>
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <Label htmlFor="date">תאריך *</Label>
@@ -367,8 +394,13 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
         <CardHeader>
           <CardTitle className="text-lg flex items-center justify-between">
             <span className="flex items-center gap-2">
-              <Droplets className="w-5 h-5 text-blue-500" />
-              חומרי הדברה ({formData.applied_pesticides.length})
+              <Droplets className={`w-5 h-5 ${isBiological ? 'text-green-500' : 'text-blue-500'}`} />
+              {isBiological ? 'תכשירים ביולוגיים' : 'חומרי הדברה כימיים'}
+              {formData.applied_pesticides.length > 0 && (
+                <Badge className={isBiological ? 'bg-green-600' : 'bg-blue-600'}>
+                  {formData.applied_pesticides.length === 1 ? 'חומר אחד' : `${formData.applied_pesticides.length} חומרים`}
+                </Badge>
+              )}
             </span>
             <span className="text-sm font-normal text-gray-500">
               סה"כ עלות: <span className="font-bold text-blue-600">₪{getSprayingGrandTotal()}</span>
@@ -488,6 +520,33 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
             )}
           </div>
 
+          {/* פס החומרים שנבחרו — תמיד גלוי מתחת לחיפוש, כדי שיהיה ברור כמה חומרים בהדברה */}
+          {formData.applied_pesticides.length > 0 && (
+            <div className={`flex flex-wrap items-center gap-2 p-3 rounded-xl border ${isBiological ? 'bg-green-50/60 border-green-200' : 'bg-blue-50/60 border-blue-200'}`}>
+              <span className="text-xs font-bold text-gray-700">
+                בהדברה זו {formData.applied_pesticides.length === 1 ? 'חומר אחד' : `${formData.applied_pesticides.length} חומרים`}:
+              </span>
+              {formData.applied_pesticides.map((item, index) => (
+                <span
+                  key={index}
+                  className={`inline-flex items-center gap-1.5 pr-2.5 pl-1.5 py-1 rounded-full text-xs font-medium text-white ${isBiological ? 'bg-green-600' : 'bg-blue-600'}`}
+                >
+                  <span className="opacity-75">{index + 1}.</span>
+                  {item.pesticide_name}
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePesticide(index)}
+                    className="rounded-full hover:bg-white/20 p-0.5"
+                    title="הסר חומר"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              <span className="text-[11px] text-gray-500">+ אפשר להוסיף עוד בחיפוש למעלה</span>
+            </div>
+          )}
+
           {/* טבלת חומרים שנוספו */}
           {formData.applied_pesticides.length > 0 ? (
             <>
@@ -496,6 +555,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-8 text-center">#</TableHead>
                       <TableHead className="w-[25%]">חומר</TableHead>
                       <TableHead className="w-[15%]">מינון/דונם</TableHead>
                       <TableHead className="w-[15%]">כמות כוללת</TableHead>
@@ -507,6 +567,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                   <TableBody>
                     {formData.applied_pesticides.map((item, index) => (
                       <TableRow key={index}>
+                        <TableCell className="text-center text-sm font-bold text-gray-400">{index + 1}</TableCell>
                         <TableCell>
                           <div className="font-medium">{item.pesticide_name}</div>
                           {item.active_ingredient && (
@@ -586,7 +647,10 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                     <CardContent className="p-4 space-y-2">
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
-                          <h4 className="font-semibold text-base">{item.pesticide_name}</h4>
+                          <h4 className="font-semibold text-base">
+                            <span className="text-gray-400 font-bold ml-1">{index + 1}.</span>
+                            {item.pesticide_name}
+                          </h4>
                           {item.active_ingredient && (
                             <p className="text-sm text-gray-600">{item.active_ingredient}</p>
                           )}
@@ -658,10 +722,16 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
           ) : (
             <div className="text-center py-12 text-gray-500 bg-gradient-to-br from-gray-50 to-blue-50 rounded-lg border-2 border-dashed border-blue-200">
               <Droplets className="w-16 h-16 mx-auto mb-3 text-blue-300" />
-              <p className="text-lg font-medium text-gray-700">טרם נוספו חומרי הדברה</p>
-              <p className="text-sm mt-1">השתמש בשורת החיפוש למעלה כדי להוסיף חומרים</p>
+              <p className="text-lg font-medium text-gray-700">
+                {isBiological ? 'טרם נוספו תכשירים ביולוגיים' : 'טרם נוספו חומרי הדברה'}
+              </p>
+              <p className="text-sm mt-1">
+                {isBiological && methodPesticides.length === 0
+                  ? 'אין תכשירים ביולוגיים מוגדרים — הוסף אותם בהגדרות ← חומרי הדברה ← ביולוגי'
+                  : 'השתמש בשורת החיפוש למעלה כדי להוסיף חומרים'}
+              </p>
               <div className="mt-4 space-y-1">
-                <p className="text-xs text-blue-600">💡 ניתן להוסיף מספר חומרים לריסוס אחד</p>
+                <p className="text-xs text-blue-600">💡 ניתן להוסיף מספר חומרים להדברה אחת</p>
                 <p className="text-xs text-green-600">✨ המינון יחושב אוטומטית לפי השטח המטופל</p>
               </div>
             </div>
@@ -678,7 +748,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
               id="notes"
               value={formData.notes}
               onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-              placeholder="הערות נוספות על הריסוס..."
+              placeholder="הערות נוספות על ההדברה..."
               className="h-24"
             />
           </div>
@@ -701,7 +771,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
             parseFloat(formData.area_covered) <= 0
           }
         >
-          {initialData ? 'עדכן ריסוס' : 'שמור ריסוס'}
+          {initialData ? 'עדכן הדברה' : 'שמור הדברה'}
         </Button>
       </div>
     </form>

@@ -11,7 +11,7 @@ const BANNER_H     = 20;             // approximate px height of flag banner
 
 const TYPE_CFG = {
   harvest:  { bg: "bg-green-500",  Icon: Leaf,     label: "קטיף"   },
-  spraying: { bg: "bg-blue-500",   Icon: Droplets, label: "ריסוס"  },
+  spraying: { bg: "bg-blue-500",   Icon: Droplets, label: "הדברה"  },
   activity: { bg: "bg-orange-500", Icon: Tractor,  label: "פעילות" },
 };
 
@@ -33,7 +33,9 @@ export default function SeedingTimeline({ activities, harvests, sprayings, seedi
 
     const today     = new Date();
     const plantDate = parseISO(seeding.planting_date);
-    const endDate   = seeding.estimated_end_date ? parseISO(seeding.estimated_end_date) : null;
+    const endIso    = seeding.end_date || seeding.estimated_end_date;
+    const endDate   = endIso ? parseISO(endIso) : null;
+    const endIsActual = !!seeding.end_date;
 
     /* ── build raw events ── */
     const raw = [];
@@ -80,7 +82,7 @@ export default function SeedingTimeline({ activities, harvests, sprayings, seedi
 
     return {
       events, rangeStart, rangeEnd, totalDays,
-      plantDate, endDate, today, firstHarvestDate, maxLevel,
+      plantDate, endDate, endIsActual, today, firstHarvestDate, maxLevel,
       plantPct:        clamp(pctOf(plantDate,        rangeStart, totalDays)),
       endPct:          endDate        ? clamp(pctOf(endDate,           rangeStart, totalDays)) : null,
       todayPct:        clamp(pctOf(today,            rangeStart, totalDays)),
@@ -100,7 +102,7 @@ export default function SeedingTimeline({ activities, harvests, sprayings, seedi
   }
 
   const {
-    events, plantDate, endDate, today, firstHarvestDate,
+    events, plantDate, endDate, endIsActual, today, firstHarvestDate,
     plantPct, endPct, todayPct, firstHarvestPct, maxLevel,
   } = data;
 
@@ -267,7 +269,7 @@ export default function SeedingTimeline({ activities, harvests, sprayings, seedi
                 >
                   <Flag className="w-3 h-3 mb-0.5" />
                   <span className="font-medium">{format(endDate, "dd/MM", { locale: he })}</span>
-                  <span className="text-gray-400">עקירה</span>
+                  <span className="text-gray-400">{endIsActual ? "עקירה" : "סיום משוער"}</span>
                 </div>
               )}
             </div>
@@ -290,7 +292,7 @@ export default function SeedingTimeline({ activities, harvests, sprayings, seedi
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-3 h-3 rounded-sm bg-blue-500" />
-              ריסוס
+              הדברה
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-3 h-3 rounded-sm bg-orange-500" />

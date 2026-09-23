@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from "react";
-import { Packaging } from "@/entities/all";
+import { Packaging, Product } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { invalidateList } from "@/api/cachedReads";
 
 export default function PackagingManager({ currentFarm }) {
   const [packaging, setPackaging] = useState([]); // Renamed from packagings
@@ -20,9 +21,19 @@ export default function PackagingManager({ currentFarm }) {
   const initialFormData = {
     name: "",
     tare_weight: "",
-    expected_weight: ""
+    expected_weight: "",
+    weighable: true,      // אריזה שקילה: נשקלת (ברוטו/טרה/נטו). לא שקילה: נספרת ביחידות בלבד
+    product_ids: []       // שיוך למוצרים; ריק = מתאימה לכל המוצרים
   };
   const [formData, setFormData] = useState(initialFormData);
+  const [products, setProducts] = useState([]);
+
+  useEffect(() => {
+    if (!currentFarm?.id) { setProducts([]); return; }
+    Product.filter({ farm_id: currentFarm.id })
+      .then(data => setProducts(Array.isArray(data) ? data : []))
+      .catch(() => setProducts([]));
+  }, [currentFarm?.id]);
 
   useEffect(() => {
     loadPackaging(); // Renamed function call
@@ -63,7 +74,9 @@ export default function PackagingManager({ currentFarm }) {
     setFormData({
       name: item.name || "",
       tare_weight: item.tare_weight?.toString() || "",
-      expected_weight: item.expected_weight?.toString() || ""
+      expected_weight: item.expected_weight?.toString() || "",
+      weighable: item.weighable !== false,
+      product_ids: Array.isArray(item.product_ids) ? item.product_ids : []
     });
     setIsDialogOpen(true);
   };
@@ -72,6 +85,7 @@ export default function PackagingManager({ currentFarm }) {
     if (window.confirm("האם אתה בטוח שברצונך למחוק אריזה זו?")) {
       try {
         await Packaging.delete(id);
+        invalidateList(`packaging_${currentFarm?.id}`);
         toast({ title: "הצלחה", description: "האריזה נמחקה בהצלחה" });
         loadPackaging(); // Renamed function call
       } catch (error) {
@@ -100,6 +114,8 @@ export default function PackagingManager({ currentFarm }) {
         name: formData.name,
         tare_weight: parseFloat(formData.tare_weight) || 0,
         expected_weight: formData.expected_weight ? parseFloat(formData.expected_weight) : null,
+        weighable: formData.weighable !== false,
+        product_ids: Array.isArray(formData.product_ids) ? formData.product_ids : [],
         farm_id: currentFarm.id
       };
 
@@ -113,6 +129,7 @@ export default function PackagingManager({ currentFarm }) {
         toast({ title: "הצלחה", description: "האריזה נוספה בהצלחה" });
       }
 
+      invalidateList(`packaging_${currentFarm?.id}`);
       setIsDialogOpen(false);
       resetForm();
       await loadPackaging(); // Ensure reload after async operation
@@ -154,6 +171,8 @@ export default function PackagingManager({ currentFarm }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>פעולות</TableHead>
+                  <TableHead>מוצרים</TableHead>
+                  <TableHead>שקילה</TableHead>
                   <TableHead>משקל צפוי</TableHead>
                   <TableHead>משקל טרה (ק"ג)</TableHead>
                   <TableHead>שם האריזה</TableHead>
@@ -162,7 +181,7 @@ export default function PackagingManager({ currentFarm }) {
               <TableBody>
                 {packaging.length === 0 ? ( // Renamed state
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-4">
+                    <TableCell colSpan={6} className="text-center py-4">
                       אין אריזות זמינות עבור משק זה.
                     </TableCell>
                   </TableRow>
@@ -179,8 +198,18 @@ export default function PackagingManager({ currentFarm }) {
                           </Button>
                         </div>
                       </TableCell>
+                      <TableCell className="text-xs text-gray-600 max-w-[200px]">
+                        {Array.isArray(pack.product_ids) && pack.product_ids.length > 0
+                          ? pack.product_ids.map(id => products.find(p => p.id === id)?.name).filter(Boolean).join(', ')
+                          : 'כל המוצרים'}
+                      </TableCell>
+                      <TableCell>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${pack.weighable !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {pack.weighable !== false ? 'שקילה' : 'יחידות'}
+                        </span>
+                      </TableCell>
                       <TableCell>{pack.expected_weight ? `${pack.expected_weight} ק"ג` : '-'}</TableCell>
-                      <TableCell>{pack.tare_weight} ק"ג</TableCell>
+                      <TableCell>{pack.weighable !== false ? `${pack.tare_weight} ק"ג` : '-'}</TableCell>
                       <TableCell className="font-medium">{pack.name}</TableCell>
                     </TableRow>
                   ))
@@ -209,15 +238,65 @@ export default function PackagingManager({ currentFarm }) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="tare_weight">משקל טרה (ק"ג) *</Label>
-                <Input
-                  id="tare_weight"
-                  type="number"
-                  step="0.01"
-                  value={formData.tare_weight}
-                  onChange={(e) => setFormData({ ...formData, tare_weight: e.target.value })}
-                  required
-                />
+                <Label>סוג האריזה</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, weighable: true })}
+                    className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${formData.weighable ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                  >
+                    שקילה
+                    <div className={`text-[10px] mt-0.5 ${formData.weighable ? 'text-indigo-200' : 'text-gray-400'}`}>נשקלת — ברוטו/טרה/נטו</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, weighable: false })}
+                    className={`px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${!formData.weighable ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                  >
+                    לא שקילה
+                    <div className={`text-[10px] mt-0.5 ${!formData.weighable ? 'text-indigo-200' : 'text-gray-400'}`}>נספרת ביחידות בלבד</div>
+                  </button>
+                </div>
+              </div>
+
+              {formData.weighable && (
+                <div className="space-y-2">
+                  <Label htmlFor="tare_weight">משקל טרה (ק"ג) *</Label>
+                  <Input
+                    id="tare_weight"
+                    type="number"
+                    step="0.01"
+                    value={formData.tare_weight}
+                    onChange={(e) => setFormData({ ...formData, tare_weight: e.target.value })}
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>מוצרים מתאימים</Label>
+                <p className="text-xs text-gray-500 -mt-1">ללא בחירה — האריזה תוצג לכל המוצרים</p>
+                <div className="flex flex-wrap gap-2">
+                  {products.map(p => {
+                    const selected = formData.product_ids.includes(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setFormData({
+                          ...formData,
+                          product_ids: selected
+                            ? formData.product_ids.filter(id => id !== p.id)
+                            : [...formData.product_ids, p.id]
+                        })}
+                        className={`px-3 py-1.5 rounded-full border text-sm transition-colors ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  {products.length === 0 && <span className="text-xs text-gray-400">אין מוצרים מוגדרים</span>}
+                </div>
               </div>
 
               <div className="space-y-2">

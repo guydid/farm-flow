@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from "react";
+import { varietiesForSeeding, packagingsForSeeding } from "@/lib/seedingFilters";
 import { Activity, Harvest, Spraying, ActivityType } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -14,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 
-export default function QuickActions({ seeding, varieties, onRefresh, pesticides, packagings }) {
+export default function QuickActions({ seeding, varieties, onRefresh, pesticides, packagings, products }) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [actionType, setActionType] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -322,13 +323,10 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
     other: "bg-gray-100 text-gray-800"
   }[product_type] || "bg-gray-100 text-gray-800");
 
-  // Safe varieties and packagings
+  // זנים ואריזות לפי המזרע (זנים משויכים; אריזות לפי מוצרי סוג הגידול)
   const safeVarieties = Array.isArray(varieties) ? varieties : [];
-  const relevantVarieties = safeVarieties.filter(v => 
-    v && v.crop_type === seeding.crop_type
-  );
-  
-  const safePackagings = Array.isArray(packagings) ? packagings : [];
+  const relevantVarieties = varietiesForSeeding(seeding, safeVarieties);
+  const safePackagings = packagingsForSeeding(seeding, packagings, products);
 
   return (
     <div>
@@ -362,7 +360,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
           <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center">
             <Droplets className="w-4 h-4 text-white" />
           </div>
-          <span className="text-xs font-medium text-orange-700">ריסוס</span>
+          <span className="text-xs font-medium text-orange-700">הדברה</span>
         </button>
       </div>
 
@@ -396,7 +394,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
           <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center">
             <Droplets className="w-4 h-4 text-white" />
           </div>
-          <span className="text-xs font-medium text-orange-700">ריסוס</span>
+          <span className="text-xs font-medium text-orange-700">הדברה</span>
         </button>
       </div>
 
@@ -407,7 +405,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
         >
           <DialogHeader>
             <DialogTitle>
-              הוספת {actionType === 'activity' ? 'פעילות' : actionType === 'harvest' ? 'קטיף' : 'ריסוס'}
+              הוספת {actionType === 'activity' ? 'פעילות' : actionType === 'harvest' ? 'קטיף' : 'הדברה'}
             </DialogTitle>
           </DialogHeader>
           
@@ -610,14 +608,14 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
                   <div className={`flex-1 h-1.5 rounded-full ${sprayingStep >= 2 ? 'bg-blue-500' : 'bg-gray-200'}`} />
                 </div>
                 <div className="flex sm:hidden justify-between text-xs text-gray-500 -mt-3 mb-1">
-                  <span className={sprayingStep === 1 ? 'text-blue-600 font-semibold' : ''}>שלב 1: פרטי ריסוס</span>
+                  <span className={sprayingStep === 1 ? 'text-blue-600 font-semibold' : ''}>שלב 1: פרטי הדברה</span>
                   <span className={sprayingStep === 2 ? 'text-blue-600 font-semibold' : ''}>שלב 2: חומרי הדברה</span>
                 </div>
 
-                {/* פרטי הריסוס — always visible on desktop, step 1 on mobile */}
+                {/* פרטי ההדברה — always visible on desktop, step 1 on mobile */}
                 <Card className={sprayingStep === 2 ? 'hidden sm:block' : ''}>
                   <CardHeader>
-                    <CardTitle className="text-lg">פרטי הריסוס</CardTitle>
+                    <CardTitle className="text-lg">פרטי ההדברה</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

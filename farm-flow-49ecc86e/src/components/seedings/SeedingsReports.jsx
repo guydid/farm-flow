@@ -213,7 +213,7 @@ export default function SeedingsReports() {
     const printContent = `
       <html dir="rtl">
         <head>
-          <title>דוח ${reportType === "activities" ? "פעילויות" : reportType === "harvests" ? "קטיפים" : "ריסוסים"}</title>
+          <title>דוח ${reportType === "activities" ? "פעילויות" : reportType === "harvests" ? "קטיפים" : "הדברות"}</title>
           <style>
             body { font-family: Arial; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
@@ -222,7 +222,7 @@ export default function SeedingsReports() {
           </style>
         </head>
         <body>
-          <h1>דוח ${reportType === "activities" ? "פעילויות" : reportType === "harvests" ? "קטיפים" : "ריסוסים"}</h1>
+          <h1>דוח ${reportType === "activities" ? "פעילויות" : reportType === "harvests" ? "קטיפים" : "הדברות"}</h1>
           <table>
             ${reportType === "activities" ? `
               <tr><th>תאריך</th><th>מזרע</th><th>חלקה</th><th>פעילות</th><th>שטח</th><th>עלות</th><th>מבצע</th></tr>
@@ -313,7 +313,7 @@ export default function SeedingsReports() {
         <TabsList>
           <TabsTrigger value="activities">פעילויות ({filteredActivities.length})</TabsTrigger>
           <TabsTrigger value="harvests">קטיפים ({filteredHarvests.length})</TabsTrigger>
-          <TabsTrigger value="sprayings">ריסוסים ({filteredSprayings.length})</TabsTrigger>
+          <TabsTrigger value="sprayings">הדברות ({filteredSprayings.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="activities">
@@ -434,7 +434,7 @@ export default function SeedingsReports() {
         <TabsContent value="sprayings">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>דוח ריסוסים</CardTitle>
+              <CardTitle>דוח הדברות</CardTitle>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportToExcel(filteredSprayings, "sprayings_report")}>
                   <Download className="w-4 h-4 ml-2" />יצוא

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { invalidateList } from "@/api/cachedReads";
 
 export default function ProductsManager({ currentFarm }) {
   const [products, setProducts] = useState([]);
@@ -77,6 +78,7 @@ export default function ProductsManager({ currentFarm }) {
 
     try {
       await Product.delete(productId);
+      invalidateList(`products_${currentFarm?.id}`);
       toast({ title: "הצלחה", description: "המוצר נמחק בהצלחה" });
       loadProducts();
     } catch (error) {
@@ -107,6 +109,7 @@ export default function ProductsManager({ currentFarm }) {
         await Product.create(dataToSave);
         toast({ title: "הצלחה", description: "המוצר נוסף בהצלחה" });
       }
+      invalidateList(`products_${currentFarm?.id}`);
 
       setIsDialogOpen(false);
       resetForm();

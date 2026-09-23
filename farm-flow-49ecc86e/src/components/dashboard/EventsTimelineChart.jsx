@@ -21,7 +21,7 @@ const RANGE_OPTIONS = [
 ];
 
 const EVENT_COLORS = {
-  sprayings:  { color: "#f97316", label: "ריסוסים",  icon: Droplets },
+  sprayings:  { color: "#f97316", label: "הדברות",  icon: Droplets },
   harvests:   { color: "#10b981", label: "קטיפים",   icon: Leaf     },
   activities: { color: "#6366f1", label: "פעילויות", icon: Activity },
 };

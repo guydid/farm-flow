@@ -29,9 +29,22 @@ function adminFetch(path, opts = {}) {
 }
 
 function formatBytes(bytes) {
+  if (bytes == null) return '—';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+// פס שימוש צבעוני: ירוק עד 80%, כתום 80-90%, אדום מעל 90%
+function UsageBar({ percent }) {
+  const p = Math.max(0, Math.min(100, percent || 0));
+  const color = p >= 90 ? 'bg-red-500' : p >= 80 ? 'bg-amber-500' : 'bg-green-500';
+  return (
+    <div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+      <div className={`h-full ${color} transition-all`} style={{ width: `${p}%` }} />
+    </div>
+  );
 }
 
 function formatUptime(seconds) {
@@ -71,6 +84,7 @@ export default function AdminPanel() {
   const { toast } = useToast();
 
   const [stats, setStats] = useState(null);
+  const [serverStatus, setServerStatus] = useState(null);
   const [users, setUsers] = useState([]);
   const [farms, setFarms] = useState([]);
   const [sentNotifs, setSentNotifs] = useState([]);
@@ -92,13 +106,15 @@ export default function AdminPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [s, u, f, n] = await Promise.all([
+      const [s, u, f, n, ss] = await Promise.all([
         adminFetch('/admin/stats'),
         adminFetch('/admin/users'),
         adminFetch('/admin/farms'),
         adminFetch('/admin/notifications'),
+        adminFetch('/admin/server-status').catch(() => null),
       ]);
       setStats(s);
+      setServerStatus(ss);
       setUsers(Array.isArray(u) ? u : []);
       setFarms(Array.isArray(f) ? f : []);
       setSentNotifs(Array.isArray(n) ? n : []);
@@ -109,10 +125,37 @@ export default function AdminPanel() {
     }
   }, [toast]);
 
+  const loadServerStatus = useCallback(async () => {
+    try { const ss = await adminFetch('/admin/server-status'); if (ss && !ss.error) setServerStatus(ss); } catch { /* ignore */ }
+  }, []);
+
+  const [cleaningUploads, setCleaningUploads] = useState(false);
+  const cleanupUploads = async () => {
+    if (!window.confirm('למחוק קבצים ישנים שאינם מקושרים לאף רשומה (מעל 14 יום)? קבצים של חשבוניות/עובדים נשמרים תמיד.')) return;
+    setCleaningUploads(true);
+    try {
+      const r = await adminFetch('/admin/cleanup-uploads', { method: 'POST', body: JSON.stringify({}) });
+      if (r.success) {
+        toast({ title: `נמחקו ${r.deleted} קבצים`, description: `שוחררו ${formatBytes(r.freed_bytes)} · נשמרו ${r.kept_referenced} מקושרים` });
+        loadServerStatus();
+      } else {
+        toast({ title: 'שגיאה בניקוי', description: r.error || '', variant: 'destructive' });
+      }
+    } catch { toast({ title: 'שגיאת רשת', variant: 'destructive' }); }
+    finally { setCleaningUploads(false); }
+  };
+
   useEffect(() => {
     if (!user?.is_admin) { navigate('/'); return; }
     load();
   }, [user, navigate, load]);
+
+  // רענון אוטומטי של מצב השרת כל 30 שניות בטאב הסטטיסטיקות (בקרה חיה)
+  useEffect(() => {
+    if (activeTab !== 'stats' || !user?.is_admin) return;
+    const id = setInterval(loadServerStatus, 30000);
+    return () => clearInterval(id);
+  }, [activeTab, user, loadServerStatus]);
 
   const updateUser = async (id, changes) => {
     setSaving(true);
@@ -230,6 +273,60 @@ export default function AdminPanel() {
       {/* ── STATS TAB ── */}
       {activeTab === 'stats' && stats && (
         <div className="space-y-6">
+          {/* ── מצב שרת (בקרה) ── */}
+          {serverStatus && (
+            <Card className={serverStatus.disk?.use_percent >= 90 ? 'border-red-300 bg-red-50/30' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2"><Server className="w-4 h-4" /> מצב שרת</span>
+                  <Button variant="ghost" size="sm" onClick={loadServerStatus} className="h-7 text-xs text-gray-500">
+                    <RefreshCw className="w-3.5 h-3.5 ml-1" /> רענן
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {serverStatus.disk && (
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-gray-600 flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> דיסק</span>
+                      <span className={`font-medium ${serverStatus.disk.use_percent >= 90 ? 'text-red-600' : serverStatus.disk.use_percent >= 80 ? 'text-amber-600' : 'text-gray-700'}`}>
+                        {formatBytes(serverStatus.disk.used)} / {formatBytes(serverStatus.disk.total)} · {serverStatus.disk.use_percent}%
+                      </span>
+                    </div>
+                    <UsageBar percent={serverStatus.disk.use_percent} />
+                    <p className="text-xs text-gray-400 mt-1">פנוי: {formatBytes(serverStatus.disk.free)}</p>
+                    {serverStatus.disk.use_percent >= 90 && (
+                      <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> הדיסק כמעט מלא — פנה מקום בהקדם</p>
+                    )}
+                  </div>
+                )}
+                {serverStatus.memory && (
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-gray-600">זיכרון (RAM)</span>
+                      <span className="font-medium text-gray-700">{formatBytes(serverStatus.memory.used)} / {formatBytes(serverStatus.memory.total)} · {serverStatus.memory.use_percent}%</span>
+                    </div>
+                    <UsageBar percent={serverStatus.memory.use_percent} />
+                    <p className="text-xs text-gray-400 mt-1">תהליך farm-flow: {formatBytes(serverStatus.memory.process_rss)}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm pt-1 border-t">
+                  <div className="flex justify-between pt-2"><span className="text-gray-500">קבצים מצורפים</span><span className="font-medium">{serverStatus.uploads?.count ?? 0} · {formatBytes(serverStatus.uploads?.size_bytes ?? 0)}</span></div>
+                  <div className="flex justify-between pt-2"><span className="text-gray-500">גודל DB</span><span className="font-medium">{formatBytes(serverStatus.db_size_bytes ?? 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> פעילות</span><span className="font-medium">{formatUptime(serverStatus.uptime_seconds)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">עומס (1/5/15ד')</span><span className="font-medium font-mono text-xs">{(serverStatus.load_avg || []).join(' · ') || '—'}</span></div>
+                </div>
+                <div className="pt-2 border-t flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-400">ניקוי אוטומטי רץ יומית. קבצים מקושרים לחשבוניות/עובדים נשמרים תמיד.</span>
+                  <Button variant="outline" size="sm" onClick={cleanupUploads} disabled={cleaningUploads} className="h-8 text-xs flex-shrink-0">
+                    {cleaningUploads ? <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 ml-1" />}
+                    נקה קבצים ישנים
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard icon={Users} label="סה״כ משתמשים" value={stats.users.total}
               sub={`${stats.users.active} פעילים`} color="blue" />

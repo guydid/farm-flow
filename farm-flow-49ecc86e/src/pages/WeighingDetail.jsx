@@ -7,7 +7,7 @@ import { createPageUrl } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
-import { Plus, Printer, Edit, Trash2, Copy, Save, ArrowRight, Loader2, EllipsisVertical, Package, ExternalLink } from "lucide-react";
+import { Plus, Printer, Edit, Trash2, Copy, Save, ArrowRight, Loader2, EllipsisVertical, Package, ExternalLink, Share2, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -20,6 +20,9 @@ import { Badge } from "@/components/ui/badge";
 import QRCode from "../components/weighing/QRCode";
 import WeighingItemForm from '../components/weighing/WeighingItemForm';
 import PalletSticker, { generateZPL } from "../components/weighing/PalletSticker"; // Added generateZPL import
+import CertificatePrintLayout from "../components/weighing/CertificatePrintLayout";
+import useCertificateShare from "../components/weighing/useCertificateShare";
+import { getMeCached, getFarmCached, getListCached } from "@/api/cachedReads";
 
 // Helper functions
 const safeArray = (arr) => (Array.isArray(arr) ? arr : []);
@@ -34,267 +37,6 @@ const safeObject = (obj) => {
   return obj;
 };
 
-const CertificatePrintLayout = ({ certificate, items, companySettings, customer }) => {
-  const safeCertificate = safeObject(certificate);
-  const safeCompanySettings = safeObject(companySettings);
-  const safeCustomer = safeObject(customer);
-  const safeItems = safeArray(items);
-
-  if (!safeCertificate || safeItems.length === 0) {
-    return (
-      <div className="p-8 text-center">
-        <h2>טוען נתונים להדפסה...</h2>
-      </div>
-    );
-  }
-
-  const groupedItems = safeItems.reduce((acc, item) => {
-    const currentItem = safeObject(item);
-    if (Object.keys(currentItem).length === 0) return acc;
-
-    const key = `${currentItem.product_name || 'ללא שם'}_${currentItem.quality || 'לא צוין'}`;
-
-    if (!(key in acc)) {
-      acc[key] = {
-        product_name: currentItem.product_name || 'ללא שם מוצר',
-        quality: currentItem.quality || 'לא צוין',
-        items: [],
-        subtotal_weight: 0,
-        subtotal_packages: 0,
-        subtotal_amount: 0
-      };
-    }
-
-    acc[key].items.push(currentItem);
-    acc[key].subtotal_weight += parseFloat(currentItem.net_weight || 0);
-    acc[key].subtotal_packages += parseInt(currentItem.package_count || 0);
-    acc[key].subtotal_amount += parseFloat(currentItem.item_total || 0);
-
-    return acc;
-  }, {});
-
-  const groups = Object.values(groupedItems);
-
-  return (
-    <div dir="rtl" style={{
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '12px',
-      lineHeight: '1.4',
-      color: '#000',
-      backgroundColor: '#fff',
-      padding: '20px'
-    }}>
-      <style>{`
-        @media print {
-          @page {
-            size: A4;
-            margin: 1cm;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-            -webkit-print-color-adjust: exact !important;
-            color-adjust: exact !important;
-            background-color: #fff !important;
-          }
-          * {
-            -webkit-print-color-adjust: exact !important;
-            color-adjust: exact !important;
-          }
-        }
-        .print-table {
-          border-collapse: collapse;
-          width: 100%;
-          margin: 10px 0;
-        }
-        .print-table th, .print-table td {
-          border: 1px solid #000;
-          padding: 6px 4px;
-          font-size: 10px;
-          text-align: right;
-        }
-        .print-table th {
-          background-color: #f0f0f0 !important;
-          font-weight: bold;
-          text-align: center;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-        .subtotal-row {
-          background-color: #f5f5f5 !important;
-          font-weight: bold;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-        .total-row {
-          background-color: #e0e0e0 !important;
-          font-weight: bold;
-          font-size: 11px;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-      `}</style>
-
-      {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #000', paddingBottom: '15px', marginBottom: '20px' }}>
-        <div style={{ flex: '1', textAlign: 'right' }}>
-          <h1 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 10px 0' }}>
-            {safeCompanySettings.company_name || 'שם המשק'}
-          </h1>
-          <div style={{ fontSize: '10px', lineHeight: '1.5' }}>
-            <div>ע.מ/ח.פ: {safeCompanySettings.business_number || 'לא צוין'}</div>
-            <div>{safeCompanySettings.address || ''}{safeCompanySettings.city ? `, ${safeCompanySettings.city}` : ''}</div>
-            <div>טלפון: {safeCompanySettings.phone || 'לא צוין'}</div>
-            {safeCompanySettings.email && <div>אימייל: {safeCompanySettings.email}</div>}
-          </div>
-        </div>
-
-        <div style={{ flex: '1', textAlign: 'center' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', margin: '0 0 15px 0' }}>תעודת שקילה</h2>
-          <div style={{ backgroundColor: '#f5f5f5', padding: '10px', border: '1px solid #ccc' }}>
-            <div style={{ fontWeight: 'bold' }}>מס' תעודה: {safeCertificate.reference_number || safeCertificate.id?.toString().slice(-5) || 'לא זמין'}</div>
-            <div>תאריך: {safeCertificate.date ? format(new Date(safeCertificate.date), 'dd/MM/yyyy') : 'לא צוין'}</div>
-            <div>שעה: {safeCertificate.time || 'לא צוין'}</div>
-          </div>
-        </div>
-
-        <div style={{ flex: '1', textAlign: 'left', display: 'flex', justifyContent: 'flex-end' }}>
-          {safeCertificate.barcode && (
-            <div style={{ textAlign: 'center' }}>
-              <QRCode data={safeCertificate.barcode} size={60} />
-              <div style={{ fontSize: '8px', marginTop: '5px', fontFamily: 'monospace' }}>{safeCertificate.barcode}</div>
-            </div>
-          )}
-        </div>
-      </header>
-
-      {/* Customer and Transport Details */}
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-        <div style={{ border: '1px solid #000', padding: '10px' }}>
-          <h3 style={{ fontWeight: 'bold', margin: '0 0 10px 0', backgroundColor: '#f0f0f0', padding: '5px', textAlign: 'center' }}>פרטי לקוח</h3>
-          <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
-            <div><strong>שם:</strong> {safeCustomer.name || safeCertificate.customer_name || 'לא צוין'}</div>
-            <div><strong>כתובת:</strong> {safeCustomer.address || 'לא צוין'}</div>
-            <div><strong>טלפון:</strong> {safeCustomer.phone || 'לא צוין'}</div>
-            <div><strong>איש קשר:</strong> {safeCustomer.contact_person || 'לא צוין'}</div>
-          </div>
-        </div>
-
-        <div style={{ border: '1px solid #000', padding: '10px' }}>
-          <h3 style={{ fontWeight: 'bold', margin: '0 0 10px 0', backgroundColor: '#f0f0f0', padding: '5px', textAlign: 'center' }}>פרטי הובלה</h3>
-          <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
-            <div><strong>נהג:</strong> {safeCertificate.driver_name || 'לא צוין'}</div>
-            <div><strong>סוג רכב:</strong> {{
-              truck: 'משאית',
-              van: 'מסחרית',
-              pickup: 'טנדר',
-              trailer: 'נגרר'
-            }[safeCertificate.vehicle_type] || safeCertificate.vehicle_type || 'לא צוין'}</div>
-            <div><strong>מספר רכב:</strong> {safeCertificate.vehicle_number || 'לא צוין'}</div>
-            <div><strong>סטטוס:</strong> {{
-              draft: 'טיוטה',
-              completed: 'הושלם',
-              shipped: 'נשלח'
-            }[safeCertificate.status] || safeCertificate.status}</div>
-          </div>
-        </div>
-      </section>
-
-      {/* Items Details */}
-      <div>
-        <table className="print-table">
-          <thead>
-            <tr>
-              <th>מוצר</th>
-              <th>איכות</th>
-              <th>סוג אריזה</th>
-              <th>כמות אריזות</th>
-              <th>משקל ברוטו (ק"ג)</th>
-              <th>משקל טרה (ק"ג)</th>
-              <th>משקל נטו (ק"ג)</th>
-              <th>מחיר</th>
-              <th>הנחה %</th>
-              <th>סה"כ ₪</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.length === 0 ? (
-              <tr>
-                <td colSpan="10" style={{ textAlign: 'center', fontStyle: 'italic' }}>
-                  אין פריטים בתעודה זו
-                </td>
-              </tr>
-            ) : (
-              groups.map((group, groupIndex) => {
-                const safeGroup = safeObject(group);
-                return (
-                  <React.Fragment key={`group-${groupIndex}`}>
-                    {safeArray(safeGroup.items).map((item, itemIndex) => {
-                      const safeItem = safeObject(item);
-                      return (
-                        <tr key={safeItem.id || `item-${itemIndex}`}>
-                          <td>{safeItem.product_name || ''}</td>
-                          <td>{safeItem.quality || ''}</td>
-                          <td>{safeItem.packaging_type || 'לא צוין'}</td>
-                          <td style={{ textAlign: 'center' }}>{safeItem.package_count || 0}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.gross_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.tare_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.net_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>₪{parseFloat(safeItem.price_per_unit || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.discount_percentage || 0)}%</td>
-                          <td style={{ textAlign: 'center' }}>₪{parseFloat(safeItem.item_total || 0).toLocaleString()}</td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="subtotal-row">
-                      <td colSpan="3" style={{ textAlign: 'right' }}>
-                        סיכום ביניים - {safeGroup.product_name} איכות {safeGroup.quality}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>{safeGroup.subtotal_packages}</td>
-                      <td colSpan="2"></td>
-                      <td style={{ textAlign: 'center' }}>{safeGroup.subtotal_weight.toLocaleString()}</td>
-                      <td colSpan="2"></td>
-                      <td style={{ textAlign: 'center' }}>₪{safeGroup.subtotal_amount.toLocaleString()}</td>
-                    </tr>
-                  </React.Fragment>
-                );
-              })
-            )}
-            <tr className="total-row">
-              <td colSpan="3" style={{ textAlign: 'right' }}><strong>סיכום כללי</strong></td>
-              <td style={{ textAlign: 'center' }}><strong>{safeCertificate.total_packages || 0}</strong></td>
-              <td colSpan="2"></td>
-              <td style={{ textAlign: 'center' }}><strong>{parseFloat(safeCertificate.total_weight || 0).toLocaleString()}</strong></td>
-              <td colSpan="2"></td>
-              <td style={{ textAlign: 'center' }}><strong>₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString()}</strong></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      {/* Signatures */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginTop: '30px' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת השוקל</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת הנהג</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת הלקוח</div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div style={{ textAlign: 'center', fontSize: '9px', color: '#666', marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #ccc' }}>
-        <div>תעודה זו נוצרה באמצעות מערכת FarmFlow</div>
-      </div>
-    </div>
-  );
-};
 
 export default function WeighingDetail() {
   // All state hooks
@@ -315,6 +57,7 @@ export default function WeighingDetail() {
   const [showStickerDialog, setShowStickerDialog] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false); // עריכת פרטי תעודה בנייד (מכווץ כברירת מחדל)
   const [printerConfig, setPrinterConfig] = useState(null); // New state for printer configuration
   const [certificateFormData, setCertificateFormData] = useState({
     date: format(new Date(), "yyyy-MM-dd"),
@@ -332,6 +75,9 @@ export default function WeighingDetail() {
 
   // Toast hook
   const { toast } = useToast();
+
+  // שיתוף התעודה כ-PDF (וואטסאפ/מייל בנייד, הורדה במחשב)
+  const { share: shareCertificatePdf, isSharing, shareLayoutElement } = useCertificateShare(toast);
 
   // Memoized values
   const certificateId = useMemo(() => {
@@ -439,17 +185,20 @@ export default function WeighingDetail() {
 
     setIsLoading(true);
     try {
-      const user = await User.me();
+      const user = await getMeCached();
       if (!user.current_farm_id) {
         toast({ title: "שגיאה", description: "לא נמצא משק פעיל", variant: "destructive" });
         return;
       }
 
-      const farm = await Farm.get(user.current_farm_id);
+      const farm = await getFarmCached(user.current_farm_id);
       setCurrentFarm(safeObject(farm));
 
-      const farmFilter = { farm_id: user.current_farm_id };
+      const fid = user.current_farm_id;
+      const farmFilter = { farm_id: fid };
 
+      // תעודה ופריטים — תמיד טריים; קטלוגים (מוצרים/לקוחות/אריזות/משטחים/תמחור/הגדרות)
+      // דרך קאש משותף — ניווט חוזר לא יורה שוב את כל הבקשות דרך ה-tunnel.
       const [
         certificateData,
         itemsData,
@@ -462,12 +211,12 @@ export default function WeighingDetail() {
       ] = await Promise.all([
         WeighingCertificate.get(certificateId),
         WeighingItem.filter({ certificate_id: certificateId }),
-        Product.filter(farmFilter),
-        Customer.filter(farmFilter),
-        CustomerProductPricing.filter(farmFilter),
-        CompanySettings.filter(farmFilter),
-        Packaging.filter(farmFilter),
-        PalletType.list()
+        getListCached(`products_${fid}`, () => Product.filter(farmFilter)),
+        getListCached(`customers_${fid}`, () => Customer.filter(farmFilter)),
+        getListCached(`customer_pricing_${fid}`, () => CustomerProductPricing.filter(farmFilter)),
+        getListCached(`company_settings_${fid}`, () => CompanySettings.filter(farmFilter)),
+        getListCached(`packaging_${fid}`, () => Packaging.filter(farmFilter)),
+        getListCached('pallet_types', () => PalletType.list())
       ]);
 
       setCertificate(safeObject(certificateData || null));
@@ -682,6 +431,18 @@ export default function WeighingDetail() {
     }, 500);
   }, [certificate, weighingItems, toast]);
 
+  const handleShareCertificate = useCallback(() => {
+    if (!certificate || weighingItems.length === 0) {
+      toast({ title: "שגיאה", description: "לא ניתן לשתף תעודה ריקה.", variant: "destructive" });
+      return;
+    }
+    shareCertificatePdf(certificate, {
+      items: safeArray(weighingItems),
+      companySettings: safeObject(companySettings),
+      customer: safeFind(customers, c => safeObject(c).id === safeObject(certificate).customer_id),
+    });
+  }, [certificate, weighingItems, companySettings, customers, shareCertificatePdf, toast]);
+
   const handleFormSuccess = useCallback(async (itemData) => {
     if (!certificate || !currentFarm) {
       toast({ title: "שגיאה", description: "נתונים חסרים - תעודה או משק לא נמצאו", variant: "destructive" });
@@ -772,6 +533,24 @@ export default function WeighingDetail() {
     }
   }, [certificateId, loadData]);
 
+  // הבר התחתון (BottomNav) מוחלף בעמוד זה בפעולות תעודה ומשדר אירוע window
+  useEffect(() => {
+    const handler = (e) => {
+      switch (e.detail) {
+        case 'add': setIsFormOpen(true); break;
+        case 'share': handleShareCertificate(); break;
+        case 'print': handlePrintCertificate(); break;
+        case 'details':
+          setDetailsOpen(o => !o);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        default: break;
+      }
+    };
+    window.addEventListener('weighing-detail-action', handler);
+    return () => window.removeEventListener('weighing-detail-action', handler);
+  }, [handleShareCertificate, handlePrintCertificate]);
+
   const safeItems = safeArray(weighingItems);
   const safeCertificate = safeObject(certificate);
   const safeCompanySettings = safeObject(companySettings);
@@ -811,115 +590,166 @@ export default function WeighingDetail() {
     return <div className="p-6 text-center">טוען תעודה...</div>;
   }
 
+  const certFormFields = (
+    <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm flex-grow">
+      <div>
+        <Label>תאריך:</Label>
+        <Input type="date" value={safeObject(certificateFormData).date} onChange={handleFieldChange('date')} />
+      </div>
+      <div>
+        <Label>שעה:</Label>
+        <Input type="time" value={safeObject(certificateFormData).time} onChange={handleFieldChange('time')} />
+      </div>
+      <div>
+        <Label>לקוח:</Label>
+        <Select value={safeObject(certificateFormData).customer_id || ""} onValueChange={handleCustomerChange}>
+          <SelectTrigger>
+            <SelectValue placeholder="בחר לקוח..."/>
+          </SelectTrigger>
+          <SelectContent>
+            {safeArray(customers).map(customer => {
+              const safeCust = safeObject(customer);
+              return safeCust.id && (
+                <SelectItem key={safeCust.id} value={safeCust.id}>{safeCust.name}</SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label>נהג:</Label>
+        <Input value={safeObject(certificateFormData).driver_name} onChange={handleFieldChange('driver_name')} />
+      </div>
+      <div>
+        <Label>סוג רכב:</Label>
+        <Select value={safeObject(certificateFormData).vehicle_type} onValueChange={(value) => handleSelectChange('vehicle_type', value)}>
+          <SelectTrigger>
+            <SelectValue placeholder="בחר סוג רכב..."/>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="truck">משאית</SelectItem>
+            <SelectItem value="van">מסחרית</SelectItem>
+            <SelectItem value="pickup">טנדר</SelectItem>
+            <SelectItem value="trailer">נגרר</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label>מספר רכב:</Label>
+        <Input value={safeObject(certificateFormData).vehicle_number} onChange={handleFieldChange('vehicle_number')} />
+      </div>
+      <div className="sm:col-span-2 md:col-span-3">
+        <Button size="sm" onClick={handleSaveCertificate}>
+          <Save className="w-4 h-4 ml-2" /> שמור שינויים
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <>
       <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen" dir="rtl">
-        <div className="max-w-7xl mx-auto space-y-6">
-          {/* Certificate Details & Summary */}
-          <Card>
-            <CardHeader>
-              <CardTitle>פרטי תעודה</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm flex-grow">
-                  <div>
-                    <Label>תאריך:</Label>
-                    <Input type="date" value={safeObject(certificateFormData).date} onChange={handleFieldChange('date')} />
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+          {/* Certificate Details — בנייד: כרטיס קומפקטי שנפתח לעריכה; במחשב: הטופס המלא */}
+          {isMobile ? (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1" onClick={() => setDetailsOpen(o => !o)}>
+                    <div className="font-bold text-gray-900 truncate">
+                      {safeObject(certificateFormData).customer_name || safeCertificate.customer_name || 'ללא לקוח'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {safeObject(certificateFormData).date ? format(new Date(safeObject(certificateFormData).date), 'dd/MM/yyyy') : ''}
+                      {safeObject(certificateFormData).time ? ` · ${safeObject(certificateFormData).time}` : ''}
+                      {safeCertificate.id ? ` · #${String(safeCertificate.id).slice(-5)}` : ''}
+                      {safeObject(certificateFormData).vehicle_number ? ` · ${safeObject(certificateFormData).vehicle_number}` : ''}
+                    </div>
                   </div>
-                  <div>
-                    <Label>שעה:</Label>
-                    <Input type="time" value={safeObject(certificateFormData).time} onChange={handleFieldChange('time')} />
-                  </div>
-                  <div>
-                    <Label>לקוח:</Label>
-                    <Select value={safeObject(certificateFormData).customer_id || ""} onValueChange={handleCustomerChange}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="בחר לקוח..."/>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {safeArray(customers).map(customer => {
-                          const safeCust = safeObject(customer);
-                          return safeCust.id && (
-                            <SelectItem key={safeCust.id} value={safeCust.id}>{safeCust.name}</SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>נהג:</Label>
-                    <Input value={safeObject(certificateFormData).driver_name} onChange={handleFieldChange('driver_name')} />
-                  </div>
-                  <div>
-                    <Label>סוג רכב:</Label>
-                    <Select value={safeObject(certificateFormData).vehicle_type} onValueChange={(value) => handleSelectChange('vehicle_type', value)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="בחר סוג רכב..."/>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="truck">משאית</SelectItem>
-                        <SelectItem value="van">מסחרית</SelectItem>
-                        <SelectItem value="pickup">טנדר</SelectItem>
-                        <SelectItem value="trailer">נגרר</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>מספר רכב:</Label>
-                    <Input value={safeObject(certificateFormData).vehicle_number} onChange={handleFieldChange('vehicle_number')} />
-                  </div>
-                  <div className="sm:col-span-2 md:col-span-3">
-                    <Button size="sm" onClick={handleSaveCertificate}>
-                      <Save className="w-4 h-4 ml-2" /> שמור שינויים בתעודה
-                    </Button>
-                  </div>
+                  <Button variant="ghost" size="sm" className="shrink-0 text-blue-600 h-8" onClick={() => setDetailsOpen(o => !o)}>
+                    {detailsOpen
+                      ? <><ChevronUp className="w-4 h-4 ml-1" />סגור</>
+                      : <><Edit className="w-4 h-4 ml-1" />ערוך</>}
+                  </Button>
                 </div>
-                {safeCertificate.barcode && (
-                  <div className="text-center p-2 bg-gray-50 rounded-lg">
-                    <QRCode data={safeCertificate.barcode} size={80} />
-                    <p className="text-xs text-muted-foreground mt-1 font-mono">{safeCertificate.barcode}</p>
+                {detailsOpen && (
+                  <div className="mt-4 pt-4 border-t">
+                    {certFormFields}
                   </div>
                 )}
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>פרטי תעודה</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                  {certFormFields}
+                  {safeCertificate.barcode && (
+                    <div className="text-center p-2 bg-gray-50 rounded-lg">
+                      <QRCode data={safeCertificate.barcode} size={80} />
+                      <p className="text-xs text-muted-foreground mt-1 font-mono">{safeCertificate.barcode}</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-          {/* Totals Summary */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">סה"כ משקל (נטו)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{parseFloat(safeCertificate.total_weight || 0).toLocaleString()} ק"ג</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">סה"כ אריזות</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{parseInt(safeCertificate.total_packages || 0).toLocaleString()}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">סה"כ לתשלום</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">מספר משטחים</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{safeItems.length}</div>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Totals Summary — בנייד: פס קומפקטי אחד; במחשב: 4 כרטיסים */}
+          {isMobile ? (
+            <div className="grid grid-cols-3 divide-x divide-x-reverse divide-gray-100 rounded-2xl border border-gray-200 bg-white shadow-sm py-3 text-center">
+              <div>
+                <div className="text-lg font-bold text-gray-900 tabular-nums">{parseFloat(safeCertificate.total_weight || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</div>
+                <div className="text-[11px] text-gray-500">ק"ג נטו</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-gray-900 tabular-nums">{parseInt(safeCertificate.total_packages || 0).toLocaleString()}</div>
+                <div className="text-[11px] text-gray-500">אריזות</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-gray-900 tabular-nums">₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 })}</div>
+                <div className="text-[11px] text-gray-500">לתשלום</div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">סה"כ משקל (נטו)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{parseFloat(safeCertificate.total_weight || 0).toLocaleString()} ק"ג</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">סה"כ אריזות</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{parseInt(safeCertificate.total_packages || 0).toLocaleString()}</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">סה"כ לתשלום</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">מספר משטחים</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{safeItems.length}</div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* פרטי משטחים */}
           <Card>
@@ -927,22 +757,29 @@ export default function WeighingDetail() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <CardTitle className="flex items-center gap-2">
                   <Package className="w-5 h-5" />
-                  פרטי משטחים ({safeItems.length})
+                  משטחים ({safeItems.length})
                   <Link
                     to={createPageUrl("Settings?tab=products")}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
+                    className="hidden sm:inline-block text-blue-600 hover:text-blue-800 text-sm"
                     title="נהל מוצרים"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </Link>
                 </CardTitle>
-                <div className="flex gap-2">
+                {/* בנייד הפעולות עברו לבר התחתון — הכפתורים כאן מוצגים במחשב בלבד */}
+                <div className="hidden sm:flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={handleShareCertificate} disabled={isSharing}>
+                    {isSharing
+                      ? <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                      : <Share2 className="w-4 h-4 ml-2" />}
+                    שתף
+                  </Button>
                   <Button variant="outline" onClick={handlePrintCertificate}>
                     <Printer className="w-4 h-4 ml-2" /> הדפס תעודה
                   </Button>
-                  <Button className="flex" onClick={() => setIsFormOpen(true)}>
+                  <Button onClick={() => setIsFormOpen(true)}>
                     <Plus className="w-4 h-4 ml-2" />
-                    <span className="hidden sm:inline">הוסף פריט</span>
+                    הוסף פריט
                   </Button>
                 </div>
               </div>
@@ -955,6 +792,66 @@ export default function WeighingDetail() {
                     <Plus className="w-4 h-4 ml-2" />
                     הוסף פריט ראשון
                   </Button>
+                </div>
+              ) : isMobile ? (
+                /* פריטים ככרטיסיות בנייד — לחיצה עורכת, ⋮ לפעולות נוספות */
+                <div className="-mx-3 divide-y divide-gray-100">
+                  {safeItems.map(item => {
+                    const si = safeObject(item);
+                    return (
+                      <div
+                        key={si.id}
+                        onClick={() => handleEditItem(si)}
+                        className="flex items-center gap-3 px-3 py-3 active:bg-gray-50 cursor-pointer"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-gray-900 truncate">
+                            {si.product_name || 'ללא שם'}
+                            {si.quality && <span className="font-normal text-xs text-gray-500"> · {si.quality}</span>}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {si.package_count || 0} × {si.packaging_type || 'אריזה'}
+                            {si.pallet_type ? ` · ${si.pallet_type}` : ''}
+                          </div>
+                        </div>
+                        <div className="text-left shrink-0">
+                          <div className="font-bold text-gray-900 tabular-nums">
+                            {parseFloat(si.net_weight || 0).toLocaleString()}
+                            <span className="text-xs font-normal text-gray-400"> ק"ג</span>
+                          </div>
+                          {parseFloat(si.item_total || 0) > 0 && (
+                            <div className="text-xs text-gray-500 tabular-nums">
+                              ₪{parseFloat(si.item_total || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 })}
+                            </div>
+                          )}
+                        </div>
+                        <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-400">
+                                <EllipsisVertical className="h-5 w-5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handlePrintSticker(si)}>
+                                <Printer className="ml-2 h-4 w-4" />
+                                הדפס מדבקה
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleCopyItem(si)}>
+                                <Copy className="ml-2 h-4 w-4" />
+                                שכפל
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteItem(si.id)}>
+                                <Trash2 className="ml-2 h-4 w-4" />
+                                מחק
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1127,6 +1024,9 @@ export default function WeighingDetail() {
 
       {/* Hidden iframe for sticker printing */}
       <iframe ref={stickerPrintIframeRef} title="Print Sticker Iframe" style={{ height: '0', width: '0', position: 'absolute', border: 'none' }}></iframe>
+
+      {/* פריסת התעודה מרונדרת מחוץ למסך לצילום ה-PDF בעת שיתוף */}
+      {shareLayoutElement}
     </>
   );
 }

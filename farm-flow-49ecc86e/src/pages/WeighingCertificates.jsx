@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { WeighingCertificate, Customer, User, Farm, WeighingItem } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { he } from 'date-fns/locale'; // Import Hebrew locale
-import { Plus, Edit, Eye, Printer, Truck, Trash2, UserPlus, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Edit, Eye, Printer, Truck, Trash2, UserPlus, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -26,6 +26,9 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
+import useCertificateShare from "../components/weighing/useCertificateShare";
+import { getMeCached, getFarmCached, getListCached, invalidateList } from "@/api/cachedReads";
+import CustomerOpenReportLayout from "../components/weighing/CustomerOpenReport";
 
 
 export default function WeighingCertificates() {
@@ -41,10 +44,30 @@ export default function WeighingCertificates() {
   const [currentFarm, setCurrentFarm] = useState(null);
   const [selectedCertificates, setSelectedCertificates] = useState(new Set());
   const [isBulkActionsOpen, setIsBulkActionsOpen] = useState(false);
+  const [selectMode, setSelectMode] = useState(false); // מצב בחירה מרובה בנייד
+  // דוח תעודות פתוחות ללקוח
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportSharing, setReportSharing] = useState(false);
+  const reportRef = useRef(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [showSalesSummary, setShowSalesSummary] = useState(false);
   const { toast } = useToast();
+
+  // שיתוף תעודה כ-PDF ישירות מהרשימה (וואטסאפ/מייל בנייד, הורדה במחשב)
+  const { share: shareCertificatePdf, shareMany: shareManyCertificates, isSharing, shareLayoutElement } = useCertificateShare(toast);
+
+  const handleBulkShare = () => {
+    const selected = (Array.isArray(certificates) ? certificates : []).filter(c => selectedCertificates.has(c.id));
+    if (selected.length === 0) {
+      toast({ title: "שגיאה", description: "לא נבחרו תעודות לשיתוף.", variant: "destructive" });
+      return;
+    }
+    setIsBulkActionsOpen(false);
+    shareManyCertificates(selected);
+  };
 
   // Auto-open create dialog when navigated with ?create=true (e.g. from FAB)
   useEffect(() => {
@@ -88,6 +111,35 @@ export default function WeighingCertificates() {
     loadData();
   }, []);
 
+  // הבר התחתון (BottomNav) מוחלף בעמוד זה בפעולות תעודות ומשדר אירוע window
+  useEffect(() => {
+    const handler = (e) => {
+      switch (e.detail) {
+        case 'select':
+          setSelectMode(prev => {
+            if (prev) setSelectedCertificates(new Set());
+            return !prev;
+          });
+          break;
+        case 'create':
+          resetForm();
+          setIsDialogOpen(true);
+          break;
+        case 'archive':
+          setShowArchived(p => !p);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        case 'summary':
+          setShowSalesSummary(p => !p);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        default: break;
+      }
+    };
+    window.addEventListener('weighing-list-action', handler);
+    return () => window.removeEventListener('weighing-list-action', handler);
+  }, []);
+
   // Detect mobile
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -98,23 +150,23 @@ export default function WeighingCertificates() {
 
   const loadData = async () => {
     try {
-        const user = await User.me();
-        
+        const user = await getMeCached();
+
         if (!user?.current_farm_id) {
           setCertificates([]);
           setCustomers([]);
           setCurrentFarm(null);
           return;
         }
-        
-        const farm = await Farm.get(user.current_farm_id);
+
+        const farm = await getFarmCached(user.current_farm_id);
         setCurrentFarm(farm);
 
         const farmFilter = { farm_id: user.current_farm_id };
-        
+
         const [certsResult, custsResult] = await Promise.all([
             WeighingCertificate.filter(farmFilter, "-date").catch(() => []),
-            Customer.filter(farmFilter, "name").catch(() => [])
+            getListCached(`customers_${user.current_farm_id}`, () => Customer.filter(farmFilter, "name")).catch(() => [])
         ]);
         
         setCertificates(Array.isArray(certsResult) ? certsResult : []);
@@ -287,10 +339,11 @@ export default function WeighingCertificates() {
     }
 
     try {
-      const newCustomer = await Customer.create({ 
-        ...newCustomerData, 
-        farm_id: currentFarm.id 
+      const newCustomer = await Customer.create({
+        ...newCustomerData,
+        farm_id: currentFarm.id
       });
+      invalidateList(`customers_${currentFarm.id}`);
       
       const updatedCustomers = [...(Array.isArray(customers) ? customers : []), newCustomer].sort((a,b) => a.name.localeCompare(b.name));
       setCustomers(updatedCustomers);
@@ -359,6 +412,125 @@ export default function WeighingCertificates() {
       console.error("Error toggling delivery note status:", error);
       toast({ title: "שגיאה", description: "עדכון הסטטוס נכשל", variant: "destructive" });
     }
+  };
+
+  // דוח תעודות פתוחות ללקוח: כל התעודות שאינן בארכיון (לא הושלם/נשלח), מקובצות לפי יום עם פריטים
+  const buildCustomerReport = async (customerId) => {
+    const customer = (customers || []).find(c => c.id === customerId);
+    if (!customer || !currentFarm?.id) return;
+    setReportBusy(true);
+    setReportData(null);
+    try {
+      const openCerts = (certificates || []).filter(c =>
+        c && c.customer_id === customerId && c.status !== 'completed' && c.status !== 'shipped'
+      );
+      if (openCerts.length === 0) {
+        toast({ title: "אין תעודות", description: `אין תעודות פתוחות ללקוח ${customer.name}` });
+        return;
+      }
+      const allItems = await WeighingItem.filter({ farm_id: currentFarm.id });
+      const byCert = {};
+      (Array.isArray(allItems) ? allItems : []).forEach(it => {
+        if (it?.certificate_id) (byCert[it.certificate_id] = byCert[it.certificate_id] || []).push(it);
+      });
+      const groupsMap = {};
+      openCerts
+        .slice()
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+        .forEach(c => {
+          const key = c.date || 'ללא תאריך';
+          (groupsMap[key] = groupsMap[key] || []).push({ cert: c, items: byCert[c.id] || [] });
+        });
+      const groups = Object.entries(groupsMap).map(([date, entries]) => ({ date, entries }));
+      const totals = {
+        certs: openCerts.length,
+        weight: openCerts.reduce((s, c) => s + (parseFloat(c.total_weight) || 0), 0),
+        packages: openCerts.reduce((s, c) => s + (parseInt(c.total_packages) || 0), 0),
+        amount: openCerts.reduce((s, c) => s + (parseFloat(c.total_amount) || 0), 0),
+      };
+      setReportData({ customer, groups, totals });
+    } catch (error) {
+      console.error("Failed to build customer report:", error);
+      toast({ title: "שגיאה", description: "הפקת הדוח נכשלה", variant: "destructive" });
+    } finally {
+      setReportBusy(false);
+    }
+  };
+
+  const shareReportPdf = async () => {
+    const el = reportRef.current;
+    if (!el || !reportData) return;
+    setReportSharing(true);
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+      const pageW = 210, pageH = 297;
+      const imgH = canvas.height * pageW / canvas.width;
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      let offset = 0, page = 0;
+      while (offset < imgH) {
+        if (page > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, -offset, pageW, imgH);
+        offset += pageH;
+        page++;
+      }
+      const fileName = `דוח_תעודות_פתוחות_${reportData.customer.name}.pdf`;
+      const blob = pdf.output('blob');
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+      const text = `דוח תעודות פתוחות — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: fileName, text });
+          return;
+        } catch (err) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "הקובץ ירד", description: "צרף את ה-PDF לוואטסאפ או למייל." });
+    } catch (error) {
+      console.error("Report share failed:", error);
+      toast({ title: "שגיאה", description: "שיתוף הדוח נכשל", variant: "destructive" });
+    } finally {
+      setReportSharing(false);
+    }
+  };
+
+  const printReport = () => {
+    const el = reportRef.current;
+    if (!el) return;
+    const w = window.open('', '_blank');
+    if (!w) {
+      toast({ title: "שגיאה", description: "יש לאפשר חלונות קופצים להדפסה", variant: "destructive" });
+      return;
+    }
+    w.document.write(`<html dir="rtl"><head><title>דוח תעודות פתוחות</title></head><body style="margin:0">${el.outerHTML}</body></html>`);
+    w.document.close();
+    setTimeout(() => { w.focus(); w.print(); }, 300);
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedCertificates(new Set());
+  };
+
+  const statusDot = (status) => ({
+    draft: "bg-yellow-400",
+    completed: "bg-green-500",
+    shipped: "bg-blue-500"
+  }[status] || "bg-gray-300");
+
+  const formatDayLabel = (dateKey) => {
+    const d = parseISO(dateKey);
+    if (isToday(d)) return "היום";
+    if (isYesterday(d)) return "אתמול";
+    return format(d, "EEEE, d בMMMM", { locale: he });
   };
 
   const translateVehicleType = (type) => ({
@@ -556,27 +728,29 @@ export default function WeighingCertificates() {
   };
 
   return (
-    <div className="p-4 lg:p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className={`p-4 lg:p-6 ${isMobile && selectMode ? 'pb-32' : ''}`}>
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
         
         {/* Header and filters */}
         <Card>
           <CardHeader className="pb-3 sm:pb-6 space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <CardTitle className="text-2xl">
-                  {showArchived ? "ארכיון תעודות שקילה" : "תעודות שקילה"} ({totalCount})
-                  {currentFarm && <span className="text-base font-normal text-gray-500 mr-2"> - {currentFarm.name}</span>}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+              <CardTitle className="text-xl sm:text-2xl">
+                  {showArchived ? "ארכיון" : "תעודות שקילה"} ({totalCount})
+                  {currentFarm && <span className="hidden sm:inline text-base font-normal text-gray-500 mr-2"> - {currentFarm.name}</span>}
                   {selectedCertificates.size > 0 && (
                     <span className="text-sm font-normal text-blue-600 mr-2">
                       ({selectedCertificates.size} נבחרו)
                     </span>
                   )}
               </CardTitle>
-              <div className="flex gap-2 w-full sm:w-auto">
+
+              {/* Desktop actions */}
+              <div className="hidden sm:flex gap-2">
                  {selectedCertificates.size > 0 && (
                    <DropdownMenu open={isBulkActionsOpen} onOpenChange={setIsBulkActionsOpen}>
                      <DropdownMenuTrigger asChild>
-                       <Button variant="outline" className="flex-1 sm:flex-initial">
+                       <Button variant="outline">
                          <CheckSquare className="w-4 h-4 ml-2" />
                          פעולות ({selectedCertificates.size})
                        </Button>
@@ -595,25 +769,54 @@ export default function WeighingCertificates() {
                          <Printer className="w-4 h-4 ml-2" />
                          הדפס סיכום
                        </DropdownMenuItem>
+                       <DropdownMenuItem onClick={handleBulkShare} disabled={isSharing}>
+                         {isSharing
+                           ? <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                           : <Share2 className="w-4 h-4 ml-2" />}
+                         שתף תעודות
+                       </DropdownMenuItem>
                        <DropdownMenuItem onClick={handleBulkDelete} className="text-red-600">
                          מחק תעודות
                        </DropdownMenuItem>
                      </DropdownMenuContent>
                    </DropdownMenu>
                  )}
-                 <Button variant="outline" onClick={() => setShowSalesSummary(prev => !prev)} className="flex-1 sm:flex-initial">
+                 <Button variant="outline" onClick={() => { setReportOpen(true); setReportData(null); }}>
+                    <FileText className="w-4 h-4 ml-2" />
+                    דוח לקוח
+                 </Button>
+                 <Button variant="outline" onClick={() => setShowSalesSummary(prev => !prev)}>
                     <PieChart className="w-4 h-4 ml-2" />
                     סיכום מכירות
                  </Button>
-                 <Button variant="outline" onClick={() => setShowArchived(prev => !prev)} className="flex-1 sm:flex-initial">
+                 <Button variant="outline" onClick={() => setShowArchived(prev => !prev)}>
                     <Archive className="w-4 h-4 ml-2" />
                     {showArchived ? "תעודות פתוחות" : "ארכיון"}
                  </Button>
-                 <Button onClick={handleCreateNewCertificate} className="flex flex-1 sm:flex-initial">
+                 <Button onClick={handleCreateNewCertificate}>
                     <Plus className="w-4 h-4 ml-2" />
-                    <span className="hidden sm:inline">תעודה חדשה</span>
+                    תעודה חדשה
                  </Button>
               </div>
+
+              {/* בנייד: כפתור דוח לקוח קומפקטי */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="sm:hidden w-full h-9"
+                onClick={() => { setReportOpen(true); setReportData(null); }}
+              >
+                <FileText className="w-4 h-4 ml-2" />
+                דוח תעודות פתוחות ללקוח
+              </Button>
+
+              {/* בנייד הפעולות עברו לבר התחתון; נשאר רק חיווי מצב בחירה */}
+              {selectMode && (
+                <div className="flex sm:hidden items-center justify-between w-full text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                  <span className="font-medium">מצב בחירה — הקש על תעודות לסימון</span>
+                  <button onClick={exitSelectMode} className="font-semibold">סיום</button>
+                </div>
+              )}
             </div>
             
             {/* Mobile filters toggle */}
@@ -861,6 +1064,108 @@ export default function WeighingCertificates() {
         {!showSalesSummary && totalCount > 0 && (
           <div className="space-y-4">
             {Object.entries(timelineData).map(([dateKey, certs]) => (
+              isMobile ? (
+                <div key={dateKey}>
+                  {/* כותרת יום קומפקטית */}
+                  <div className="flex items-baseline justify-between px-1 mb-2">
+                    <h3 className="text-sm font-bold text-gray-800">{formatDayLabel(dateKey)}</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 tabular-nums">
+                        {certs.length} · {certs.reduce((sum, c) => sum + (c.total_weight || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} ק"ג
+                      </span>
+                      {selectMode && (
+                        <button
+                          onClick={() => handleSelectAll(certs, !certs.every(c => selectedCertificates.has(c.id)))}
+                          className="text-xs font-medium text-blue-600"
+                        >
+                          {certs.every(c => selectedCertificates.has(c.id)) ? "בטל הכל" : "בחר הכל"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {/* כרטיסי תעודות */}
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden divide-y divide-gray-100 shadow-sm">
+                    {certs.map((cert) => {
+                      const isSelected = selectedCertificates.has(cert.id);
+                      return (
+                        <div
+                          key={cert.id}
+                          onClick={() => {
+                            if (selectMode) {
+                              handleSelectCertificate(cert.id, !isSelected);
+                            } else {
+                              window.location.href = createPageUrl(`WeighingDetail?id=${cert.id}`);
+                            }
+                          }}
+                          className={`flex items-center gap-3 px-4 py-3.5 cursor-pointer transition-colors active:bg-gray-100 ${isSelected ? 'bg-blue-50' : ''}`}
+                        >
+                          {selectMode && (
+                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}>
+                              {isSelected && <Check className="w-4 h-4 text-white" />}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-gray-900 truncate">{cert.customer_name || 'ללא שם'}</span>
+                              {cert.delivery_note_issued && <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-1">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot(cert.status)}`} />
+                              <span>{translateStatus(cert.status)}</span>
+                              <span className="text-gray-300">·</span>
+                              <span className="font-mono">#{cert.id?.slice(-5)}</span>
+                            </div>
+                          </div>
+                          <div className="text-left shrink-0">
+                            <div className="font-bold text-gray-900 tabular-nums">
+                              {(cert.total_weight || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                              <span className="text-xs font-normal text-gray-400"> ק"ג</span>
+                            </div>
+                            {(cert.total_amount || 0) > 0 && (
+                              <div className="text-xs text-gray-500 tabular-nums">₪{(cert.total_amount || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                            )}
+                          </div>
+                          {!selectMode && (
+                            <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-400">
+                                    <MoreVertical className="w-5 h-5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => shareCertificatePdf(cert)} disabled={isSharing}>
+                                    {isSharing
+                                      ? <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                                      : <Share2 className="w-4 h-4 ml-2" />}
+                                    שתף
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleToggleDeliveryNote(cert.id, cert.delivery_note_issued)}>
+                                    {cert.delivery_note_issued ? (
+                                      <><X className="w-4 h-4 ml-2" />בטל תעודת משלוח</>
+                                    ) : (
+                                      <><CheckCircle2 className="w-4 h-4 ml-2" />סמן כהונפקה</>
+                                    )}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleDuplicate(cert)}>
+                                    <Copy className="w-4 h-4 ml-2" />
+                                    שכפל
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => handleDelete(cert.id)} className="text-red-600">
+                                    <Trash2 className="w-4 h-4 ml-2" />
+                                    מחק
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
                 <Card key={dateKey}>
                   <CardHeader className="pb-3 bg-gray-50">
                     <div className="flex justify-between items-center">
@@ -983,6 +1288,12 @@ export default function WeighingCertificates() {
                                     <Copy className="w-4 h-4 ml-2" />
                                     שכפל
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => shareCertificatePdf(cert)} disabled={isSharing}>
+                                    {isSharing
+                                      ? <Loader2 className="w-4 h-4 ml-2 animate-spin" />
+                                      : <Share2 className="w-4 h-4 ml-2" />}
+                                    שתף
+                                  </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem 
                                     onClick={() => handleDelete(cert.id)}
@@ -1000,7 +1311,8 @@ export default function WeighingCertificates() {
                     </Table>
                   </CardContent>
                 </Card>
-              ))}
+              )
+            ))}
           </div>
         )}
 
@@ -1023,31 +1335,44 @@ export default function WeighingCertificates() {
           </Card>
         )}
 
-        {/* Summary cards for MOBILE - at the bottom */}
-        {isMobile && (
-          <div className="grid grid-cols-2 gap-3 mt-6">
-            <Card>
-              <CardContent className="pt-4 pb-3">
-                <div className="text-center">
-                  <div className="text-xl font-bold">{totalCount}</div>
-                  <p className="text-xs text-muted-foreground">תעודות</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-4 pb-3">
-                <div className="text-center">
-                  <div className="text-xl font-bold">
-                    {filteredCerts.filter(c => !c.delivery_note_issued).length}
-                  </div>
-                  <p className="text-xs text-muted-foreground">ללא ת. משלוח</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
       </div>
+
+      {/* סרגל פעולות תחתון במצב בחירה (נייד) — מעל ה-BottomNav */}
+      {isMobile && selectMode && (
+        <div className="fixed bottom-16 inset-x-0 z-40 bg-white/95 backdrop-blur border-t px-3 py-2.5 flex items-center gap-2 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
+          <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{selectedCertificates.size} נבחרו</span>
+          <div className="flex gap-1.5 mr-auto">
+            <Button size="sm" variant="outline" className="h-10 px-3.5" title="שתף"
+              disabled={selectedCertificates.size === 0 || isSharing} onClick={handleBulkShare}>
+              {isSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+            </Button>
+            <Button size="sm" variant="outline" className="h-10 px-3.5" title="הדפס סיכום"
+              disabled={selectedCertificates.size === 0} onClick={() => handleBulkPrint()}>
+              <Printer className="w-4 h-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-10 px-3.5" title="שנה סטטוס"
+                  disabled={selectedCertificates.size === 0}>
+                  <CheckCircle2 className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" side="top">
+                <DropdownMenuItem onClick={() => handleBulkStatusChange("completed")}>סמן הושלם</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleBulkStatusChange("shipped")}>סמן נשלח</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleBulkStatusChange("draft")}>החזר לטיוטה</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button size="sm" variant="outline" className="h-10 px-3.5 text-red-600" title="מחק"
+              disabled={selectedCertificates.size === 0} onClick={handleBulkDelete}>
+              <Trash2 className="w-4 h-4" />
+            </Button>
+            <Button size="sm" variant="ghost" className="h-10 px-3" onClick={exitSelectMode} title="סגור">
+              <X className="w-5 h-5" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Simplified New certificate dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -1189,6 +1514,69 @@ export default function WeighingCertificates() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* פריסת תעודה נסתרת לצילום PDF בעת שיתוף */}
+      {shareLayoutElement}
+
+      {/* דוח תעודות פתוחות ללקוח */}
+      <Dialog open={reportOpen} onOpenChange={(open) => { if (!open) { setReportOpen(false); setReportData(null); } }}>
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>דוח תעודות פתוחות ללקוח</DialogTitle>
+          </DialogHeader>
+
+          {/* בחירת לקוח */}
+          <div>
+            <Label className="text-sm font-semibold">בחר לקוח</Label>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {(customers || []).map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => buildCustomerReport(c.id)}
+                  className={`px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${reportData?.customer?.id === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                >
+                  {c.name}
+                </button>
+              ))}
+              {(customers || []).length === 0 && <span className="text-sm text-gray-400">אין לקוחות מוגדרים</span>}
+            </div>
+          </div>
+
+          {reportBusy && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+            </div>
+          )}
+
+          {reportData && !reportBusy && (
+            <>
+              <div className="flex gap-2">
+                <Button onClick={shareReportPdf} disabled={reportSharing} className="flex-1 sm:flex-initial">
+                  {reportSharing ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Share2 className="w-4 h-4 ml-2" />}
+                  שתף PDF
+                </Button>
+                <Button variant="outline" onClick={printReport} className="flex-1 sm:flex-initial">
+                  <Printer className="w-4 h-4 ml-2" />
+                  הדפס
+                </Button>
+              </div>
+
+              {/* תצוגה מקדימה — היא גם מה שמצולם ל-PDF ומודפס */}
+              <div className="border rounded-xl overflow-x-auto bg-white">
+                <div style={{ minWidth: '640px' }} ref={reportRef}>
+                  <CustomerOpenReportLayout
+                    customer={reportData.customer}
+                    groups={reportData.groups}
+                    totals={reportData.totals}
+                    farmName={currentFarm?.name}
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

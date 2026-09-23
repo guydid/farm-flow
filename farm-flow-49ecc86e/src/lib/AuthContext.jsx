@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { localAuth } from '@/api/localClient';
+import { getMeCached } from '@/api/cachedReads';
 
 const AuthContext = createContext();
 
@@ -9,7 +10,7 @@ export const AuthProvider = ({ children }) => {
   const [authError, setAuthError] = useState(null);
 
   useEffect(() => {
-    localAuth.me()
+    getMeCached()
       .then(u => { setUser(u); setIsLoadingAuth(false); })
       .catch(e => {
         const type = e.type === 'auth_required' ? 'auth_required' : 'unknown';

@@ -14,6 +14,7 @@ import {
   ActivityType, User, Farm
 } from "@/entities/all";
 import { createPageUrl } from "@/utils";
+import { getMeCached, getFarmCached, getListCached } from "@/api/cachedReads";
 import { useToast } from "@/components/ui/use-toast";
 import { format, parseISO, differenceInDays } from "date-fns";
 import {
@@ -22,6 +23,7 @@ import {
   ClipboardList, Sprout, LayoutGrid, X, BellOff, CheckCircle2, ShieldAlert
 } from "lucide-react";
 import { getCropIcon } from "../seedings/CropIcons";
+import { segmentMeta, ALERT_SEGMENT_ORDER } from "../layout/alertSegments";
 
 /* ─── Page shortcuts config ──────────────────────────────────────── */
 const PAGE_SHORTCUTS = [
@@ -40,36 +42,37 @@ function buildAlerts(employees, vehicles) {
   const today = new Date();
   const result = [];
 
-  // Employee passport / visa — check all non-inactive employees
+  // Employees (סגמנט: עובדים) — דרכון / ויזה
   employees
     .filter(e => e && e.status !== "inactive")
     .forEach(e => {
       const name = e.nickname || `${e.first_name || ""} ${e.last_name || ""}`.trim();
       const link = createPageUrl("EmployeeDetail") + `?id=${e.id}`;
-      checkExpiry(e.passport_expiry, `דרכון — ${name}`, link, result, today);
-      checkExpiry(e.visa_expiry,    `ויזה — ${name}`,    link, result, today);
+      checkExpiry(e.passport_expiry, `דרכון — ${name}`, link, result, today, "workers");
+      checkExpiry(e.visa_expiry,    `ויזה — ${name}`,    link, result, today, "workers");
     });
 
-  // Vehicle insurance / test — check all non-inactive vehicles
+  // Vehicles (סגמנט: תפעולי) — ביטוח חובה / ביטוח מקיף / טסט
   vehicles
-    .filter(v => v && v.status !== "inactive")
+    .filter(v => v && v.status !== "sold" && v.status !== "out_of_order")
     .forEach(v => {
       const link = createPageUrl("VehicleDetail") + `?id=${v.id}`;
-      checkExpiry(v.insurance_info?.end_date,        `ביטוח — ${v.name}`, link, result, today);
-      checkExpiry(v.licensing_info?.next_test_date,  `טסט — ${v.name}`,   link, result, today);
+      checkExpiry(v.insurance_compulsory?.end_date, `ביטוח חובה — ${v.name}`, link, result, today, "operational");
+      checkExpiry(v.insurance_info?.end_date,       `ביטוח מקיף — ${v.name}`, link, result, today, "operational");
+      checkExpiry(v.licensing_info?.next_test_date, `טסט — ${v.name}`,         link, result, today, "operational");
     });
 
   return result;
 }
 
-function checkExpiry(dateStr, label, link, out, today) {
+function checkExpiry(dateStr, label, link, out, today, segment) {
   if (!dateStr) return;
   try {
     const d = parseISO(dateStr);
     const diff = differenceInDays(d, today);
-    if (diff < 0)       out.push({ kind: "error",   text: `${label} פג תוקף!`,           link });
-    else if (diff <= 7)  out.push({ kind: "error",   text: `${label} פג בעוד ${diff} ימים`, link });
-    else if (diff <= 30) out.push({ kind: "warning", text: `${label} פג בעוד ${diff} ימים`, link });
+    if (diff < 0)       out.push({ kind: "error",   text: `${label} פג תוקף!`,           link, segment });
+    else if (diff <= 7)  out.push({ kind: "error",   text: `${label} פג בעוד ${diff} ימים`, link, segment });
+    else if (diff <= 30) out.push({ kind: "warning", text: `${label} פג בעוד ${diff} ימים`, link, segment });
   } catch (_) {}
 }
 
@@ -121,16 +124,20 @@ export default function MobileDashboard() {
     saveDismissed(next);
   };
 
-  // Rotating alert index
-  const [alertIndex, setAlertIndex] = useState(0);
-  useEffect(() => {
-    if (alerts.length <= 1) return;
-    const t = setInterval(() => setAlertIndex(i => (i + 1) % alerts.length), 4000);
-    return () => clearInterval(t);
-  }, [alerts.length]);
-  useEffect(() => {
-    setAlertIndex(0);
-  }, [alerts.length]);
+  // הסגמנט הפתוח כרגע בתצוגת ההתראות (אגרונומי / עובדים / תפעולי), null = סגור
+  const [openSegment, setOpenSegment] = useState(null);
+
+  // קיבוץ ההתראות הפעילות לפי סגמנט
+  const alertsBySegment = {};
+  ALERT_SEGMENT_ORDER.forEach(s => { alertsBySegment[s] = []; });
+  alerts.forEach(a => { (alertsBySegment[a.segment] || alertsBySegment.operational).push(a); });
+
+  // ניקוי כל ההתראות של סגמנט מסוים (להיום)
+  const dismissSegment = (seg) => {
+    const next = new Set(dismissedKeys);
+    (alertsBySegment[seg] || []).forEach(a => next.add(a.key));
+    saveDismissed(next);
+  };
 
   // Dialog
   const [activeDialog, setActiveDialog]       = useState(null);
@@ -165,9 +172,9 @@ export default function MobileDashboard() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const user = await User.me();
+      const user = await getMeCached();
       if (!user?.current_farm_id) { setLoading(false); return; }
-      const farm = await Farm.get(user.current_farm_id);
+      const farm = await getFarmCached(user.current_farm_id);
       setCurrentFarm(farm);
       const f = { farm_id: user.current_farm_id };
 
@@ -176,9 +183,9 @@ export default function MobileDashboard() {
         Employee.filter(f).catch(() => []),
         Vehicle.filter(f).catch(() => []),
         WeighingCertificate.filter({ ...f, date: new Date().toISOString().split("T")[0] }).catch(() => []),
-        Variety.list().catch(() => []),
-        Pesticide.list().catch(() => []),
-        ActivityType.list().catch(() => [])
+        getListCached('varieties', () => Variety.list()).catch(() => []),
+        getListCached('pesticides', () => Pesticide.list()).catch(() => []),
+        getListCached('activity_types', () => ActivityType.list()).catch(() => [])
       ]);
 
       setActiveSeedings(Array.isArray(seeds)    ? seeds.slice(0, 10) : []);
@@ -234,9 +241,9 @@ export default function MobileDashboard() {
           quantity: parseFloat(p.quantity || 0), unit: p.unit
         }))
       });
-      toast({ title: "הצלחה", description: "ריסוס נוסף בהצלחה!" });
+      toast({ title: "הצלחה", description: "הדברה נוספה בהצלחה!" });
       setActiveDialog(null); setSprayingForm(emptySpraying); setSelectedPesticides([]);
-    } catch { toast({ title: "שגיאה", description: "הוספת ריסוס נכשלה", variant: "destructive" }); }
+    } catch { toast({ title: "שגיאה", description: "הוספת הדברה נכשלה", variant: "destructive" }); }
   };
 
   const handleQuickActivity = async () => {
@@ -306,126 +313,107 @@ export default function MobileDashboard() {
         </div>
       </div>
 
-      {/* ── Rotating Alert Ticker ──────────────────────────────────── */}
+      {/* ── Alert Segments (3 icons) ───────────────────────────────── */}
       {(() => {
-        const cur = alerts[alertIndex % Math.max(alerts.length, 1)];
-
-        // All good — no alerts at all
-        if (allAlerts.length === 0) return (
-          <div className="flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-green-50 border border-green-200">
-            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-              <CheckCircle2 className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <p className="text-base font-semibold text-green-800">הכל תקין</p>
-              <p className="text-sm text-green-600">אין התראות פעילות</p>
-            </div>
-          </div>
-        );
-
-        // All dismissed
-        if (alerts.length === 0) return (
-          <div className="flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-gray-50 border border-gray-200">
-            <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center flex-shrink-0">
-              <BellOff className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1">
-              <p className="text-base font-semibold text-gray-600">התראות הוסתרו</p>
-              <p className="text-sm text-gray-400">{allAlerts.length} התראות מוסתרות להיום</p>
-            </div>
-            <button
-              onClick={() => saveDismissed(new Set())}
-              className="text-sm text-blue-500 font-medium px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors"
-            >
-              שחזר
-            </button>
-          </div>
-        );
-
-        // Active alerts — rotating ticker
-        const isError = cur.kind === "error";
-        const bgCard  = isError ? "bg-red-500"   : "bg-amber-500";
-        const bgLight = isError ? "bg-red-50 border-red-200"   : "bg-amber-50 border-amber-200";
-        const textCol = isError ? "text-red-800"  : "text-amber-800";
-        const dotActive = isError ? "bg-red-500" : "bg-amber-500";
+        const SEG_ICON = { agronomic: Sprout, workers: Users, operational: Truck };
+        const allDismissed = allAlerts.length > 0 && alerts.length === 0;
 
         return (
-          <div className={`rounded-2xl border overflow-hidden ${bgLight}`}>
-            {/* top bar */}
-            <div className={`flex items-center justify-between px-3 pt-2.5 pb-1`}>
-              <div className="flex items-center gap-1.5">
-                <ShieldAlert className={`w-4 h-4 ${isError ? "text-red-500" : "text-amber-500"}`} />
-                <span className={`text-sm font-semibold ${textCol}`}>
-                  התראות
-                  {alerts.length > 1 && <span className="opacity-60 mr-1">{alertIndex + 1}/{alerts.length}</span>}
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={dismissAllAlerts}
-                  className={`text-sm px-2 py-0.5 rounded-md ${isError ? "text-red-400 hover:bg-red-100" : "text-amber-400 hover:bg-amber-100"} transition-colors`}
-                >
-                  נקה הכל
-                </button>
-              </div>
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2">
+              {ALERT_SEGMENT_ORDER.map(seg => {
+                const meta = segmentMeta(seg);
+                const Icon = SEG_ICON[seg] || ShieldAlert;
+                const list = alertsBySegment[seg] || [];
+                const errs = list.filter(a => a.kind === "error").length;
+                const sev = errs > 0 ? "error" : list.length > 0 ? "warning" : "ok";
+                const card = sev === "error" ? "bg-red-50 border-red-200"
+                  : sev === "warning" ? "bg-amber-50 border-amber-200"
+                  : "bg-green-50 border-green-200";
+                const iconWrap = sev === "error" ? "bg-red-500"
+                  : sev === "warning" ? "bg-amber-500"
+                  : "bg-green-500";
+                const isOpen = openSegment === seg;
+                return (
+                  <button
+                    key={seg}
+                    onClick={() => setOpenSegment(isOpen ? null : seg)}
+                    className={`relative rounded-2xl border p-2.5 flex flex-col items-center gap-1 transition-all ${card} ${isOpen ? "ring-2 ring-offset-1 ring-gray-300" : ""}`}
+                  >
+                    <div className={`relative w-10 h-10 rounded-full ${iconWrap} flex items-center justify-center`}>
+                      <Icon className="w-5 h-5 text-white" />
+                      {list.length > 0 && (
+                        <span className="absolute -top-1 -left-1 min-w-[18px] h-[18px] px-1 rounded-full bg-white border border-gray-200 text-[11px] font-bold text-gray-800 flex items-center justify-center">
+                          {list.length}
+                        </span>
+                      )}
+                      {sev === "ok" && (
+                        <CheckCircle2 className="absolute -top-1 -left-1 w-4 h-4 text-green-600 bg-white rounded-full" />
+                      )}
+                    </div>
+                    <span className="text-xs font-semibold text-gray-700">{meta.label}</span>
+                    <span className="text-[11px] text-gray-400 leading-none">
+                      {sev === "ok" ? "תקין" : sev === "error" ? `${errs} דחופות` : `${list.length} התראות`}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* main content row */}
-            <div className="flex items-center px-2 pb-2.5 gap-1">
-              {/* prev */}
-              {alerts.length > 1 && (
-                <button
-                  onClick={() => setAlertIndex(i => (i - 1 + alerts.length) % alerts.length)}
-                  className={`p-1.5 rounded-xl ${isError ? "hover:bg-red-100 text-red-300" : "hover:bg-amber-100 text-amber-300"} transition-colors flex-shrink-0`}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              )}
-
-              {/* alert body */}
-              <Link to={cur.link} className="flex-1 flex items-center gap-2.5 px-1 py-1 active:opacity-70 transition-opacity">
-                <div className={`w-9 h-9 rounded-full ${bgCard} flex items-center justify-center flex-shrink-0`}>
-                  <AlertTriangle className="w-5 h-5 text-white" />
-                </div>
-                <span className={`text-base font-medium flex-1 leading-snug ${textCol}`}>{cur.text}</span>
-                <ChevronLeft className={`w-4 h-4 opacity-40 flex-shrink-0 ${textCol}`} />
-              </Link>
-
-              {/* dismiss current + next */}
-              <div className="flex flex-col gap-0.5 flex-shrink-0">
-                <button
-                  onClick={(e) => dismissAlert(e, cur.key)}
-                  className={`p-1.5 rounded-xl ${isError ? "hover:bg-red-100 text-red-300" : "hover:bg-amber-100 text-amber-300"} transition-colors`}
-                  aria-label="סגור"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-                {alerts.length > 1 && (
-                  <button
-                    onClick={() => setAlertIndex(i => (i + 1) % alerts.length)}
-                    className={`p-1.5 rounded-xl ${isError ? "hover:bg-red-100 text-red-300" : "hover:bg-amber-100 text-amber-300"} transition-colors`}
-                  >
-                    <ChevronLeft className="w-4 h-4 rotate-90" />
-                  </button>
+            {/* רשימת ההתראות של הסגמנט הפתוח */}
+            {openSegment && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-2 space-y-1.5">
+                {(alertsBySegment[openSegment] || []).length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-3">
+                    אין התראות פעילות ב{segmentMeta(openSegment).label}
+                  </p>
+                ) : (
+                  <>
+                    {alertsBySegment[openSegment].map(a => {
+                      const isErr = a.kind === "error";
+                      return (
+                        <div
+                          key={a.key}
+                          className={`flex items-center gap-2 rounded-xl border px-2 py-2 ${isErr ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"}`}
+                        >
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isErr ? "bg-red-500" : "bg-amber-500"}`}>
+                            <AlertTriangle className="w-4 h-4 text-white" />
+                          </div>
+                          <Link
+                            to={a.link}
+                            className={`flex-1 text-sm font-medium leading-snug ${isErr ? "text-red-800" : "text-amber-800"}`}
+                          >
+                            {a.text}
+                          </Link>
+                          <button
+                            onClick={(e) => dismissAlert(e, a.key)}
+                            className={`p-1 rounded-lg flex-shrink-0 ${isErr ? "text-red-300 hover:bg-red-100" : "text-amber-300 hover:bg-amber-100"} transition-colors`}
+                            aria-label="סגור"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <button
+                      onClick={() => dismissSegment(openSegment)}
+                      className="w-full text-xs text-gray-400 hover:text-gray-600 py-1 transition-colors"
+                    >
+                      נקה התראות {segmentMeta(openSegment).label}
+                    </button>
+                  </>
                 )}
               </div>
-            </div>
+            )}
 
-            {/* dot indicators */}
-            {alerts.length > 1 && (
-              <div className="flex justify-center gap-1.5 pb-2.5">
-                {alerts.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setAlertIndex(i)}
-                    className={`rounded-full transition-all duration-300 ${
-                      i === alertIndex
-                        ? `w-4 h-1.5 ${dotActive}`
-                        : `w-1.5 h-1.5 ${isError ? "bg-red-200" : "bg-amber-200"}`
-                    }`}
-                  />
-                ))}
-              </div>
+            {/* שחזור התראות שהוסתרו */}
+            {allDismissed && (
+              <button
+                onClick={() => saveDismissed(new Set())}
+                className="w-full flex items-center justify-center gap-1.5 text-sm text-blue-500 font-medium py-1.5 rounded-xl bg-blue-50 border border-blue-100"
+              >
+                <BellOff className="w-4 h-4" /> שחזר {allAlerts.length} התראות מוסתרות להיום
+              </button>
             )}
           </div>
         );
@@ -574,7 +562,7 @@ export default function MobileDashboard() {
       {/* Spraying dialog */}
       <Dialog open={activeDialog === "spraying"} onOpenChange={() => setActiveDialog(null)}>
         <DialogContent dir="rtl" className="max-w-lg w-full h-[90dvh] sm:h-auto overflow-y-auto rounded-t-2xl sm:rounded-lg mx-0 sm:mx-auto bottom-0 sm:bottom-auto top-auto sm:top-[50%] translate-y-0 sm:-translate-y-1/2 fixed">
-          <DialogHeader><DialogTitle>ריסוס מהיר</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>הדברה מהירה</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>בחר מזרע</Label>
@@ -638,7 +626,7 @@ export default function MobileDashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setActiveDialog(null)}>ביטול</Button>
-            <Button onClick={handleQuickSpraying}>הוסף ריסוס</Button>
+            <Button onClick={handleQuickSpraying}>הוסף הדברה</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,20 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { User, Farm, Seeding, Harvest, Activity, ActivityType, Variety } from "@/entities/all";
-import { base44 } from "@/api/base44Client";
+import { User, Farm, Seeding, Harvest, Activity, ActivityType, Variety, Crop, Packaging, Product } from "@/entities/all";
+import { varietiesForSeeding, packagingsForSeeding } from "@/lib/seedingFilters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
-import { Globe, CheckCircle, Sprout, ClipboardList } from "lucide-react";
+import { Globe, CheckCircle, Sprout, ClipboardList, LogOut } from "lucide-react";
 import { format } from "date-fns";
 
 const translations = {
   en: {
     title: "Field Work Entry",
     selectLanguage: "Select Language",
+    logout: "Log out",
     harvest: "Harvest",
     activity: "Activity",
     seeding: "Plot",
@@ -25,6 +27,12 @@ const translations = {
     variety: "Variety",
     varieties: "Varieties",
     packageCount: "Package Count",
+    packaging: "Packaging",
+    selectPackaging: "Select packaging",
+    expectedWeight: "Expected weight (kg)",
+    pricePerUnit: "Price per unit (₪)",
+    notes: "Notes",
+    notesPlaceholder: "Additional notes...",
     activityType: "Activity Type",
     description: "Description",
     submit: "Submit",
@@ -48,6 +56,7 @@ const translations = {
   th: {
     title: "บันทึกการทำงานในไร่",
     selectLanguage: "เลือกภาษา",
+    logout: "ออกจากระบบ",
     harvest: "เก็บเกี่ยว",
     activity: "กิจกรรม",
     seeding: "แปลง",
@@ -58,6 +67,12 @@ const translations = {
     variety: "พันธุ์",
     varieties: "พันธุ์",
     packageCount: "จำนวนกล่อง",
+    packaging: "บรรจุภัณฑ์",
+    selectPackaging: "เลือกบรรจุภัณฑ์",
+    expectedWeight: "น้ำหนักโดยประมาณ (กก.)",
+    pricePerUnit: "ราคาต่อหน่วย (₪)",
+    notes: "หมายเหตุ",
+    notesPlaceholder: "หมายเหตุเพิ่มเติม...",
     activityType: "ประเภทกิจกรรม",
     description: "รายละเอียด",
     submit: "บันทึก",
@@ -80,24 +95,36 @@ const translations = {
   }
 };
 
+// Seeding statuses considered "active" (mirrors the Seedings page "פעילים" filter).
+const ACTIVE_SEEDING_STATUSES = ['ordered', 'growing', 'harvesting', 'preparation'];
+
 export default function FieldWorker() {
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState("th");
+  const [me, setMe] = useState(null);
   const [currentFarm, setCurrentFarm] = useState(null);
   const [seedings, setSeedings] = useState([]);
   const [varieties, setVarieties] = useState([]);
   const [activityTypes, setActivityTypes] = useState([]);
+  const [crops, setCrops] = useState([]);
+  const [packagings, setPackagings] = useState([]);
+  const [products, setProducts] = useState([]);
   const { toast } = useToast();
   const t = translations[language];
 
   const [translatedNames, setTranslatedNames] = useState({});
 
-  const [harvestForm, setHarvestForm] = useState({
+  const EMPTY_HARVEST = {
     seeding_id: "",
     date: format(new Date(), 'yyyy-MM-dd'),
-    quality: "",
+    variety: "",          // variety id
+    packaging: "",        // packaging name
     package_count: "",
-    varieties: [] // Array of { variety_id, variety_name, quantity }
-  });
+    weight: "",           // expected weight (kg), auto-calculated but editable
+    quality: "",
+    price_per_unit: "",
+    notes: "",
+  };
+  const [harvestForm, setHarvestForm] = useState(EMPTY_HARVEST);
 
   const [activityForm, setActivityForm] = useState({
     seeding_id: "",
@@ -109,6 +136,17 @@ export default function FieldWorker() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Auto-calculate expected weight = package_count × packaging.expected_weight (editable).
+  useEffect(() => {
+    if (harvestForm.package_count && harvestForm.packaging) {
+      const p = packagings.find(x => x.name === harvestForm.packaging);
+      if (p && typeof p.expected_weight === 'number') {
+        const w = (parseFloat(harvestForm.package_count) * p.expected_weight);
+        if (!isNaN(w)) setHarvestForm(prev => ({ ...prev, weight: w.toFixed(2) }));
+      }
+    }
+  }, [harvestForm.package_count, harvestForm.packaging, packagings]);
 
   const getSeedingDisplayName = (seeding) => {
     if (language === 'en' || language === 'th') {
@@ -124,95 +162,91 @@ export default function FieldWorker() {
     return variety.name;
   };
 
+  // Activity type / crop names also prefer English in the field-worker UI.
+  const getActivityTypeName = (at) => ((language === 'en' || language === 'th') ? (at.name_en || at.name) : at.name);
+  const getCropName = (cropName) => {
+    if (language !== 'en' && language !== 'th') return cropName;
+    const c = crops.find(x => x.name === cropName);
+    return c?.name_en || cropName;
+  };
+
   const loadData = async () => {
     try {
       const user = await User.me();
+      setMe(user);
+      if (user.language === 'en' || user.language === 'th') setLanguage(user.language);
       if (!user.current_farm_id) return;
 
       const farm = await Farm.get(user.current_farm_id);
       setCurrentFarm(farm);
 
-      const [seedingsData, activityTypesData, varietiesData] = await Promise.all([
-        Seeding.filter({ 
+      const [seedingsData, activityTypesData, varietiesData, cropsData, packagingsData, productsData] = await Promise.all([
+        Seeding.filter({
           farm_id: user.current_farm_id
         }).catch(() => []),
         ActivityType.filter({ farm_id: user.current_farm_id }).catch(() => []),
-        Variety.filter({ farm_id: user.current_farm_id }).catch(() => [])
+        Variety.filter({ farm_id: user.current_farm_id }).catch(() => []),
+        Crop.filter({ farm_id: user.current_farm_id }).catch(() => []),
+        Packaging.filter({ farm_id: user.current_farm_id }).catch(() => []),
+        Product.filter({ farm_id: user.current_farm_id }).catch(() => [])
       ]);
 
-      console.log('Loaded seedings:', seedingsData);
-      console.log('Loaded activity types:', activityTypesData);
-      console.log('Loaded varieties:', varietiesData);
+      // Only active seedings are pickable for harvest/activity entry.
+      const activeSeedings = (Array.isArray(seedingsData) ? seedingsData : [])
+        .filter(s => ACTIVE_SEEDING_STATUSES.includes(s.status));
 
-      setSeedings(Array.isArray(seedingsData) ? seedingsData : []);
+      setSeedings(activeSeedings);
       setActivityTypes(Array.isArray(activityTypesData) ? activityTypesData : []);
       setVarieties(Array.isArray(varietiesData) ? varietiesData : []);
+      setCrops(Array.isArray(cropsData) ? cropsData : []);
+      setPackagings(Array.isArray(packagingsData) ? packagingsData : []);
+      setProducts(Array.isArray(productsData) ? productsData : []);
     } catch (error) {
       console.error("Error loading data:", error);
     }
   };
 
+  // Persist the language choice so it sticks across logins.
+  const changeLanguage = (lang) => {
+    setLanguage(lang);
+    User.updateMyUserData({ language: lang }).catch(() => {});
+  };
+
+  const handleLogout = () => {
+    try { User.logout(); } catch { window.location.href = '/login'; }
+  };
+
   const handleHarvestSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!harvestForm.seeding_id || harvestForm.varieties.length === 0) {
-      toast({
-        title: t.error,
-        description: t.fillAllFields,
-        variant: "destructive"
-      });
-      return;
-    }
 
-    // Check that at least one variety has quantity
-    const hasQuantity = harvestForm.varieties.some(v => v.quantity && parseFloat(v.quantity) > 0);
-    if (!hasQuantity) {
-      toast({
-        title: t.error,
-        description: t.fillAllFields,
-        variant: "destructive"
-      });
+    // Same required fields as the main harvest form: plot, variety, and a quantity.
+    if (!harvestForm.seeding_id || !harvestForm.variety || (!harvestForm.weight && !harvestForm.package_count)) {
+      toast({ title: t.error, description: t.fillAllFields, variant: "destructive" });
       return;
     }
 
     try {
-      // Create a harvest record for each variety with quantity
-      const harvestPromises = harvestForm.varieties
-        .filter(v => v.quantity && parseFloat(v.quantity) > 0)
-        .map(v => 
-          Harvest.create({
-            farm_id: currentFarm.id,
-            seeding_id: harvestForm.seeding_id,
-            date: harvestForm.date,
-            quantity: parseFloat(v.quantity),
-            quality: harvestForm.quality || '',
-            variety: v.variety_name,
-            package_count: harvestForm.package_count ? parseInt(harvestForm.package_count) : null
-          })
-        );
-      
-      await Promise.all(harvestPromises);
-
-      toast({
-        title: t.success,
-        description: t.harvestRecorded,
-        duration: 3000,
+      const selectedVariety = varieties.find(v => v.id === harvestForm.variety);
+      const weight = parseFloat(harvestForm.weight) || 0;
+      await Harvest.create({
+        farm_id: currentFarm.id,
+        seeding_id: harvestForm.seeding_id,
+        date: harvestForm.date,
+        variety: selectedVariety?.name || '',
+        packaging: harvestForm.packaging || '',
+        package_count: harvestForm.package_count ? parseInt(harvestForm.package_count) : 0,
+        weight,
+        quantity: weight,
+        quality: harvestForm.quality || '',
+        price_per_unit: parseFloat(harvestForm.price_per_unit) || 0,
+        notes: harvestForm.notes || '',
       });
 
-      setHarvestForm({
-        seeding_id: "",
-        date: format(new Date(), 'yyyy-MM-dd'),
-        quality: "",
-        package_count: "",
-        varieties: []
-      });
+      toast({ title: t.success, description: t.harvestRecorded, duration: 3000 });
+      setHarvestForm({ ...EMPTY_HARVEST, date: harvestForm.date });
     } catch (error) {
       console.error("Error recording harvest:", error);
-      toast({
-        title: t.error,
-        description: error.message,
-        variant: "destructive"
-      });
+      toast({ title: t.error, description: error.message, variant: "destructive" });
     }
   };
 
@@ -262,10 +296,10 @@ export default function FieldWorker() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 p-4">
       <div className="max-w-2xl mx-auto">
-        {/* Language Selector */}
+        {/* Language Selector + logout */}
         <Card className="mb-6">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-blue-600" />
                 <span className="font-medium">{t.selectLanguage}</span>
@@ -273,19 +307,28 @@ export default function FieldWorker() {
               <div className="flex gap-2">
                 <Button
                   variant={language === "en" ? "default" : "outline"}
-                  onClick={() => setLanguage("en")}
+                  onClick={() => changeLanguage("en")}
                   size="sm"
                 >
                   English
                 </Button>
                 <Button
                   variant={language === "th" ? "default" : "outline"}
-                  onClick={() => setLanguage("th")}
+                  onClick={() => changeLanguage("th")}
                   size="sm"
                 >
                   ไทย
                 </Button>
               </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t pt-3">
+              <span className="text-sm text-gray-600 truncate">
+                {me?.full_name || me?.email || ""}{currentFarm?.name ? ` · ${currentFarm.name}` : ""}
+              </span>
+              <Button variant="ghost" size="sm" onClick={handleLogout} className="text-gray-500 hover:text-red-600">
+                <LogOut className="w-4 h-4 mr-1" />
+                {t.logout}
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -347,7 +390,7 @@ export default function FieldWorker() {
                                 : 'hover:bg-gray-50'
                             }`}
                             onClick={() => {
-                              setHarvestForm({...harvestForm, seeding_id: s.id, varieties: []});
+                              setHarvestForm({...harvestForm, seeding_id: s.id, variety: ''});
                             }}
                           >
                             <CardContent className="p-4">
@@ -355,7 +398,7 @@ export default function FieldWorker() {
                                 <div>
                                   <h3 className="font-semibold text-lg">{getSeedingDisplayName(s)}</h3>
                                   {s.crop_type && (
-                                    <p className="text-sm text-gray-600">{s.crop_type}</p>
+                                    <p className="text-sm text-gray-600">{getCropName(s.crop_type)}</p>
                                   )}
                                 </div>
                                 {harvestForm.seeding_id === s.id && (
@@ -369,106 +412,102 @@ export default function FieldWorker() {
                     )}
                   </div>
 
-                  {/* Varieties - shown only after seeding is selected */}
+                  {/* Harvest details — shown only after a plot is selected */}
                   {harvestForm.seeding_id && (() => {
                     const selectedSeeding = seedings.find(s => s.id === harvestForm.seeding_id);
-                    const seedingVarietyIds = (selectedSeeding?.varieties || []).map(v => v.variety_id);
-                    const relevantVarieties = varieties.filter(v => seedingVarietyIds.includes(v.id));
-                    
+                    const relevantVarieties = varietiesForSeeding(selectedSeeding, varieties);
+                    const relevantPackagings = packagingsForSeeding(selectedSeeding, packagings, products);
+
                     return (
-                      <div>
-                        <Label className="block mb-3">{t.varieties} *</Label>
-                        {relevantVarieties.length === 0 ? (
-                          <p className="text-gray-500 text-center py-4">{t.noVarieties}</p>
-                        ) : (
-                          <div className="space-y-3">
-                            <p className="text-sm text-gray-600 mb-2">{t.addVarietyQuantity}</p>
-                            {relevantVarieties.map(v => {
-                            const varietyData = harvestForm.varieties.find(vf => vf.variety_id === v.id);
-                            const isSelected = !!varietyData;
-                            
-                            return (
-                              <Card
-                                key={v.id}
-                                className={`transition-all ${
-                                  isSelected ? 'ring-2 ring-green-500 bg-green-50' : ''
-                                }`}
-                              >
-                                <CardContent className="p-4">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="flex-1">
-                                      <h4 className="font-medium">{getVarietyDisplayName(v)}</h4>
-                                      {v.crop_type && (
-                                        <p className="text-sm text-gray-600">{v.crop_type}</p>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <Input
-                                        type="number"
-                                        step="0.1"
-                                        placeholder="0"
-                                        value={varietyData?.quantity || ''}
-                                        onChange={(e) => {
-                                          const quantity = e.target.value;
-                                          const newVarieties = harvestForm.varieties.filter(vf => vf.variety_id !== v.id);
-                                          if (quantity) {
-                                            newVarieties.push({
-                                              variety_id: v.id,
-                                              variety_name: v.name,
-                                              quantity: quantity
-                                            });
-                                          }
-                                          setHarvestForm({...harvestForm, varieties: newVarieties});
-                                        }}
-                                        className="w-24 text-lg text-center"
-                                      />
-                                      <span className="text-sm text-gray-600 w-8">kg</span>
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            );
-                          })}
+                      <div className="space-y-6">
+                        {/* Variety */}
+                        <div>
+                          <Label>{t.variety} *</Label>
+                          {relevantVarieties.length === 0 ? (
+                            <p className="text-gray-500 text-center py-4">{t.noVarieties}</p>
+                          ) : (
+                            <Select value={harvestForm.variety} onValueChange={(v) => setHarvestForm({...harvestForm, variety: v})}>
+                              <SelectTrigger className="text-lg"><SelectValue placeholder={t.selectVariety} /></SelectTrigger>
+                              <SelectContent>
+                                {relevantVarieties.map(v => (
+                                  <SelectItem key={v.id} value={v.id}>{getVarietyDisplayName(v)}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
-                      )}
-                    </div>
+
+                        {/* Packaging */}
+                        <div>
+                          <Label>{t.packaging}</Label>
+                          <Select value={harvestForm.packaging} onValueChange={(v) => setHarvestForm({...harvestForm, packaging: v})}>
+                            <SelectTrigger className="text-lg"><SelectValue placeholder={t.selectPackaging} /></SelectTrigger>
+                            <SelectContent>
+                              {relevantPackagings.map(p => (
+                                <SelectItem key={p.id} value={p.name}>
+                                  {(language === 'en' || language === 'th') ? (p.name_en || p.name) : p.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Package count */}
+                        <div>
+                          <Label>{t.packageCount}</Label>
+                          <Input type="number" inputMode="numeric" placeholder="100"
+                            value={harvestForm.package_count}
+                            onChange={(e) => setHarvestForm({...harvestForm, package_count: e.target.value})}
+                            className="text-lg" />
+                        </div>
+
+                        {/* Expected weight (auto from packaging × count, editable) */}
+                        <div>
+                          <Label>{t.expectedWeight}</Label>
+                          <Input type="number" step="0.1"
+                            value={harvestForm.weight}
+                            onChange={(e) => setHarvestForm({...harvestForm, weight: e.target.value})}
+                            className="text-lg" />
+                        </div>
+
+                        {/* Quality */}
+                        <div>
+                          <Label>{t.quality}</Label>
+                          <Select value={harvestForm.quality} onValueChange={(value) => setHarvestForm({...harvestForm, quality: value})}>
+                            <SelectTrigger><SelectValue placeholder={t.selectQuality} /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="א">{t.qualityA}</SelectItem>
+                              <SelectItem value="ב">{t.qualityB}</SelectItem>
+                              <SelectItem value="ג">{t.qualityC}</SelectItem>
+                              <SelectItem value="תעשייתי">{t.qualityIndustrial}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Price per unit */}
+                        <div>
+                          <Label>{t.pricePerUnit}</Label>
+                          <Input type="number" step="0.01"
+                            value={harvestForm.price_per_unit}
+                            onChange={(e) => setHarvestForm({...harvestForm, price_per_unit: e.target.value})}
+                            className="text-lg" />
+                        </div>
+
+                        {/* Notes */}
+                        <div>
+                          <Label>{t.notes}</Label>
+                          <Textarea placeholder={t.notesPlaceholder}
+                            value={harvestForm.notes}
+                            onChange={(e) => setHarvestForm({...harvestForm, notes: e.target.value})} />
+                        </div>
+                      </div>
                     );
                   })()}
 
-                  {/* Quality - optional */}
-                  <div>
-                    <Label>{t.quality}</Label>
-                    <Select
-                      value={harvestForm.quality}
-                      onValueChange={(value) => setHarvestForm({...harvestForm, quality: value})}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t.selectQuality} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="א">{t.qualityA}</SelectItem>
-                        <SelectItem value="ב">{t.qualityB}</SelectItem>
-                        <SelectItem value="ג">{t.qualityC}</SelectItem>
-                        <SelectItem value="תעשייתי">{t.qualityIndustrial}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Package Count */}
-                  <div>
-                    <Label>{t.packageCount}</Label>
-                    <Input
-                      type="number"
-                      value={harvestForm.package_count}
-                      onChange={(e) => setHarvestForm({...harvestForm, package_count: e.target.value})}
-                      className="text-lg"
-                    />
-                  </div>
-
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     className="w-full bg-green-600 hover:bg-green-700 text-lg py-6"
-                    disabled={!harvestForm.seeding_id || harvestForm.varieties.length === 0}
+                    disabled={!harvestForm.seeding_id || !harvestForm.variety || (!harvestForm.weight && !harvestForm.package_count)}
                   >
                     <CheckCircle className="w-5 h-5 mr-2" />
                     {t.submit}
@@ -522,7 +561,7 @@ export default function FieldWorker() {
                                 <div>
                                   <h3 className="font-semibold text-lg">{getSeedingDisplayName(s)}</h3>
                                   {s.crop_type && (
-                                    <p className="text-sm text-gray-600">{s.crop_type}</p>
+                                    <p className="text-sm text-gray-600">{getCropName(s.crop_type)}</p>
                                   )}
                                 </div>
                                 {activityForm.seeding_id === s.id && (
@@ -547,7 +586,7 @@ export default function FieldWorker() {
                       </SelectTrigger>
                       <SelectContent>
                         {activityTypes.map(at => (
-                          <SelectItem key={at.id} value={at.name}>{at.name}</SelectItem>
+                          <SelectItem key={at.id} value={at.name}>{getActivityTypeName(at)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

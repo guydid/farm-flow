@@ -34,6 +34,31 @@ async function uploadFile(file) {
   return res.json(); // { file_url, filename, size }
 }
 
+// מקטין תמונה בדפדפן לפני העלאה — צילום דרכון מהנייד יכול להיות 10MP+,
+// וההעלאה + עיבוד השרת איטיים. 2000px שומר על איכות לחילוץ טקסט וחיתוך פנים.
+async function downscaleImage(file, maxSide = 2000) {
+  if (!file || !file.type || !file.type.startsWith('image/')) return file;
+  if (file.size < 700 * 1024) return file; // קטן מספיק
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file);
+    });
+    const img = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    if (scale >= 1) return file;
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+    if (!blob) return file;
+    const baseName = (file.name || 'passport').replace(/\.[^.]+$/, '');
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
+  } catch { return file; }
+}
+
 const statusTranslations = {
     active: "פעיל",
     inactive: "לא פעיל",
@@ -49,7 +74,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
         start_date: '', termination_date: '', entry_date: '', country_of_origin: '',
         manpower_company_id: '', manager_id: '', passport_number: '', passport_expiry: '',
         passport_url: '', visa_type: '', visa_expiry: '', visa_url: '', contract_url: '',
-        bnhc_number: '',
+        bnhc_number: '', time_clock_id: '',
         insurance_details: { company: '', policy_number: '', policy_start_date: '', policy_end_date: '', policy_url: '', health_fund: '', health_fund_number: '', health_fund_url: '' },
         bank_details: { bank_name: '', branch_number: '', account_number: '' },
         notes: ''
@@ -81,6 +106,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
             visa_url: employee?.visa_url || '',
             contract_url: employee?.contract_url || '',
             bnhc_number: employee?.bnhc_number || '',
+            time_clock_id: employee?.time_clock_id || '',
             insurance_details: {
                 company: employee?.insurance_details?.company || '',
                 policy_number: employee?.insurance_details?.policy_number || '',
@@ -139,8 +165,9 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
         toast({ title: "מעלה דרכון...", description: file.name });
 
         try {
-            // Step 1: Upload
-            const { file_url } = await uploadFile(file);
+            // Step 1: הקטנה בדפדפן (העלאה ועיבוד מהירים) ואז העלאה
+            const toUpload = await downscaleImage(file);
+            const { file_url } = await uploadFile(toUpload);
             setPassportImageUrl(file_url);
             // Temporarily show full passport until face is cropped
             setExtractedPhotoUrl(file_url);
@@ -384,6 +411,10 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                     <div>
                         <Label>כינוי</Label>
                         <Input name="nickname" value={formData.nickname || ''} onChange={handleChange} />
+                    </div>
+                    <div>
+                        <Label>מספר עובד בשעון נוכחות</Label>
+                        <Input name="time_clock_id" inputMode="numeric" placeholder="לדוגמה 6833" value={formData.time_clock_id || ''} onChange={handleChange} />
                     </div>
                     <div>
                         <Label>מדינת מוצא</Label>

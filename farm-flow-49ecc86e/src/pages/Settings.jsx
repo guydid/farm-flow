@@ -27,7 +27,10 @@ import {
   Loader2,
   Brain,
   Cpu,
-  Send
+  Send,
+  Mail,
+  Clock,
+  Receipt
 } from "lucide-react";
 
 import CompanySettingsManager from "../components/settings/CompanySettingsManager";
@@ -46,6 +49,9 @@ import ActivityTypesManager from "../components/settings/ActivityTypesManager";
 import PrinterSettings from '../components/settings/PrinterSettings';
 import InputTypesManager from '../components/settings/InputTypesManager';
 import AISettingsManager from '../components/settings/AISettingsManager';
+import GmailSettingsManager from '../components/settings/GmailSettingsManager';
+import BookkeeperSettingsManager from '../components/settings/BookkeeperSettingsManager';
+import AttendanceSettingsManager from '../components/settings/AttendanceSettingsManager';
 import SensorManager from '../components/settings/SensorManager';
 import TelegramSettings from '../components/settings/TelegramSettings';
 import { User, Farm } from '@/entities/all';
@@ -201,6 +207,10 @@ export default function Settings() {
                   <CreditCard className="w-3.5 h-3.5" />
                   <span>מנוי</span>
                 </TabsTrigger>
+                <TabsTrigger value="attendance" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>שעון נוכחות</span>
+                </TabsTrigger>
                 <TabsTrigger value="ai" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Brain className="w-3.5 h-3.5" />
                   <span>AI</span>
@@ -212,6 +222,14 @@ export default function Settings() {
                 <TabsTrigger value="telegram" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Send className="w-3.5 h-3.5" />
                   <span>טלגרם</span>
+                </TabsTrigger>
+                <TabsTrigger value="gmail" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Gmail</span>
+                </TabsTrigger>
+                <TabsTrigger value="bookkeeper" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>חשבוניות</span>
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -262,6 +280,9 @@ export default function Settings() {
           <TabsContent value="subscription">
             <SubscriptionManager currentFarm={currentFarm} />
           </TabsContent>
+          <TabsContent value="attendance">
+            <AttendanceSettingsManager currentFarm={currentFarm} />
+          </TabsContent>
           <TabsContent value="ai">
             <AISettingsManager />
           </TabsContent>
@@ -270,6 +291,12 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="telegram">
             <TelegramSettings />
+          </TabsContent>
+          <TabsContent value="gmail">
+            <GmailSettingsManager />
+          </TabsContent>
+          <TabsContent value="bookkeeper">
+            <BookkeeperSettingsManager />
           </TabsContent>
         </Tabs>
       </div>

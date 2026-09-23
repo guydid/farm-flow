@@ -63,8 +63,18 @@ function SeedingVarietiesManager({ seeding, cropType, currentVarieties, onVariet
     const safeCurrentVarieties = Array.isArray(currentVarieties) ? currentVarieties : [];
     onVarietiesChange(safeCurrentVarieties.filter(v => v && v.variety_id !== varietyId));
   };
-  
-  const translateSeedlingType = (type) => ({ regular: "רגיל", grafted: "מורכב", bare_root: "חשוף שורש" }[type] || type);
+
+  // עריכה בשורה של כמות שתילים / סוג שתיל לזן שכבר משויך
+  const handleUpdateVariety = (varietyId, patch) => {
+    const safeCurrentVarieties = Array.isArray(currentVarieties) ? currentVarieties : [];
+    onVarietiesChange(safeCurrentVarieties.map(v => (v && v.variety_id === varietyId) ? { ...v, ...patch } : v));
+  };
+
+  const SEEDLING_TYPES = [
+    { value: "regular", label: "רגיל" },
+    { value: "grafted", label: "מורכב" },
+    { value: "bare_root", label: "חשוף שורש" },
+  ];
 
   const safeCurrentVarieties = Array.isArray(currentVarieties) ? currentVarieties : [];
   const safeAvailableVarieties = Array.isArray(availableVarieties) ? availableVarieties : [];
@@ -95,8 +105,26 @@ function SeedingVarietiesManager({ seeding, cropType, currentVarieties, onVariet
                         <TableRow key={v.variety_id}>
                             <TableCell className="font-medium">{v.name || 'טוען...'}</TableCell>
                             <TableCell>{v.marketing_company || '-'}</TableCell>
-                            <TableCell>{v.seedling_quantity?.toLocaleString()}</TableCell>
-                            <TableCell>{translateSeedlingType(v.seedling_type)}</TableCell>
+                            <TableCell>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    className="h-8 w-28"
+                                    value={v.seedling_quantity ?? ""}
+                                    onChange={(e) => handleUpdateVariety(v.variety_id, {
+                                        seedling_quantity: e.target.value === "" ? "" : parseInt(e.target.value, 10) || 0
+                                    })}
+                                    aria-label={`כמות שתילים - ${v.name || ""}`}
+                                />
+                            </TableCell>
+                            <TableCell>
+                                <Select value={v.seedling_type || "regular"} onValueChange={(val) => handleUpdateVariety(v.variety_id, { seedling_type: val })}>
+                                    <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {SEEDLING_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </TableCell>
                             <TableCell>
                                 <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveVariety(v.variety_id)}>
                                     <Trash2 className="w-4 h-4 text-red-500" />
@@ -296,7 +324,7 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
         ...formData, // formData now includes total_area updated by useEffect
         varieties: Array.isArray(seedingVarieties) ? seedingVarieties.map(sv => ({
           variety_id: sv.variety_id,
-          seedling_quantity: sv.seedling_quantity,
+          seedling_quantity: parseInt(sv.seedling_quantity, 10) || 0,
           seedling_type: sv.seedling_type
         })) : []
       };
@@ -423,7 +451,6 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                       type="date"
                       value={formData.start_date}
                       onChange={(e) => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
-                      required
                     />
                   </div>
                   <div>
@@ -433,8 +460,30 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                       type="date"
                       value={formData.planting_date}
                       onChange={(e) => setFormData(prev => ({ ...prev, planting_date: e.target.value }))}
-                      required
                     />
+                    <p className="text-xs text-gray-500 mt-1">מתעדכן אוטומטית מפעילות "שתילה"</p>
+                  </div>
+                  <div>
+                    <Label>קטיף ראשון</Label>
+                    <Input
+                      type="date"
+                      value={seeding?.first_harvest_date ? format(new Date(seeding.first_harvest_date), "yyyy-MM-dd") : ""}
+                      readOnly
+                      disabled
+                      className="bg-gray-100"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">מתעדכן אוטומטית מהקטיף הראשון</p>
+                  </div>
+                  <div>
+                    <Label>סיום (עקירה)</Label>
+                    <Input
+                      type="date"
+                      value={seeding?.end_date ? format(new Date(seeding.end_date), "yyyy-MM-dd") : ""}
+                      readOnly
+                      disabled
+                      className="bg-gray-100"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">מתעדכן אוטומטית מפעילות "עקירה"</p>
                   </div>
                   <div>
                     <Label htmlFor="estimated_end_date">תאריך סיום משוער</Label>

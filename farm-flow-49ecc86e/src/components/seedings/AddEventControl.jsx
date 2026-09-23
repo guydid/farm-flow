@@ -13,9 +13,10 @@ import { Activity, Harvest, Spraying, ActivityType, PlotSeeding, Plot } from "@/
 import PesticideSelector from "./PesticideSelector";
 import { format } from "date-fns";
 import SprayingForm from "./SprayingForm";
+import { packagingsForSeeding } from "@/lib/seedingFilters";
 import { useNavigate } from "react-router-dom";
 
-export default function AddEventControl({ seeding, pesticides, onSuccess, onClose, varieties, packagings, initialState }) {
+export default function AddEventControl({ seeding, pesticides, onSuccess, onClose, varieties, packagings, products, initialState }) {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [eventType, setEventType] = useState(null);
@@ -85,6 +86,12 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
       })
       .filter(Boolean); // Remove nulls
   }, [seeding, varieties]);
+
+  // אריזות רלוונטיות למזרע (לפי מוצרים של סוג הגידול); בעריכה שומרים את הערך הנוכחי
+  const relevantPackagings = React.useMemo(
+    () => packagingsForSeeding(seeding, packagings, products, { keepName: formData.packaging }),
+    [seeding, packagings, products, formData.packaging]
+  );
 
   // Set default variety to the one with most seedlings
   useEffect(() => {
@@ -285,12 +292,12 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
       const promise = sprayingData.id ? Spraying.update(sprayingData.id, data) : Spraying.create(data);
       await promise;
       
-      toast({ title: "הצלחה", description: `הריסוס ${sprayingData.id ? 'עודכן' : 'נוסף'} בהצלחה.` });
+      toast({ title: "הצלחה", description: `ההדברה ${sprayingData.id ? 'עודכן' : 'נוסף'} בהצלחה.` });
       handleClose();
       if (onSuccess) onSuccess();
     } catch (error) {
       console.error("Failed to save spraying:", error);
-      toast({ title: "שגיאה", description: "שמירת הריסוס נכשלה.", variant: "destructive" });
+      toast({ title: "שגיאה", description: "שמירת ההדברה נכשלה.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
@@ -383,22 +390,22 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <Label htmlFor="packaging">אריזה</Label>
-                  {(Array.isArray(packagings) ? packagings : []).length === 0 && (
+                  {relevantPackagings.length === 0 && (
                     <button type="button" onClick={() => navigate('/settings?tab=packaging')} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
                       הגדר אריזות <ExternalLink className="w-3 h-3" />
                     </button>
                   )}
                 </div>
-                {(Array.isArray(packagings) ? packagings : []).length === 0 ? (
+                {relevantPackagings.length === 0 ? (
                   <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 flex items-center justify-between">
-                    <span>אין אריזות מוגדרות</span>
+                    <span>אין אריזות מתאימות לגידול {seeding?.crop_type || ''}</span>
                     <button type="button" onClick={() => navigate('/settings?tab=packaging')} className="underline font-medium">הגדר כאן</button>
                   </div>
                 ) : (
                   <Select value={formData.packaging} onValueChange={value => setFormData(prev => ({...prev, packaging: value}))}>
                     <SelectTrigger id="packaging"><SelectValue placeholder="בחר אריזה..."/></SelectTrigger>
                     <SelectContent>
-                      {(Array.isArray(packagings) ? packagings : []).map(p => p && (
+                      {relevantPackagings.map(p => p && (
                         <SelectItem key={p.id} value={p.name}>
                           {p.name}{p.expected_weight && ` (${p.expected_weight} ק"ג)`}
                         </SelectItem>
@@ -483,7 +490,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
   }
 
   const dialogTitle = {
-    activity: "פעילות", harvest: "קטיף", spraying: "ריסוס"
+    activity: "פעילות", harvest: "קטיף", spraying: "הדברה"
   }[eventType];
 
   return (
@@ -495,7 +502,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
         <DropdownMenuContent>
           <DropdownMenuItem onSelect={() => handleOpen('activity')}><Tractor className="w-4 h-4 ml-2" />פעילות</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => handleOpen('harvest')}><Leaf className="w-4 h-4 ml-2" />קטיף</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => handleOpen('spraying')}><Droplets className="w-4 h-4 ml-2" />ריסוס</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => handleOpen('spraying')}><Droplets className="w-4 h-4 ml-2" />הדברה</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

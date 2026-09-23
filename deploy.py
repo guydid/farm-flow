@@ -77,6 +77,67 @@ def get_or_create_jwt_secret(ssh_conn):
 JWT_SECRET = get_or_create_jwt_secret(ssh)
 print(f"  JWT_SECRET: {JWT_SECRET[:8]}...{JWT_SECRET[-4:]} (persisted on VM)")
 
+# Read existing systemd service file and parse Environment=KEY=value lines.
+# Any secret/config that is NOT provided via local env var falls back to the
+# value already on the VM — so re-running the deploy never wipes credentials.
+def read_existing_env_from_service(ssh_conn):
+    """Return dict of {KEY: VALUE} from the existing service file, or {} if absent."""
+    stdin, stdout, _ = ssh_conn.exec_command('cat /etc/systemd/system/farm-flow.service 2>/dev/null')
+    body = stdout.read().decode('utf-8', errors='replace')
+    env = {}
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith('Environment='):
+            kv = line[len('Environment='):]
+            if '=' in kv:
+                k, v = kv.split('=', 1)
+                env[k.strip()] = v
+    return env
+
+existing_env = read_existing_env_from_service(ssh)
+if existing_env:
+    print(f"  [OK] Loaded {len(existing_env)} env vars from existing service file")
+
+def prefer_local_or_existing(var_name, local_value):
+    """If the local env var is set, use it. Otherwise fall back to the value
+    already configured on the VM — preserving secrets across deploys."""
+    if local_value:
+        return local_value, 'local-env'
+    if existing_env.get(var_name):
+        return existing_env[var_name], 'preserved-from-vm'
+    return '', 'unset'
+
+ANTHROPIC_API_KEY, _src = prefer_local_or_existing('ANTHROPIC_API_KEY', ANTHROPIC_API_KEY)
+HF_TOKEN,            _src = prefer_local_or_existing('HF_TOKEN',            HF_TOKEN)
+HF_MODEL,            _src = prefer_local_or_existing('HF_MODEL',            HF_MODEL)
+GROQ_API_KEY,        _src = prefer_local_or_existing('GROQ_API_KEY',        GROQ_API_KEY)
+GOOGLE_CLIENT_ID,     gid_src  = prefer_local_or_existing('GOOGLE_CLIENT_ID',     GOOGLE_CLIENT_ID)
+GOOGLE_CLIENT_SECRET, gsec_src = prefer_local_or_existing('GOOGLE_CLIENT_SECRET', GOOGLE_CLIENT_SECRET)
+
+# Print presence only — never the values themselves
+def shown(val): return 'set' if val else 'NOT SET'
+print(f"  ANTHROPIC_API_KEY: {shown(ANTHROPIC_API_KEY)}")
+print(f"  GROQ_API_KEY:      {shown(GROQ_API_KEY)}")
+print(f"  GOOGLE_CLIENT_ID:  {shown(GOOGLE_CLIENT_ID)} ({gid_src})")
+print(f"  GOOGLE_CLIENT_SECRET: {shown(GOOGLE_CLIENT_SECRET)} ({gsec_src})")
+
+# Generate/preserve TOKEN_ENC_KEY for encrypting Gmail refresh tokens (server-side AES-GCM)
+def get_or_create_token_enc_key(ssh_conn):
+    secret_file = '/home/nitur/farm-flow/.token_enc_key'
+    stdin, stdout, _ = ssh_conn.exec_command(f'cat {secret_file} 2>/dev/null')
+    existing = stdout.read().decode().strip()
+    if existing and len(existing) >= 32:
+        return existing
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    stdin, stdout, _ = ssh_conn.exec_command(f"echo '{new_secret}' > {secret_file} && chmod 600 {secret_file}")
+    stdout.channel.recv_exit_status()
+    print("  [OK] Generated new TOKEN_ENC_KEY (saved on VM)")
+    return new_secret
+
+TOKEN_ENC_KEY = get_or_create_token_enc_key(ssh)
+print(f"  TOKEN_ENC_KEY: {TOKEN_ENC_KEY[:8]}...{TOKEN_ENC_KEY[-4:]} (persisted on VM)")
+
 sftp = ssh.open_sftp()
 
 # Create directories
@@ -175,6 +236,8 @@ Environment=ALLOWED_ORIGINS={ALLOWED_ORIGINS}
 Environment=GOOGLE_CLIENT_ID={GOOGLE_CLIENT_ID}
 Environment=GOOGLE_CLIENT_SECRET={GOOGLE_CLIENT_SECRET}
 Environment=APP_BASE_URL={APP_BASE_URL}
+Environment=TOKEN_ENC_KEY={TOKEN_ENC_KEY}
+Environment=PUBLIC_FILE_URL_BASE={APP_BASE_URL}
 ExecStart=/usr/bin/node --dns-result-order=ipv4first server.js
 Restart=always
 RestartSec=5
@@ -190,11 +253,41 @@ sftp2.close()
 
 run(ssh, f"cp /tmp/farm-flow.service /etc/systemd/system/farm-flow.service", sudo=True)
 run(ssh, "systemctl daemon-reload", sudo=True)
-run(ssh, "systemctl restart farm-flow", sudo=True)
+
+# Stop the unit and free port 3002 BEFORE starting. A stray `node server.js`
+# left outside the unit (e.g. started manually) keeps the port and makes the new
+# process crash-loop with EADDRINUSE — serving stale code. `fuser -k 3002/tcp`
+# after the stop kills only whatever still holds 3002 (never touches n8n, which
+# runs on other ports). reset-failed clears any prior auto-restart backoff.
+import time
+run(ssh, "systemctl stop farm-flow", sudo=True)
+
+# Unconditionally free port 3002 (don't rely on a race-prone check): kill any orphan
+# on each pass and poll until the port is actually free. fuser only touches 3002.
+for attempt in range(8):
+    run(ssh, "fuser -k 3002/tcp 2>/dev/null; true", sudo=True)
+    time.sleep(1)
+    out_port, _ = run(ssh, "ss -ltnp | grep ':3002' || echo 'free'", sudo=True)
+    if 'free' in out_port:
+        break
+    print(f"  [!] Port 3002 still held (attempt {attempt + 1}) — retrying kill")
+
+run(ssh, "systemctl reset-failed farm-flow", sudo=True)
+run(ssh, "systemctl start farm-flow", sudo=True)
+
+# Verify it actually came up 'active' (not crash-looping on EADDRINUSE).
+# If not, clear 3002 once more and restart — up to 3 tries.
+time.sleep(3)
+for attempt in range(3):
+    active, _ = run(ssh, "systemctl is-active farm-flow", sudo=True)
+    if active.strip() == 'active':
+        break
+    print(f"  [!] Service is '{active.strip()}' — clearing 3002 and restarting")
+    run(ssh, "systemctl stop farm-flow; sleep 1; fuser -k 3002/tcp 2>/dev/null; sleep 2; systemctl reset-failed farm-flow; systemctl start farm-flow; true", sudo=True)
+    time.sleep(4)
 print("  [OK] Service restarted")
 
 # Quick wait then status check
-import time
 time.sleep(2)
 
 print("\n[6] Status check...")

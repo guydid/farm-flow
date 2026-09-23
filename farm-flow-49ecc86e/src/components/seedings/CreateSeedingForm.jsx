@@ -361,25 +361,26 @@ export default function CreateSeedingForm({ isOpen, onClose, onSuccess, availabl
               </div>
 
               <div>
-                <Label htmlFor="start_date">תאריך הזמנה *</Label>
+                <Label htmlFor="start_date">תאריך הזמנה</Label>
                 <Input
                   id="start_date"
                   type="date"
                   value={formData.start_date}
                   onChange={(e) => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
-                  required
                 />
               </div>
 
               <div>
-                <Label htmlFor="planting_date">תאריך שתילה משוער *</Label>
+                <Label htmlFor="planting_date">תאריך שתילה משוער</Label>
                 <Input
                   id="planting_date"
                   type="date"
                   value={formData.planting_date}
                   onChange={(e) => handlePlantingOrDaysChange('planting_date', e.target.value)}
-                  required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  תאריך השתילה בפועל יתעדכן אוטומטית עם הוספת פעילות "שתילה" למזרע.
+                </p>
               </div>
 
               <div>

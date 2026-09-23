@@ -49,3 +49,9 @@ explore_db.js
 test_*.js
 test_*.py
 import_workers.py
+.gstack/
+
+# Google OAuth client secret (never commit)
+client_secret/
+# Claude Code local settings
+.claude/settings.local.json*

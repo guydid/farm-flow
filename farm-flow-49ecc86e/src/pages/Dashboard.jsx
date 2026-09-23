@@ -1,14 +1,18 @@
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, lazy, Suspense } from "react";
 import { Seeding, Harvest, Plot, User, Farm, Activity, Spraying } from "@/entities/all";
+import { getMeCached, getFarmCached } from "@/api/cachedReads";
+import { batchFetch } from "@/api/localClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import SeedingsGanttChart from "../components/dashboard/SeedingsGanttChart";
-import HarvestChart from "../components/dashboard/HarvestChart";
-import IncomeDistributionChart from "../components/dashboard/IncomeDistributionChart";
-import DashboardSummary from "../components/dashboard/DashboardSummary";
-import MobileDashboard from "../components/dashboard/MobileDashboard";
-import EventsTimelineChart from "../components/dashboard/EventsTimelineChart";
+// Charts pull in recharts (heavy) — lazy-load them so mobile (which renders
+// MobileDashboard) and first paint never fetch the charting bundle.
+const SeedingsGanttChart = lazy(() => import("../components/dashboard/SeedingsGanttChart"));
+const HarvestChart = lazy(() => import("../components/dashboard/HarvestChart"));
+const IncomeDistributionChart = lazy(() => import("../components/dashboard/IncomeDistributionChart"));
+const DashboardSummary = lazy(() => import("../components/dashboard/DashboardSummary"));
+const MobileDashboard = lazy(() => import("../components/dashboard/MobileDashboard"));
+const EventsTimelineChart = lazy(() => import("../components/dashboard/EventsTimelineChart"));
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
@@ -66,7 +70,7 @@ export default function Dashboard() {
   const [activities, setActivities] = useState([]);
   const [sprayings, setSprayings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   const [currentFarm, setCurrentFarm] = useState(null);
   const [error, setError] = useState(null);
 
@@ -82,15 +86,21 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    // On mobile we render <MobileDashboard/> (which loads its own data) — skip the
+    // desktop fetches entirely so mobile doesn't pay for both load paths.
+    if (isMobile) {
+      setIsLoading(false);
+      return;
+    }
     loadData();
-  }, []);
+  }, [isMobile]);
 
   const loadData = async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      const user = await User.me();
+      const user = await getMeCached();
       if (!user || !user.current_farm_id) {
         // Safe initialization when no farm
         setSeedings([]);
@@ -103,34 +113,22 @@ export default function Dashboard() {
         return;
       }
       
-      const farm = await Farm.get(user.current_farm_id);
+      const farm = await getFarmCached(user.current_farm_id);
       setCurrentFarm(farm);
 
       const farmFilter = { farm_id: user.current_farm_id };
       
       // Use Promise.allSettled to handle individual failures gracefully
-      const [seedingsResult, harvestsResult, plotsResult, activitiesResult, sprayingsResult] = await Promise.allSettled([
-        Seeding.filter(farmFilter, "-start_date").catch(err => {
-          console.warn('Failed to load seedings:', err);
-          return [];
-        }),
-        Harvest.filter(farmFilter, "-date").catch(err => {
-          console.warn('Failed to load harvests:', err);
-          return [];
-        }),
-        Plot.filter(farmFilter).catch(err => {
-          console.warn('Failed to load plots:', err);
-          return [];
-        }),
-        Activity.filter(farmFilter, "-date").catch(err => {
-          console.warn('Failed to load activities:', err);
-          return [];
-        }),
-        Spraying.filter(farmFilter, "-date").catch(err => {
-          console.warn('Failed to load sprayings:', err);
-          return [];
-        })
-      ]);
+      // בקשת רשת אחת במקום חמש (כל סבב דרך Cloudflare עולה ~0.4 שנ')
+      const batch = await batchFetch([
+        { entity: 'seedings',   filter: farmFilter, sort: '-start_date' },
+        { entity: 'harvests',   filter: farmFilter, sort: '-date' },
+        { entity: 'plots',      filter: farmFilter },
+        { entity: 'activities', filter: farmFilter, sort: '-date' },
+        { entity: 'sprayings',  filter: farmFilter, sort: '-date' },
+      ]).catch(err => { console.warn('Dashboard batch failed:', err); return [[], [], [], [], []]; });
+      const [seedingsResult, harvestsResult, plotsResult, activitiesResult, sprayingsResult] =
+        batch.map(value => ({ status: 'fulfilled', value }));
 
       // Safe handling of results with detailed error logging
       const seedingsData = seedingsResult.status === 'fulfilled' && Array.isArray(seedingsResult.value) 
@@ -178,10 +176,12 @@ export default function Dashboard() {
     setIsLoading(false);
   };
 
-  if (isMobile && !isLoading) {
+  if (isMobile) {
     return (
       <ErrorBoundary>
-        <MobileDashboard />
+        <Suspense fallback={<div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div></div>}>
+          <MobileDashboard />
+        </Suspense>
       </ErrorBoundary>
     );
   }
@@ -220,7 +220,7 @@ export default function Dashboard() {
           {isLoading ? (
             <DashboardSkeleton />
           ) : (
-            <>
+            <Suspense fallback={<DashboardSkeleton />}>
               <ErrorBoundary>
                 <DashboardSummary seedings={seedings} plots={plots} harvests={harvests} />
               </ErrorBoundary>
@@ -251,7 +251,7 @@ export default function Dashboard() {
                   <IncomeDistributionChart harvests={harvests} seedings={seedings} />
                 </ErrorBoundary>
               </div>
-            </>
+            </Suspense>
           )}
         </div>
       </div>

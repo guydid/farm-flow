@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Farm, User } from '@/entities/all';
+import { getFarmCached } from '@/api/cachedReads';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -32,7 +33,7 @@ export default function FarmSelector({ currentUser, currentFarm, onFarmChange })
     try {
       const farmPromises = currentUser.farm_ids.map(async (farmId) => {
         try {
-          const farm = await Farm.get(farmId);
+          const farm = await getFarmCached(farmId);
           return farm;
         } catch (error) {
           console.warn(`Failed to load farm ${farmId}:`, error);

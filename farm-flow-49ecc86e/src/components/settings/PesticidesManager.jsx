@@ -44,13 +44,14 @@ export default function PesticidesManager() {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedProducts, setExpandedProducts] = useState(new Set());
+  const [controlFilter, setControlFilter] = useState("chemical"); // טבלת כימי / ביולוגי
   const itemsPerPage = 20;
 
   const initialFormData = {
     registration_number: "", product_name: "", manufacturer: "",
     active_ingredients: "", product_type: "fungicide", concentration: "",
     crop: "", pest: "", label_url: "", cost_per_unit: "", unit: "ליטר",
-    dosage: "", volume: ""
+    dosage: "", volume: "", control_type: "chemical"
   };
   const [formData, setFormData] = useState(initialFormData);
 
@@ -178,7 +179,8 @@ export default function PesticidesManager() {
       cost_per_unit: item.cost_per_unit?.toString() || "",
       unit: item.unit || "ליטר",
       dosage: item.dosage || "",
-      volume: item.volume || ""
+      volume: item.volume || "",
+      control_type: item.control_type || "chemical"
     });
     setIsDialogOpen(true);
   };
@@ -215,12 +217,13 @@ export default function PesticidesManager() {
   const groupedProducts = useMemo(() => {
     const q = searchTerm.toLowerCase();
     const filtered = (items || []).filter(item =>
+      (controlFilter === 'biological' ? item.control_type === 'biological' : item.control_type !== 'biological') && (
       (item.product_name?.toLowerCase() || '').includes(q) ||
       (item.active_ingredients?.toLowerCase() || '').includes(q) ||
       (item.manufacturer?.toLowerCase() || '').includes(q) ||
       (item.crop?.toLowerCase() || '').includes(q) ||
       (item.pest?.toLowerCase() || '').includes(q)
-    );
+    ));
     // Group by registration_number (fallback to id)
     const map = new Map();
     for (const item of filtered) {
@@ -238,7 +241,7 @@ export default function PesticidesManager() {
       }
     }
     return Array.from(map.values());
-  }, [items, searchTerm]);
+  }, [items, searchTerm, controlFilter]);
 
   const paginatedProducts = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -284,7 +287,7 @@ export default function PesticidesManager() {
                     <><Download className="w-4 h-4 ml-2" />ייבוא ממשרד החקלאות</>
                   )}
                 </Button>
-                <Button onClick={() => { resetForm(); setIsDialogOpen(true); }} className="flex-1">
+                <Button onClick={() => { resetForm(); setFormData({ ...initialFormData, control_type: controlFilter }); setIsDialogOpen(true); }} className="flex-1">
                   <Plus className="w-4 h-4 ml-2" /> הוסף
                 </Button>
               </div>
@@ -292,6 +295,23 @@ export default function PesticidesManager() {
           </div>
         </CardHeader>
         <CardContent>
+          {/* טבלת כימי / ביולוגי */}
+          <div className="flex bg-gray-100 p-0.5 rounded-lg w-fit mb-4">
+            <button
+              type="button"
+              onClick={() => { setControlFilter('chemical'); setCurrentPage(1); }}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${controlFilter === 'chemical' ? 'bg-white shadow text-blue-700' : 'text-gray-600'}`}
+            >
+              הדברה כימית
+            </button>
+            <button
+              type="button"
+              onClick={() => { setControlFilter('biological'); setCurrentPage(1); }}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${controlFilter === 'biological' ? 'bg-white shadow text-green-700' : 'text-gray-600'}`}
+            >
+              הדברה ביולוגית
+            </button>
+          </div>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
@@ -395,7 +415,11 @@ export default function PesticidesManager() {
           </div>
           {groupedProducts.length === 0 && (
             <div className="text-center py-8 text-gray-500">
-              {searchTerm ? `לא נמצאו תכשירים התואמים לחיפוש "${searchTerm}"` : "אין תכשירים להצגה. ייבא ממשרד החקלאות או הוסף ידנית."}
+              {searchTerm
+                ? `לא נמצאו תכשירים התואמים לחיפוש "${searchTerm}"`
+                : controlFilter === 'biological'
+                  ? 'אין תכשירים ביולוגיים עדיין. לחץ "הוסף" כדי להוסיף תכשיר ביולוגי (אויב טבעי, חיידק, פטרייה מועילה וכו\').'
+                  : "אין תכשירים להצגה. ייבא ממשרד החקלאות או הוסף ידנית."}
             </div>
           )}
         </CardContent>
@@ -467,8 +491,27 @@ export default function PesticidesManager() {
           <form onSubmit={handleSubmit}>
             <div className="grid grid-cols-2 gap-4 py-4 max-h-[70vh] overflow-y-auto px-1">
               <div className="col-span-2 grid gap-2">
+                <Label>סוג הדברה</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, control_type: "chemical" })}
+                    className={`px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${formData.control_type !== 'biological' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                  >
+                    כימית
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, control_type: "biological" })}
+                    className={`px-3 py-2 rounded-xl border text-sm font-medium transition-colors ${formData.control_type === 'biological' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-200'}`}
+                  >
+                    ביולוגית
+                  </button>
+                </div>
+              </div>
+              <div className="col-span-2 grid gap-2">
                 <Label>שם תכשיר</Label>
-                <Input value={formData.product_name} onChange={(e) => setFormData({ ...formData, product_name: e.target.value })} required />
+                <Input value={formData.product_name} onChange={(e) => setFormData({ ...formData, product_name: e.target.value })} required placeholder={formData.control_type === 'biological' ? 'לדוגמה: אמבליסייוס סווירסקי' : ''} />
               </div>
               <div className="grid gap-2">
                 <Label>מס' רישיון</Label>

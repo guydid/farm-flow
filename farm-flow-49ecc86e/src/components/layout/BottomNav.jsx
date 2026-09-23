@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Sprout, Map, MoreHorizontal, Plus, Users2,
   SlidersHorizontal, Layers, Truck, Settings, X, ChevronRight,
-  Scissors, ClipboardList, Leaf, Activity, Scale
+  Scissors, ClipboardList, Leaf, Activity, Scale, FileText, Building2, Camera, Clock, HardHat,
+  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets
 } from "lucide-react";
 
 // ─── Navigation items ───────────────────────────────────────────────────────
@@ -20,17 +21,22 @@ const mainNav = [
 
 const moreNav = [
   { name: "עובדים",          icon: Users2,            path: "Employees" },
+  { name: "שעון נוכחות",      icon: Clock,             path: "Attendance" },
   { name: "יריעות",           icon: Layers,            path: "Sheets" },
   { name: "שקילה",            icon: Scale,             path: "WeighingCertificates" },
   { name: "רכבים",            icon: Truck,             path: "Vehicles" },
+  { name: "חשבוניות",         icon: FileText,          path: "Invoices" },
+  { name: "ספקים",             icon: Building2,         path: "Suppliers" },
   { name: "הגדרות",           icon: Settings,          path: "Settings" },
 ];
 
 const quickActions = [
+  { name: "סרוק חשבונית",   icon: Camera,        path: "Invoices",             param: "?scan=true",   color: "bg-rose-500" },
   { name: "מזרע חדש",       icon: Sprout,        path: "Seedings",             param: "?create=true", color: "bg-green-500" },
   { name: "הוסף קטיף",     icon: Scissors,      path: "Seedings",             param: "",            color: "bg-amber-500" },
   { name: "אסמכתא שקילה",  icon: Scale,         path: "WeighingCertificates", param: "?create=true", color: "bg-blue-500" },
   { name: "עובד חדש",       icon: Users2,        path: "AddEmployee",          param: "",            color: "bg-purple-500" },
+  { name: "עובדים זמניים",  icon: HardHat,       path: "Attendance",           param: "?tab=temp&create=true", color: "bg-teal-500" },
   { name: "פעילות שדה",    icon: Activity,      path: "Seedings",             param: "",            color: "bg-orange-500" },
 ];
 
@@ -46,6 +52,156 @@ export default function BottomNav({ onQuickAction }) {
   };
 
   const isMoreActive = moreNav.some(item => isActive(item.path));
+
+  // בעמוד תעודת שקילה הבר התחתון מוחלף בפעולות התעודה. העמוד מאזין לאירוע
+  // window "weighing-detail-action" ומבצע את הפעולה (add/share/print/details).
+  const onWeighingDetail = location.pathname.startsWith(createPageUrl("WeighingDetail"));
+  const fireWeighingAction = (action) =>
+    window.dispatchEvent(new CustomEvent("weighing-detail-action", { detail: action }));
+
+  // גם ברשימת התעודות הראשית הבר מוחלף בפעולות רלוונטיות (אירוע "weighing-list-action")
+  const onWeighingList = location.pathname.startsWith(createPageUrl("WeighingCertificates"));
+  const fireWeighingListAction = (action) =>
+    window.dispatchEvent(new CustomEvent("weighing-list-action", { detail: action }));
+
+  const actionBtnCls = "flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors min-w-[48px] text-gray-500 active:text-indigo-600";
+
+  // בעמוד מזרע בודד הבר מוחלף בפעולות המזרע (אירוע "seeding-detail-action",
+  // AddEventControl בעמוד מאזין ופותח את הטופס המתאים)
+  const onSeedingDetail = location.pathname.startsWith(createPageUrl("SeedingDetail"));
+  const fireSeedingDetailAction = (action) =>
+    window.dispatchEvent(new CustomEvent("seeding-detail-action", { detail: action }));
+
+  if (onSeedingDetail) {
+    const btnCls = "flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors min-w-[48px] text-gray-500 active:text-indigo-600";
+    return (
+      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+        <div className="flex h-full items-center justify-around px-1">
+          <button onClick={() => navigate(createPageUrl("Seedings"))} className={btnCls}>
+            <ArrowRight className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">מזרעים</span>
+          </button>
+          <button onClick={() => fireSeedingDetailAction("activity")} className={btnCls}>
+            <Activity className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">פעילות</span>
+          </button>
+          <button
+            onClick={() => fireSeedingDetailAction("harvest")}
+            className="relative -top-4 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-amber-500 hover:bg-amber-600 active:scale-95 transition-all duration-200"
+            aria-label="הוסף קטיף"
+          >
+            <Scissors className="w-6 h-6 text-white" />
+          </button>
+          <button onClick={() => fireSeedingDetailAction("spraying")} className={btnCls}>
+            <Droplets className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">הדברה</span>
+          </button>
+        </div>
+      </nav>
+    );
+  }
+
+  // בעמוד המזרעים הבר מוחלף בפעולות מזרעים (אירוע "seedings-action")
+  const onSeedings = location.pathname.startsWith(createPageUrl("Seedings"));
+  const fireSeedingsAction = (action) =>
+    window.dispatchEvent(new CustomEvent("seedings-action", { detail: action }));
+
+  if (onSeedings) {
+    return (
+      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+        <div className="flex h-full items-center justify-around px-1">
+          <button onClick={() => navigate(createPageUrl("Dashboard"))} className={actionBtnCls}>
+            <ArrowRight className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">ראשי</span>
+          </button>
+          <button onClick={() => fireSeedingsAction("filters")} className={actionBtnCls}>
+            <SlidersHorizontal className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">סינון</span>
+          </button>
+          <button
+            onClick={() => fireSeedingsAction("create")}
+            className="relative -top-4 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all duration-200"
+            aria-label="מזרע חדש"
+          >
+            <Plus className="w-6 h-6 text-white" />
+          </button>
+          <button onClick={() => fireSeedingsAction("reports")} className={actionBtnCls}>
+            <TrendingUp className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">דוחות</span>
+          </button>
+          <button onClick={() => fireSeedingsAction("archive")} className={actionBtnCls}>
+            <Archive className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">ארכיון</span>
+          </button>
+        </div>
+      </nav>
+    );
+  }
+
+  if (onWeighingList) {
+    return (
+      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+        <div className="flex h-full items-center justify-around px-1">
+          <button onClick={() => navigate(createPageUrl("Dashboard"))} className={actionBtnCls}>
+            <ArrowRight className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">ראשי</span>
+          </button>
+          <button onClick={() => fireWeighingListAction("select")} className={actionBtnCls}>
+            <CheckSquare className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">בחירה</span>
+          </button>
+          <button
+            onClick={() => fireWeighingListAction("create")}
+            className="relative -top-4 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all duration-200"
+            aria-label="תעודה חדשה"
+          >
+            <Plus className="w-6 h-6 text-white" />
+          </button>
+          <button onClick={() => fireWeighingListAction("archive")} className={actionBtnCls}>
+            <Archive className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">ארכיון</span>
+          </button>
+          <button onClick={() => fireWeighingListAction("summary")} className={actionBtnCls}>
+            <PieChart className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">סיכום</span>
+          </button>
+        </div>
+      </nav>
+    );
+  }
+
+  if (onWeighingDetail) {
+    const actionBtn = actionBtnCls;
+    return (
+      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+        <div className="flex h-full items-center justify-around px-1">
+          <button onClick={() => navigate(createPageUrl("WeighingCertificates"))} className={actionBtn}>
+            <ArrowRight className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">תעודות</span>
+          </button>
+          <button onClick={() => fireWeighingAction("share")} className={actionBtn}>
+            <Share2 className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">שתף</span>
+          </button>
+          <button
+            onClick={() => fireWeighingAction("add")}
+            className="relative -top-4 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all duration-200"
+            aria-label="הוסף פריט"
+          >
+            <Plus className="w-6 h-6 text-white" />
+          </button>
+          <button onClick={() => fireWeighingAction("print")} className={actionBtn}>
+            <Printer className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">הדפס</span>
+          </button>
+          <button onClick={() => fireWeighingAction("details")} className={actionBtn}>
+            <Pencil className="w-5 h-5" />
+            <span className="text-[10px] font-medium leading-none">פרטים</span>
+          </button>
+        </div>
+      </nav>
+    );
+  }
 
   const handleQuickAction = (action) => {
     setFabOpen(false);

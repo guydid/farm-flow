@@ -196,7 +196,8 @@ export default function Vehicles() {
                                     </div>
                                     <p className="font-mono text-center text-lg p-2 bg-gray-100 rounded-md border">{vehicle.license_plate}</p>
                                     <div className="space-y-1 pt-2">
-                                        {getExpiryWarning(vehicle.insurance_info?.end_date, 'ביטוח')}
+                                        {getExpiryWarning(vehicle.insurance_compulsory?.end_date, 'ביטוח חובה')}
+                                        {getExpiryWarning(vehicle.insurance_info?.end_date, 'ביטוח מקיף')}
                                         {getExpiryWarning(vehicle.licensing_info?.next_test_date, 'טסט')}
                                     </div>
                                 </CardContent>

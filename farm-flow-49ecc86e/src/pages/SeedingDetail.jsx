@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Seeding, Plot, Activity, Harvest, Spraying, Pesticide, PlotSeeding, Variety, Packaging } from "@/entities/all";
+import { batchFetch } from "@/api/localClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import EventItem from "../components/seedings/EventItem";
 import { createPageUrl } from "@/utils";
 import AddEventControl from "../components/seedings/AddEventControl";
 import CumulativeHarvestChart from "../components/seedings/CumulativeHarvestChart"; // Import new component
+import HarvestQuantityWeightChart from "../components/seedings/HarvestQuantityWeightChart";
 
 const safeArray = (arr) => (Array.isArray(arr) ? arr : []);
 const safeFind = (arr, predicate) => {
@@ -36,6 +38,7 @@ export default function SeedingDetail() {
   const [pesticides, setPesticides] = useState([]);
   const [varieties, setVarieties] = useState([]);
   const [packagings, setPackagings] = useState([]);
+  const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditFormOpen, setIsEditFormOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null); // { type, data }
@@ -55,16 +58,18 @@ export default function SeedingDetail() {
     }
     setIsLoading(true);
     try {
-      const [seedingData, plotSeedingsData, allPlots, activitiesData, harvestsData, sprayingsData, pesticidesData, varietiesData, packagingsData] = await Promise.all([
-        Seeding.get(seedingId),
-        PlotSeeding.filter({ seeding_id: seedingId }),
-        Plot.list(),
-        Activity.filter({ seeding_id: seedingId }),
-        Harvest.filter({ seeding_id: seedingId }),
-        Spraying.filter({ seeding_id: seedingId }),
-        Pesticide.list(),
-        Variety.list(),
-        Packaging.list()
+      // בקשת רשת אחת במקום תשע (כל סבב דרך Cloudflare עולה ~0.4 שנ')
+      const [seedingData, plotSeedingsData, allPlots, activitiesData, harvestsData, sprayingsData, pesticidesData, varietiesData, packagingsData, productsData] = await batchFetch([
+        { entity: 'seedings', id: seedingId },
+        { entity: 'plot_seedings', filter: { seeding_id: seedingId } },
+        { entity: 'plots' },
+        { entity: 'activities', filter: { seeding_id: seedingId } },
+        { entity: 'harvests', filter: { seeding_id: seedingId } },
+        { entity: 'sprayings', filter: { seeding_id: seedingId } },
+        { entity: 'pesticides' },
+        { entity: 'varieties' },
+        { entity: 'packaging' },
+        { entity: 'products' },
       ]);
       
       setSeeding(seedingData || null);
@@ -84,6 +89,7 @@ export default function SeedingDetail() {
       setPesticides(Array.isArray(pesticidesData) ? pesticidesData : []);
       setVarieties(Array.isArray(varietiesData) ? varietiesData : []);
       setPackagings(Array.isArray(packagingsData) ? packagingsData : []);
+      setProducts(Array.isArray(productsData) ? productsData : []);
     } catch (error) {
       console.error("Error loading seeding details:", error);
       toast({ title: "שגיאה", description: "טעינת נתוני המזרע נכשלה.", variant: "destructive" });
@@ -94,7 +100,18 @@ export default function SeedingDetail() {
   useEffect(() => {
     loadData();
   }, [loadData]);
-  
+
+  // הבר התחתון (BottomNav) משדר seeding-detail-action — פותחים את טופס האירוע המתאים
+  useEffect(() => {
+    const handler = (e) => {
+      if (['activity', 'harvest', 'spraying'].includes(e.detail)) {
+        setEditingEvent({ type: e.detail, data: null });
+      }
+    };
+    window.addEventListener('seeding-detail-action', handler);
+    return () => window.removeEventListener('seeding-detail-action', handler);
+  }, []);
+
   const { lastHarvest, lastSpraying, totalHarvests, totalSprayings, profit } = useMemo(() => {
     const safeHarvests = Array.isArray(harvests) ? harvests : [];
     const safeSprayings = Array.isArray(sprayings) ? sprayings : [];
@@ -216,7 +233,7 @@ export default function SeedingDetail() {
   const handleDeleteSeeding = async () => {
     if (!seeding) return;
     
-    const confirmMessage = `האם אתה בטוח לחלוטין שברצונך למחוק את המזרע "${seeding.name}"?\n\nמחיקה תמחק גם:\n- את כל הקטיפים (${totalHarvests})\n- את כל הריסוסים (${totalSprayings})\n- את כל הפעילויות\n\nפעולה זו אינה ניתנת לביטול!`;
+    const confirmMessage = `האם אתה בטוח לחלוטין שברצונך למחוק את המזרע "${seeding.name}"?\n\nמחיקה תמחק גם:\n- את כל הקטיפים (${totalHarvests})\n- את כל ההדברות (${totalSprayings})\n- את כל הפעילויות\n\nפעולה זו אינה ניתנת לביטול!`;
     
     if (!window.confirm(confirmMessage)) {
       return;
@@ -397,9 +414,25 @@ export default function SeedingDetail() {
                       </DropdownMenu>
                     </div>
                   </div>
-                  <div className="text-xs text-gray-500 mb-2 flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5"/>
-                    <span>התחלה: {seeding.start_date ? format(new Date(seeding.start_date), "dd/MM/yyyy") : 'לא זמין'}</span>
+                  <div className="text-xs text-gray-500 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5"/>
+                      הזמנה: {seeding.start_date ? format(new Date(seeding.start_date), "dd/MM/yyyy") : '-'}
+                    </span>
+                    <span className="flex items-center gap-1 text-green-700">
+                      <Leaf className="w-3.5 h-3.5"/>
+                      שתילה: {seeding.planting_date ? format(new Date(seeding.planting_date), "dd/MM/yyyy") : '-'}
+                    </span>
+                    <span className="flex items-center gap-1 text-amber-700">
+                      <Calendar className="w-3.5 h-3.5"/>
+                      קטיף ראשון: {seeding.first_harvest_date ? format(new Date(seeding.first_harvest_date), "dd/MM/yyyy") : '-'}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5"/>
+                      {seeding.end_date
+                        ? `עקירה: ${format(new Date(seeding.end_date), "dd/MM/yyyy")}`
+                        : `סיום משוער: ${seeding.estimated_end_date ? format(new Date(seeding.estimated_end_date), "dd/MM/yyyy") : '-'}`}
+                    </span>
                   </div>
                   <div className="mb-3">
                     <div className="flex flex-wrap gap-1.5">
@@ -446,11 +479,11 @@ export default function SeedingDetail() {
                     {/* הכל */}
                     <TabsTrigger
                       value="all"
-                      className="group flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 border-gray-200 bg-gray-50 h-auto
+                      className="group flex flex-col items-center justify-center gap-1 py-2 sm:py-3 rounded-xl border-2 border-gray-200 bg-gray-50 h-auto
                                  data-[state=active]:border-gray-500 data-[state=active]:bg-gray-100 data-[state=active]:shadow-sm
                                  transition-all active:scale-95"
                     >
-                      <div className="w-10 h-10 rounded-full bg-gray-300 group-data-[state=active]:bg-gray-600 flex items-center justify-center transition-colors">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gray-300 group-data-[state=active]:bg-gray-600 flex items-center justify-center transition-colors">
                         <ActivityIcon className="w-5 h-5 text-white" />
                       </div>
                       <span className="text-xs font-semibold text-gray-600 group-data-[state=active]:text-gray-900">הכל</span>
@@ -460,39 +493,39 @@ export default function SeedingDetail() {
                     {/* פעילויות */}
                     <TabsTrigger
                       value="activities"
-                      className="group flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 border-blue-200 bg-blue-50 h-auto
+                      className="group flex flex-col items-center justify-center gap-1 py-2 sm:py-3 rounded-xl border-2 border-blue-200 bg-blue-50 h-auto
                                  data-[state=active]:border-blue-500 data-[state=active]:bg-blue-100 data-[state=active]:shadow-sm
                                  transition-all active:scale-95"
                     >
-                      <div className="w-10 h-10 rounded-full bg-blue-400 group-data-[state=active]:bg-blue-600 flex items-center justify-center transition-colors">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-400 group-data-[state=active]:bg-blue-600 flex items-center justify-center transition-colors">
                         <Tractor className="w-5 h-5 text-white" />
                       </div>
                       <span className="text-xs font-semibold text-blue-600 group-data-[state=active]:text-blue-900">פעילויות</span>
                       <span className="text-[10px] text-blue-400 group-data-[state=active]:text-blue-600">{activitiesOnly.length}</span>
                     </TabsTrigger>
 
-                    {/* ריסוסים */}
+                    {/* הדברות */}
                     <TabsTrigger
                       value="sprayings"
-                      className="group flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 border-orange-200 bg-orange-50 h-auto
+                      className="group flex flex-col items-center justify-center gap-1 py-2 sm:py-3 rounded-xl border-2 border-orange-200 bg-orange-50 h-auto
                                  data-[state=active]:border-orange-500 data-[state=active]:bg-orange-100 data-[state=active]:shadow-sm
                                  transition-all active:scale-95"
                     >
-                      <div className="w-10 h-10 rounded-full bg-orange-400 group-data-[state=active]:bg-orange-600 flex items-center justify-center transition-colors">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-orange-400 group-data-[state=active]:bg-orange-600 flex items-center justify-center transition-colors">
                         <Droplets className="w-5 h-5 text-white" />
                       </div>
-                      <span className="text-xs font-semibold text-orange-600 group-data-[state=active]:text-orange-900">ריסוסים</span>
+                      <span className="text-xs font-semibold text-orange-600 group-data-[state=active]:text-orange-900">הדברות</span>
                       <span className="text-[10px] text-orange-400 group-data-[state=active]:text-orange-600">{sprayingsOnly.length}</span>
                     </TabsTrigger>
 
                     {/* קטיפים */}
                     <TabsTrigger
                       value="harvests"
-                      className="group flex flex-col items-center justify-center gap-1 py-3 rounded-xl border-2 border-green-200 bg-green-50 h-auto
+                      className="group flex flex-col items-center justify-center gap-1 py-2 sm:py-3 rounded-xl border-2 border-green-200 bg-green-50 h-auto
                                  data-[state=active]:border-green-500 data-[state=active]:bg-green-100 data-[state=active]:shadow-sm
                                  transition-all active:scale-95"
                     >
-                      <div className="w-10 h-10 rounded-full bg-green-400 group-data-[state=active]:bg-green-600 flex items-center justify-center transition-colors">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-green-400 group-data-[state=active]:bg-green-600 flex items-center justify-center transition-colors">
                         <Leaf className="w-5 h-5 text-white" />
                       </div>
                       <span className="text-xs font-semibold text-green-600 group-data-[state=active]:text-green-900">קטיפים</span>
@@ -515,7 +548,7 @@ export default function SeedingDetail() {
                             <Tractor className="w-4 h-4" /> פעילות
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setEditingEvent({ type: 'spraying', data: null })} className="flex items-center gap-2">
-                            <Droplets className="w-4 h-4" /> ריסוס
+                            <Droplets className="w-4 h-4" /> הדברה
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setEditingEvent({ type: 'harvest', data: null })} className="flex items-center gap-2">
                             <Leaf className="w-4 h-4" /> קטיף
@@ -530,7 +563,7 @@ export default function SeedingDetail() {
                     )}
                     {activeEventsTab === 'sprayings' && (
                       <Button variant="outline" size="sm" onClick={() => setEditingEvent({ type: 'spraying', data: null })} className="flex items-center gap-2">
-                        <Plus className="w-4 h-4" /><span className="hidden sm:inline">הוסף ריסוס</span>
+                        <Plus className="w-4 h-4" /><span className="hidden sm:inline">הוסף הדברה</span>
                       </Button>
                     )}
                     {activeEventsTab === 'harvests' && (
@@ -541,8 +574,8 @@ export default function SeedingDetail() {
                   </div>
                 </div>
 
-                <TabsContent value="all" className="mt-4">
-                  <div className="space-y-4">
+                <TabsContent value="all" className="mt-3">
+                  <div className="space-y-2">
                     {allEvents.map(event => (
                       <EventItem 
                         key={`${event.type}-${event.id}`} 
@@ -560,8 +593,8 @@ export default function SeedingDetail() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="activities" className="mt-4">
-                  <div className="space-y-4">
+                <TabsContent value="activities" className="mt-3">
+                  <div className="space-y-2">
                     {activitiesOnly.map(activity => (
                       <EventItem 
                         key={`activity-${activity.id}`} 
@@ -588,8 +621,8 @@ export default function SeedingDetail() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="sprayings" className="mt-4">
-                  <div className="space-y-4">
+                <TabsContent value="sprayings" className="mt-3">
+                  <div className="space-y-2">
                     {sprayingsOnly.map(spraying => (
                       <EventItem 
                         key={`spraying-${spraying.id}`} 
@@ -602,22 +635,23 @@ export default function SeedingDetail() {
                     {sprayingsOnly.length === 0 && (
                       <div className="text-center py-12 text-gray-500">
                         <Droplets className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="mb-2">לא תועדו ריסוסים עבור מזרע זה.</p>
+                        <p className="mb-2">לא תועדו הדברות עבור מזרע זה.</p>
                         <Button 
                           variant="outline" 
                           onClick={() => setEditingEvent({ type: 'spraying', data: null })}
                           className="flex items-center gap-2"
                         >
                           <Plus className="w-4 h-4" />
-                          הוסף ריסוס ראשון
+                          הוסף הדברה ראשון
                         </Button>
                       </div>
                     )}
                   </div>
                 </TabsContent>
 
-                <TabsContent value="harvests" className="mt-4">
-                  <div className="space-y-4">
+                <TabsContent value="harvests" className="mt-3">
+                  <div className="space-y-2">
+                    <HarvestQuantityWeightChart harvests={harvests} />
                     {harvestsOnly.map(harvest => (
                       <EventItem 
                         key={`harvest-${harvest.id}`} 
@@ -665,6 +699,7 @@ export default function SeedingDetail() {
             onClose={handleCloseDialog}
             varieties={varieties}
             packagings={packagings}
+            products={products}
             initialState={{ open: true, type: editingEvent.type, item: editingEvent.data }}
         />
       )}

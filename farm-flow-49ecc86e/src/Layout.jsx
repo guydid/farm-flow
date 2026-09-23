@@ -2,10 +2,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { LayoutDashboard, Users, Menu, X, Sprout, Settings, Map, SlidersHorizontal, Layers, Users2, Building, Truck, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Users, Menu, X, Sprout, Settings, Map, SlidersHorizontal, Layers, Users2, Building, Truck, ShieldCheck, Clock, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Subscription } from "@/entities/all";
+import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Subscription, Vehicle } from "@/entities/all";
+import { getMeCached, getFarmCached } from "@/api/cachedReads";
+import { batchFetch } from "@/api/localClient";
+import { segmentForType } from "./components/layout/alertSegments";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import TopBar from "./components/layout/TopBar";
 import BottomNav from "./components/layout/BottomNav";
@@ -41,8 +44,17 @@ export default function Layout({ children, currentPageName }) {
     const generated = [];
 
     try {
+      // Fetch all notification sources in parallel (was 5 serial round-trips)
+      // בקשת רשת אחת במקום חמש (כל סבב דרך Cloudflare עולה ~0.4 שנ')
+      const [employees, sheets, seedings, vehicles, subscriptions] = await batchFetch([
+        { entity: 'employees', filter: { farm_id: currentFarm.id } },
+        { entity: 'plastic_sheets', filter: { farm_id: currentFarm.id } },
+        { entity: 'seedings', filter: { farm_id: currentFarm.id, status: 'ordered' } },
+        { entity: 'vehicles', filter: { farm_id: currentFarm.id } },
+        { entity: 'subscriptions', filter: { farm_id: currentFarm.id } },
+      ]).catch(() => [[], [], [], [], []]);
+
       // Employee notifications - only employees from the current farm
-      const employees = await Employee.filter({ farm_id: currentFarm.id }).catch(() => []);
       const safeEmployees = Array.isArray(employees) ? employees : [];
       
       safeEmployees.forEach(emp => {
@@ -75,7 +87,6 @@ export default function Layout({ children, currentPageName }) {
       });
 
       // Sheet notifications - only sheets from the current farm
-      const sheets = await PlasticSheet.filter({ farm_id: currentFarm.id }).catch(() => []);
       const safeSheets = Array.isArray(sheets) ? sheets : [];
       
       safeSheets.forEach(sheet => {
@@ -101,7 +112,6 @@ export default function Layout({ children, currentPageName }) {
       });
 
       // Seeding notifications - only seedings from the current farm
-      const seedings = await Seeding.filter({ farm_id: currentFarm.id, status: 'ordered' }).catch(() => []);
       const safeSeedings = Array.isArray(seedings) ? seedings : [];
       
       safeSeedings.forEach(seeding => {
@@ -126,9 +136,38 @@ export default function Layout({ children, currentPageName }) {
         }
       });
 
-      // Try to load subscription notifications, but don't fail if Subscription entity doesn't exist
+      // Vehicle notifications (תפעולי) — ביטוח חובה, ביטוח מקיף, וטסט
+      const safeVehicles = Array.isArray(vehicles) ? vehicles : [];
+
+      safeVehicles.forEach(veh => {
+        if (!veh || veh.status === 'sold' || veh.status === 'out_of_order') return;
+
+        const checkVehicleDate = (dateStr, suffix, description) => {
+          if (!dateStr) return;
+          try {
+            const date = parseISO(dateStr);
+            if (date <= thirtyDaysFromNow) {
+              generated.push({
+                id: `vehicle-${veh.id}-${suffix}`,
+                title: `${description} — ${veh.name || veh.license_plate || 'רכב'}`,
+                description: `תוקף: ${format(date, 'dd/MM/yyyy')}`,
+                dueDate: date,
+                type: 'vehicle',
+                link: createPageUrl(`VehicleDetail?id=${veh.id}`)
+              });
+            }
+          } catch (error) {
+            console.warn(`Error parsing vehicle ${suffix} date for vehicle ${veh.id}:`, dateStr, error);
+          }
+        };
+
+        checkVehicleDate(veh.insurance_compulsory?.end_date, 'compulsory', 'ביטוח חובה עומד לפוג');
+        checkVehicleDate(veh.insurance_info?.end_date, 'comprehensive', 'ביטוח מקיף עומד לפוג');
+        checkVehicleDate(veh.licensing_info?.next_test_date, 'test', 'טסט עומד לפוג');
+      });
+
+      // Subscription notifications (subscriptions already fetched in the parallel batch above)
       try {
-        const subscriptions = await Subscription.filter({ farm_id: currentFarm.id }).catch(() => []);
         const safeSubscriptions = Array.isArray(subscriptions) ? subscriptions : [];
         
         safeSubscriptions.forEach(subscription => {
@@ -190,6 +229,7 @@ export default function Layout({ children, currentPageName }) {
 
     const now = new Date();
     const activeNotifications = generated
+      .map(n => ({ ...n, segment: n.segment || segmentForType(n.type) }))
       .filter(n => {
         if (!n) return false; // Safety check for null/undefined notification objects
         const dismissedState = dismissedNotifications[n.id];
@@ -214,29 +254,29 @@ export default function Layout({ children, currentPageName }) {
   useEffect(() => {
     const fetchData = async () => {
         try {
-            const user = await User.me();
+            const user = await getMeCached();
             setCurrentUser(user);
-            
+
             // Check if user has any farms
             if (!user.farm_ids || user.farm_ids.length === 0) {
               setShowWelcome(true);
               return;
             }
-            
+
             // Load the current farm
             let currentFarmToSet = null;
             if (user.current_farm_id) {
               try {
-                currentFarmToSet = await Farm.get(user.current_farm_id);
+                currentFarmToSet = await getFarmCached(user.current_farm_id);
               } catch (error) {
                 console.warn('Could not load current farm, trying first available:', error);
               }
             }
-            
+
             // If failed to load current farm, take the first one from the list
             if (!currentFarmToSet && user.farm_ids.length > 0) {
               try {
-                currentFarmToSet = await Farm.get(user.farm_ids[0]);
+                currentFarmToSet = await getFarmCached(user.farm_ids[0]);
                 // Update the active farm in the user's data
                 await User.updateMyUserData({ current_farm_id: currentFarmToSet.id });
               } catch (error) {
@@ -286,6 +326,7 @@ export default function Layout({ children, currentPageName }) {
         description: n.body || (n.sender_name ? `מאת: ${n.sender_name}` : ''),
         dueDate: new Date(n.created_at),
         type: 'admin',
+        segment: 'operational',
         priority: n.type === 'error' ? 'high' : n.type === 'warning' ? 'medium' : 'low',
         notifType: n.type,
       })));
@@ -368,11 +409,14 @@ export default function Layout({ children, currentPageName }) {
   const navigation = [
     { name: "לוח בקרה", icon: LayoutDashboard, path: "Dashboard" },
     { name: "עובדים", icon: Users2, path: "Employees" },
+    { name: "שעון נוכחות", icon: Clock, path: "Attendance" },
     { name: "מזרעים", icon: Sprout, path: "Seedings" },
     { name: "חלקות", icon: Map, path: "Plots" },
     { name: "יריעות", icon: Layers, path: "Sheets" },
     { name: "אסמכתאות שקילה", icon: SlidersHorizontal, path: "WeighingCertificates" },
     { name: "רכבים", icon: Truck, path: "Vehicles" },
+    { name: "חשבוניות", icon: FileText, path: "Invoices" },
+    { name: "ספקים", icon: Building, path: "Suppliers" },
     { name: "חברי משק", icon: Users, path: "FarmMembers" },
     { name: "הגדרות", icon: Settings, path: "Settings" },
     ...(currentUser?.is_admin ? [{ name: "ניהול מערכת", icon: ShieldCheck, path: "AdminPanel", adminOnly: true }] : []),

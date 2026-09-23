@@ -14,6 +14,8 @@ import { useToast } from "@/components/ui/use-toast";
 import SeedingsReports from "../components/seedings/SeedingsReports";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { getCropIcon } from "../components/seedings/CropIcons";
+import { getMeCached, getFarmCached, peekList, primeList } from "@/api/cachedReads";
+import { batchFetch } from "@/api/localClient";
 
 // Safe array utilities
 const safeArray = (value, fallback = []) => {
@@ -49,6 +51,7 @@ export default function Seedings() {
   const [varieties, setVarieties] = useState([]);
   const [pesticides, setPesticides] = useState([]);
   const [packagings, setPackagings] = useState([]);
+  const [products, setProducts] = useState([]);
   const [currentFarm, setCurrentFarm] = useState(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState('active');
@@ -71,7 +74,7 @@ export default function Seedings() {
 
   const loadData = useCallback(async () => {
     try {
-      const user = await User.me();
+      const user = await getMeCached();
       if (!user.current_farm_id) {
         console.warn('No current farm ID found for user.');
         setSeedings([]);
@@ -83,18 +86,40 @@ export default function Seedings() {
         return;
       }
 
-      const farm = await Farm.get(user.current_farm_id);
+      const farm = await getFarmCached(user.current_farm_id);
       setCurrentFarm(farm);
 
-      const farmFilter = { farm_id: user.current_farm_id };
+      const fid = user.current_farm_id;
+      const farmFilter = { farm_id: fid };
 
-      const [seedingsData, plotsData, varietiesData, pesticidesData, packagingsData] = await Promise.all([
-        Seeding.filter(farmFilter, "-start_date"),
-        Plot.filter(farmFilter),
-        Variety.list(),
-        Pesticide.list(),
-        Packaging.filter(farmFilter)
-      ]);
+      // מזרעים תמיד טריים; קטלוגים (חלקות/זנים/חומרי הדברה/אריזות) דרך קאש משותף
+      // קטלוגים מהקאש אם טריים; כל השאר בבקשת רשת אחת (batch) — ומזינים חזרה לקאש
+      const cached = {
+        plots: peekList(`plots_${fid}`, 2 * 60 * 1000),
+        varieties: peekList('varieties'),
+        pesticides: peekList('pesticides'),
+        packagings: peekList(`packaging_${fid}`),
+        products: peekList(`products_${fid}`),
+      };
+      const reqs = [{ key: 'seedings', entity: 'seedings', filter: farmFilter, sort: '-start_date' }];
+      if (!cached.plots)      reqs.push({ key: 'plots',      entity: 'plots',      filter: farmFilter });
+      if (!cached.varieties)  reqs.push({ key: 'varieties',  entity: 'varieties' });
+      if (!cached.pesticides) reqs.push({ key: 'pesticides', entity: 'pesticides' });
+      if (!cached.packagings) reqs.push({ key: 'packagings', entity: 'packaging', filter: farmFilter });
+      if (!cached.products)   reqs.push({ key: 'products',   entity: 'products',  filter: farmFilter });
+      const fetched = await batchFetch(reqs);
+      const got = {}; reqs.forEach((r, i) => { got[r.key] = fetched[i]; });
+      const seedingsData = got.seedings;
+      const plotsData      = cached.plots      ?? got.plots;
+      const varietiesData  = cached.varieties  ?? got.varieties;
+      const pesticidesData = cached.pesticides ?? got.pesticides;
+      const packagingsData = cached.packagings ?? got.packagings;
+      const productsData   = cached.products   ?? got.products;
+      if (got.plots)      primeList(`plots_${fid}`, got.plots);
+      if (got.varieties)  primeList('varieties', got.varieties);
+      if (got.pesticides) primeList('pesticides', got.pesticides);
+      if (got.packagings) primeList(`packaging_${fid}`, got.packagings);
+      if (got.products)   primeList(`products_${fid}`, got.products);
       
       console.log('Seedings loadData results:', { seedingsData, plotsData, varietiesData, pesticidesData, packagingsData });
       
@@ -103,6 +128,7 @@ export default function Seedings() {
       setVarieties(safeArray(varietiesData));
       setPesticides(safeArray(pesticidesData));
       setPackagings(safeArray(packagingsData));
+      setProducts(safeArray(productsData));
     } catch (error) {
       console.error("Error loading seedings data:", error);
       setSeedings([]);
@@ -121,7 +147,36 @@ export default function Seedings() {
   useEffect(() => {
     loadData();
   }, [loadData]);
-  
+
+  // הבר התחתון (BottomNav) מוחלף בעמוד זה בפעולות מזרעים ומשדר אירוע window
+  useEffect(() => {
+    const handler = (e) => {
+      switch (e.detail) {
+        case 'create':
+          setShowReports(false);
+          setIsDialogOpen(true);
+          break;
+        case 'filters':
+          setShowReports(false);
+          setFiltersOpen(o => !o);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        case 'reports':
+          setShowReports(p => !p);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        case 'archive':
+          setShowReports(false);
+          setFilterStatus(prev => prev === 'archived' ? 'active' : 'archived');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        default: break;
+      }
+    };
+    window.addEventListener('seedings-action', handler);
+    return () => window.removeEventListener('seedings-action', handler);
+  }, []);
+
   const handleFormSuccess = () => {
     setIsDialogOpen(false);
     loadData();
@@ -296,20 +351,33 @@ export default function Seedings() {
         {/* Info */}
         <div className="space-y-1 mb-2.5">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
-            <div className="flex items-center gap-1.5 text-xs text-gray-600">
-              <Calendar className="w-3.5 h-3.5 text-gray-400" />
-              הוזמן: {format(new Date(seeding.start_date), 'dd/MM/yyyy')}
-            </div>
+            {seeding.start_date && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                הוזמן: {format(new Date(seeding.start_date), 'dd/MM/yyyy')}
+              </div>
+            )}
             {seeding.planting_date && (
               <div className="flex items-center gap-1.5 text-xs text-gray-600">
                 <Leaf className="w-3.5 h-3.5 text-green-500" />
                 שתילה: {format(new Date(seeding.planting_date), 'dd/MM/yyyy')}
               </div>
             )}
-            {seeding.planting_date && seeding.days_from_planting_to_harvest && (
+            {seeding.first_harvest_date ? (
               <div className="flex items-center gap-1.5 text-xs text-gray-600">
                 <Calendar className="w-3.5 h-3.5 text-orange-500" />
-                קטיף: {format(addDays(new Date(seeding.planting_date), seeding.days_from_planting_to_harvest), 'dd/MM/yyyy')}
+                קטיף ראשון: {format(new Date(seeding.first_harvest_date), 'dd/MM/yyyy')}
+              </div>
+            ) : (seeding.planting_date && seeding.days_from_planting_to_harvest ? (
+              <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <Calendar className="w-3.5 h-3.5 text-orange-500" />
+                קטיף משוער: {format(addDays(new Date(seeding.planting_date), seeding.days_from_planting_to_harvest), 'dd/MM/yyyy')}
+              </div>
+            ) : null)}
+            {seeding.end_date && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                עקירה: {format(new Date(seeding.end_date), 'dd/MM/yyyy')}
               </div>
             )}
           </div>
@@ -326,7 +394,7 @@ export default function Seedings() {
         </div>
 
         {filterStatus === 'active' && (
-          <QuickActions seeding={seeding} varieties={varieties} onRefresh={loadData} pesticides={pesticides} packagings={packagings} />
+          <QuickActions seeding={seeding} varieties={varieties} onRefresh={loadData} pesticides={pesticides} packagings={packagings} products={products} />
         )}
 
         <div className="pt-2 border-t border-white/60">
@@ -365,11 +433,11 @@ export default function Seedings() {
               <TrendingUp className="w-4 h-4 ml-1" />
               {showReports ? "חזור" : "דוחות"}
             </Button>
+            {/* בנייד ההוספה מהבר התחתון (+) — הכפתור כאן במחשב בלבד */}
             {!showReports && (
-              <Button onClick={() => setIsDialogOpen(true)} size="sm">
+              <Button onClick={() => setIsDialogOpen(true)} size="sm" className="hidden sm:inline-flex">
                 <Plus className="w-4 h-4 ml-1" />
-                <span className="hidden sm:inline">הוסף מזרע</span>
-                <span className="sm:hidden">מזרע</span>
+                הוסף מזרע
               </Button>
             )}
           </div>

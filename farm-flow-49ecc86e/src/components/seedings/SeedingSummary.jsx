@@ -23,7 +23,24 @@ export default function SeedingSummary({ activities, harvests }) {
   const profit = totalRevenue - totalActivityCost;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <>
+    {/* נייד: פס קומפקטי אחד במקום שלושה כרטיסים גבוהים */}
+    <div className="sm:hidden grid grid-cols-3 divide-x divide-x-reverse divide-gray-100 rounded-2xl border border-gray-200 bg-white shadow-sm py-3 text-center">
+      <div>
+        <div className="text-base font-bold text-red-600 tabular-nums">₪{totalActivityCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+        <div className="text-[11px] text-gray-500">הוצאות · {safeActivities.length} פעילויות</div>
+      </div>
+      <div>
+        <div className="text-base font-bold text-gray-900 tabular-nums">{totalWeight.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xs font-normal text-gray-400">ק"ג</span></div>
+        <div className="text-[11px] text-gray-500">₪{totalRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · {safeHarvests.length} קטיפים</div>
+      </div>
+      <div>
+        <div className={`text-base font-bold tabular-nums ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>₪{profit.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+        <div className="text-[11px] text-gray-500">רווחיות</div>
+      </div>
+    </div>
+
+    <div className="hidden sm:grid gap-6 lg:grid-cols-3">
       {/* פעילויות */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -101,5 +118,6 @@ export default function SeedingSummary({ activities, harvests }) {
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }

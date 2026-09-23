@@ -1,13 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Check, ChevronsUpDown, Calculator, ExternalLink } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
+import { Calculator, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 
@@ -25,7 +22,6 @@ const calculateWeights = (data, packagings, palletTypes) => {
     }
   }
 
-  // Changed to check for `data.pallet_type` directly, as it can be null/empty string for "no pallet"
   if (data.pallet_type) {
     const pallet = palletTypes.find(p => p && p.name === data.pallet_type);
     if (pallet && pallet.weight) {
@@ -53,11 +49,42 @@ const calculateTotal = (data) => {
   return total;
 };
 
+// העדפות אחרונות לכל מוצר (אריזה/איכות/משטח) — כדי שהבחירה הבאה תהיה בלחיצה אחת
+const loadProductPrefs = (productId) => {
+  try { return JSON.parse(localStorage.getItem(`weigh_prefs_${productId}`) || 'null'); } catch { return null; }
+};
+const saveProductPrefs = (productId, prefs) => {
+  try { localStorage.setItem(`weigh_prefs_${productId}`, JSON.stringify(prefs)); } catch { /* אחסון חסום */ }
+};
+
+const QUALITIES = ["א", "ב", "ג", "תעשייתי"];
+
+// כפתור בחירה (chip) — אבן הבניין של הזרימה המהירה
+const Chip = ({ selected, onClick, children, className }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={cn(
+      "px-3 py-2.5 rounded-xl border text-sm font-medium transition-all text-center leading-tight",
+      selected
+        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+        : "bg-white text-gray-700 border-gray-200 hover:border-gray-300 active:bg-gray-100",
+      className
+    )}
+  >
+    {children}
+  </button>
+);
+
+const SectionLabel = ({ children }) => (
+  <div className="text-sm font-semibold text-gray-800 mb-2">{children}</div>
+);
+
 // Main Component
 export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, onCancel, products, packagings, palletTypes, certificateCustomerId }) {
   const [formData, setFormData] = useState({
     product_id: "",
-    product_name: "", // Added product_name to state
+    product_name: "",
     quality: "א",
     packaging_type: "",
     package_count: "",
@@ -86,16 +113,28 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Get selected product to check if weighable
   const selectedProduct = useMemo(() => {
     return safeArray(products).find(p => p && p.id === formData.product_id);
   }, [products, formData.product_id]);
 
+  // אריזות רלוונטיות למוצר הנבחר: אריזה עם שיוך מוצרים מוצגת רק להם; ללא שיוך — לכולם
+  const relevantPackagings = useMemo(() => {
+    return safeArray(packagings).filter(pkg => pkg && (
+      !Array.isArray(pkg.product_ids) || pkg.product_ids.length === 0 || pkg.product_ids.includes(formData.product_id)
+    ));
+  }, [packagings, formData.product_id]);
+
+  const selectedPackaging = useMemo(() => {
+    return safeArray(packagings).find(p => p && p.name === formData.packaging_type);
+  }, [packagings, formData.packaging_type]);
+
+  // מוצר "לא שקיל" (דגל ישן) — ללא שקילה כלל; אחרת השקילות נקבעת לפי האריזה שנבחרה
+  const productWeighable = selectedProduct?.weighable !== false;
   const isWeighable = useMemo(() => {
-    // If selectedProduct is null/undefined, or its weighable property is true/undefined, it's weighable.
-    // Only if weighable is explicitly false, it's not weighable.
-    return selectedProduct?.weighable !== false; 
-  }, [selectedProduct]);
+    if (!productWeighable) return false;
+    if (selectedPackaging && selectedPackaging.weighable === false) return false;
+    return true;
+  }, [productWeighable, selectedPackaging]);
 
   const performCalculations = useCallback(() => {
     const safePackagings = safeArray(packagings);
@@ -108,29 +147,27 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     let discountAmount_calc = 0;
 
     if (!isWeighable) {
-      // For non-weighable items, tare and net are 0. Price is based on package count.
-      total_calc = calculateTotal({ 
-        net_weight: 0, 
-        package_count: formData.package_count, 
-        price_per_unit: formData.price_per_unit, 
-        discount_percentage: formData.discount_percentage, 
-        pricing_method: 'per_unit' // Force per_unit for non-weighable
+      total_calc = calculateTotal({
+        net_weight: 0,
+        package_count: formData.package_count,
+        price_per_unit: formData.price_per_unit,
+        discount_percentage: formData.discount_percentage,
+        pricing_method: 'per_unit'
       });
-      
+
       const discount = parseFloat(formData.discount_percentage) || 0;
       subtotal_calc = (discount > 0 && discount < 100) ? (total_calc / (1 - discount / 100)) : total_calc;
       discountAmount_calc = subtotal_calc - total_calc;
 
     } else {
-      // Original calculation for weighable items
       const { gross_weight, package_count, packaging_type, pallet_type, pricing_method, price_per_unit, discount_percentage } = formData;
-      
+
       const { tare_weight, net_weight } = calculateWeights({ gross_weight, package_count, packaging_type, pallet_type }, safePackagings, safePalletTypes);
       tare_weight_calc = tare_weight;
       net_weight_calc = net_weight;
 
       total_calc = calculateTotal({ net_weight: net_weight_calc, package_count, price_per_unit, discount_percentage, pricing_method });
-      
+
       const discount = parseFloat(discount_percentage) || 0;
       subtotal_calc = (discount > 0 && discount < 100) ? (total_calc / (1 - discount / 100)) : total_calc;
       discountAmount_calc = subtotal_calc - total_calc;
@@ -150,7 +187,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
       const selectedProd = safeArray(products).find(p => p && p.id === item.product_id);
       setFormData({
         product_id: item.product_id || "",
-        product_name: selectedProd ? selectedProd.name : '', // Set product_name on edit
+        product_name: selectedProd ? selectedProd.name : '',
         quality: item.quality || "א",
         packaging_type: item.packaging_type || "",
         package_count: item.package_count ? String(item.package_count) : "",
@@ -162,34 +199,54 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
       });
 
       if (isCopyMode && !isMobile && selectedProd?.weighable !== false) {
-        // Only focus gross weight if it's a weighable product in copy mode
         setTimeout(() => grossWeightRef.current?.focus(), 300);
       }
     }
-  }, [item, isCopyMode, isMobile, products]); // Added products to dependency array for finding selectedProduct
+  }, [item, isCopyMode, isMobile, products]);
 
   useEffect(() => {
-    if (!isMobile) {
-      performCalculations();
-    }
-  }, [formData, isMobile, performCalculations]);
+    performCalculations();
+  }, [formData, performCalculations]);
 
   const handleBlur = useCallback(() => {
-    if (isMobile) {
-      performCalculations();
-    }
-  }, [isMobile, performCalculations]);
+    performCalculations();
+  }, [performCalculations]);
 
-  const handleSubmit = useCallback(async (e) => { // Made async
+  // בחירת מוצר: מוחלת גם ההעדפה האחרונה שלו (אריזה/איכות/משטח) לבחירה בלחיצה אחת.
+  // אריזה זכורה/קודמת שאינה רלוונטית למוצר החדש — מאופסת.
+  const handleProductSelect = useCallback((product) => {
+    if (!product) return;
+    const notWeighable = product.weighable === false;
+    const prefs = loadProductPrefs(product.id);
+    const isRelevant = (pkgName) => {
+      if (!pkgName) return false;
+      const pkg = safeArray(packagings).find(p => p && p.name === pkgName);
+      if (!pkg) return false;
+      return !Array.isArray(pkg.product_ids) || pkg.product_ids.length === 0 || pkg.product_ids.includes(product.id);
+    };
+    setFormData(prev => {
+      const candidate = prefs?.packaging_type ?? prev.packaging_type ?? '';
+      return {
+        ...prev,
+        product_id: product.id,
+        product_name: product.name,
+        pricing_method: notWeighable ? 'per_unit' : (product.default_pricing_method || 'per_kg'),
+        quality: prefs?.quality || prev.quality || 'א',
+        packaging_type: notWeighable ? '' : (isRelevant(candidate) ? candidate : ''),
+        pallet_type: notWeighable ? '' : (prefs?.pallet_type ?? prev.pallet_type ?? ''),
+        gross_weight: notWeighable ? '' : prev.gross_weight,
+      };
+    });
+  }, [packagings]);
+
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
-    
-    // Validation checks
+
     if (!formData.product_id) {
       alert('נא לבחור מוצר');
       return;
     }
-    
-    // Validate based on weighable status
+
     if (isWeighable && (!formData.gross_weight || parseFloat(formData.gross_weight) <= 0)) {
       alert('נא להזין משקל ברוטו תקין');
       return;
@@ -201,363 +258,315 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     }
 
     try {
-      // Process form data to ensure numeric fields are properly formatted
       const processedData = {
         ...formData,
-        // Convert numeric fields, ensuring empty strings become 0 or null
         package_count: formData.package_count !== "" ? parseInt(formData.package_count, 10) : 0,
-        // Gross weight is 0 if not weighable, otherwise parse it
         gross_weight: isWeighable && formData.gross_weight !== "" ? parseFloat(formData.gross_weight) : 0,
         price_per_unit: formData.price_per_unit !== "" ? parseFloat(formData.price_per_unit) : 0,
         discount_percentage: formData.discount_percentage !== "" ? parseFloat(formData.discount_percentage) : 0,
-        // Pricing method is forced to 'per_unit' if not weighable
         pricing_method: isWeighable ? formData.pricing_method : 'per_unit',
-        
-        // Calculated fields from display values, ensuring 0 for non-weighable
+
         tare_weight: isWeighable && displayValues.tare_weight !== "" ? parseFloat(displayValues.tare_weight) : 0,
         net_weight: isWeighable && displayValues.net_weight !== "" ? parseFloat(displayValues.net_weight) : 0,
         item_total: displayValues.item_total !== "" ? parseFloat(displayValues.item_total) : 0,
-        pallet_type: isWeighable ? formData.pallet_type : '', // Clear pallet type if not weighable
-        packaging_type: isWeighable ? formData.packaging_type : '', // Clear packaging type if not weighable
+        pallet_type: isWeighable ? formData.pallet_type : '',
+        // גם אריזה "לא שקילה" נשמרת על הפריט — רק המשטח לא רלוונטי בלי שקילה
+        packaging_type: productWeighable ? formData.packaging_type : '',
       };
-      
-      // Remove any undefined or NaN values for specific numeric keys, setting them to 0
-      // This is a safety net after explicit parsing, particularly for `null` or `undefined` inputs
+
       Object.keys(processedData).forEach(key => {
         if (
           (typeof processedData[key] === 'number' && isNaN(processedData[key])) ||
           processedData[key] === undefined ||
           processedData[key] === null
         ) {
-          // Apply 0 for keys that are expected to be numeric and nullable/undefined
           if (['package_count', 'gross_weight', 'price_per_unit', 'discount_percentage',
                'tare_weight', 'net_weight', 'item_total'].includes(key)) {
             processedData[key] = 0;
           } else if (key === 'pallet_type' || key === 'packaging_type') {
-            // Ensure these are empty strings if null/undefined
             processedData[key] = '';
           }
         }
       });
-      
-      await onSubmit(processedData); // Await onSubmit
+
+      // זכירת הבחירה למוצר — הפעם הבאה תסומן אוטומטית
+      saveProductPrefs(formData.product_id, {
+        packaging_type: processedData.packaging_type,
+        quality: formData.quality,
+        pallet_type: processedData.pallet_type,
+      });
+
+      await onSubmit(processedData);
     } catch (error) {
       console.error('Error submitting item:', error);
       alert('שגיאה בשמירת הפריט: ' + (error.message || 'שגיאה לא ידועה'));
     }
-  }, [formData, displayValues, onSubmit, isWeighable]);
-  
+  }, [formData, displayValues, onSubmit, isWeighable, productWeighable]);
+
   const navigate = useNavigate();
   const safeProducts = safeArray(products);
   const safePackagings = safeArray(packagings);
   const safePalletTypes = safeArray(palletTypes);
 
-  // Helper: link shown next to label when list is empty
-  const EmptyLink = ({ tab, label }) => (
-    <button
-      type="button"
-      onClick={() => navigate(`/settings?tab=${tab}`)}
-      className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-0.5 mr-auto"
-    >
-      {label} <ExternalLink className="w-3 h-3" />
-    </button>
+  const EmptyState = ({ tab, text }) => (
+    <div className="flex items-center justify-between p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+      <span>{text}</span>
+      <button type="button" onClick={() => navigate(`/settings?tab=${tab}`)} className="underline font-medium flex items-center gap-0.5">
+        הגדר כאן <ExternalLink className="w-3 h-3" />
+      </button>
+    </div>
   );
+
+  const productChosen = !!formData.product_id;
 
   return (
     <Dialog open={true} onOpenChange={onCancel}>
-      <DialogContent className="max-w-6xl max-h-screen overflow-y-auto" dir="rtl">
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-xl">
-            {isCopyMode ? `העתקת פריט - ${formData.product_name || 'פריט חדש'}` : 
-             item ? `עריכת פריט - ${formData.product_name || 'פריט'}` : 'הוספת פריט חדש'}
+            {isCopyMode ? `העתקת פריט - ${formData.product_name || 'פריט חדש'}` :
+             item ? `עריכת פריט - ${formData.product_name || 'פריט'}` : 'הוספת פריט'}
           </DialogTitle>
           {isCopyMode && (
             <DialogDescription className="text-green-600 font-medium">
-              {isWeighable 
+              {isWeighable
                 ? 'הפריט הועתק עם כל הפרטים. עדכן את המשקל הברוטו ולחץ שמור.'
                 : 'הפריט הועתק עם כל הפרטים. עדכן את הכמות ולחץ שמור.'
               }
             </DialogDescription>
           )}
         </DialogHeader>
-        
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Product Selection */}
-            <div className="sm:col-span-2 lg:col-span-1">
-              <div className="flex items-center gap-1 mb-1">
-                <Label htmlFor="product_id">מוצר *</Label>
-                {safeProducts.length === 0 && <EmptyLink tab="products" label="הוסף מוצרים" />}
-              </div>
-              {safeProducts.length === 0 ? (
-                <div className="flex items-center justify-between p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                  <span>אין מוצרים מוגדרים</span>
-                  <button type="button" onClick={() => navigate('/settings?tab=products')} className="underline font-medium">הגדר כאן</button>
-                </div>
-              ) : (
-                <Select
-                  value={formData.product_id}
-                  onValueChange={(value) => {
-                    const selectedProd = safeArray(products).find(p => p && p.id === value);
-                    setFormData(prev => ({
-                      ...prev,
-                      product_id: value,
-                      product_name: selectedProd ? selectedProd.name : '',
-                      pricing_method: selectedProd?.weighable === false ? 'per_unit' : (selectedProd?.default_pricing_method || 'per_kg'),
-                      gross_weight: selectedProd?.weighable === false ? '' : prev.gross_weight,
-                      pallet_type: selectedProd?.weighable === false ? '' : prev.pallet_type,
-                      packaging_type: selectedProd?.weighable === false ? '' : prev.packaging_type,
-                    }));
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="בחר מוצר..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {safeProducts.map(product => product && (
-                      <SelectItem key={product.id} value={product.id}>
-                        {product.name} {product.weighable === false && '(לא שקיל)'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
 
-            {/* Quality */}
-            <div>
-              <Label htmlFor="quality">איכות</Label>
-              <Select
-                value={formData.quality}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, quality: value }))}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="א">א</SelectItem>
-                  <SelectItem value="ב">ב</SelectItem>
-                  <SelectItem value="ג">ג</SelectItem>
-                  <SelectItem value="תעשייתי">תעשייתי</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Packaging Type */}
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <Label htmlFor="packaging_type">סוג אריזה</Label>
-                {safePackagings.length === 0 && isWeighable && <EmptyLink tab="packaging" label="הוסף אריזות" />}
-              </div>
-              {safePackagings.length === 0 && isWeighable ? (
-                <div className="flex items-center justify-between p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                  <span>אין אריזות מוגדרות</span>
-                  <button type="button" onClick={() => navigate('/settings?tab=packaging')} className="underline font-medium">הגדר כאן</button>
-                </div>
-              ) : (
-                <Select
-                  value={formData.packaging_type}
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, packaging_type: value }))}
-                  disabled={!isWeighable}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="בחר אריזה..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {safePackagings.map(pkg => pkg && (
-                      <SelectItem key={pkg.id} value={pkg.name}>
-                        {pkg.name} {isWeighable && `(טרה: ${pkg.tare_weight} ק"ג)`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-
-            {/* Package Count */}
-            <div>
-              <Label htmlFor="package_count">כמות אריזות {!isWeighable && '*'}</Label>
-              <Input
-                type="number"
-                id="package_count"
-                name="package_count"
-                value={formData.package_count}
-                onChange={(e) => setFormData(prev => ({ ...prev, package_count: e.target.value }))}
-                onBlur={handleBlur}
-                min="0"
-                step="1"
-                required={!isWeighable} // Required if not weighable
-              />
-            </div>
-
-            {/* Gross Weight - only for weighable items */}
-            {isWeighable && (
-              <div>
-                <Label htmlFor="gross_weight">משקל ברוטו (ק"ג) *</Label>
-                <Input
-                  ref={grossWeightRef}
-                  type="number"
-                  id="gross_weight"
-                  name="gross_weight"
-                  value={formData.gross_weight}
-                  onChange={(e) => setFormData(prev => ({ ...prev, gross_weight: e.target.value }))}
-                  onBlur={handleBlur}
-                  min="0"
-                  step="0.01"
-                  required
-                  className={isCopyMode ? "border-green-500 bg-green-50" : ""}
-                  placeholder={isCopyMode ? "הכנס משקל ברוטו חדש" : "משקל ברוטו"}
-                />
-              </div>
-            )}
-
-            {/* Pallet Type - only for weighable items */}
-            {isWeighable && (
-              <div>
-                <div className="flex items-center gap-1 mb-1">
-                  <Label htmlFor="pallet_type">סוג משטח</Label>
-                  {safePalletTypes.length === 0 && <EmptyLink tab="pallet-types" label="הוסף סוגי משטח" />}
-                </div>
-                <Select
-                  value={formData.pallet_type || "none"}
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, pallet_type: value === "none" ? "" : value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="בחר משטח..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">ללא משטח</SelectItem>
-                    {safePalletTypes.map(pallet => pallet && (
-                      <SelectItem key={pallet.id} value={pallet.name}>
-                        {pallet.name} ({pallet.weight} ק"ג)
-                      </SelectItem>
-                    ))}
-                    {safePalletTypes.length === 0 && (
-                      <div className="px-3 py-2 text-xs text-gray-400 text-center">
-                        אין סוגי משטח — הגדר בהגדרות
-                      </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* ── 1. מוצר — כפתורים ─────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>מוצר</SectionLabel>
+            {safeProducts.length === 0 ? (
+              <EmptyState tab="products" text="אין מוצרים מוגדרים" />
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {safeProducts.map(product => product && (
+                  <Chip
+                    key={product.id}
+                    selected={formData.product_id === product.id}
+                    onClick={() => handleProductSelect(product)}
+                  >
+                    {product.name}
+                    {product.weighable === false && (
+                      <div className={cn("text-[10px] mt-0.5", formData.product_id === product.id ? "text-indigo-200" : "text-gray-400")}>יחידות</div>
                     )}
-                  </SelectContent>
-                </Select>
+                  </Chip>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Weight Display Section - only for weighable items */}
-          {isWeighable && (
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Calculator className="w-4 h-4" />
-                חישובי משקל
-              </h3>
-              <div className="grid gap-4 sm:grid-cols-3">
+          {productChosen && (
+            <>
+              {/* ── 2. אריזה — כפתורים; רק האריזות המשויכות למוצר (ללא שיוך = לכולם) ── */}
+              {productWeighable && (
                 <div>
-                  <Label>טרה (ק"ג)</Label>
-                  <Input
-                    value={displayValues.tare_weight}
-                    readOnly
-                    className="bg-white font-mono"
-                  />
+                  <SectionLabel>אריזה</SectionLabel>
+                  {safePackagings.length === 0 ? (
+                    <EmptyState tab="packaging" text="אין אריזות מוגדרות" />
+                  ) : relevantPackagings.length === 0 ? (
+                    <EmptyState tab="packaging" text={`אין אריזות משויכות ל${formData.product_name}`} />
+                  ) : (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {relevantPackagings.map(pkg => pkg && (
+                        <Chip
+                          key={pkg.id}
+                          selected={formData.packaging_type === pkg.name}
+                          onClick={() => setFormData(prev => ({ ...prev, packaging_type: prev.packaging_type === pkg.name ? "" : pkg.name }))}
+                        >
+                          {pkg.name}
+                          <div className={cn("text-[10px] mt-0.5", formData.packaging_type === pkg.name ? "text-indigo-200" : "text-gray-400")}>
+                            {pkg.weighable === false ? 'יחידות' : `טרה ${pkg.tare_weight} ק"ג`}
+                          </div>
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <Label className="font-bold">נטו (ק"ג)</Label>
-                  <Input
-                    value={displayValues.net_weight}
-                    readOnly
-                    className="bg-white font-mono font-bold border-green-500"
-                  />
-                </div>
-                <div className="sm:col-start-3 flex items-end">
-                  {isMobile && (
-                    <Button
-                      type="button"
-                      onClick={performCalculations}
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
+              )}
+
+              {/* ── 3. איכות — כפתורים ─────────────────────────────────────── */}
+              <div>
+                <SectionLabel>איכות</SectionLabel>
+                <div className="grid grid-cols-4 gap-2">
+                  {QUALITIES.map(q => (
+                    <Chip
+                      key={q}
+                      selected={formData.quality === q}
+                      onClick={() => setFormData(prev => ({ ...prev, quality: q }))}
                     >
-                      <Calculator className="w-4 h-4 ml-2" />
-                      חשב מחדש
+                      {q}
+                    </Chip>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── 4. משטח — כפתורים (שקיל בלבד) ─────────────────────────── */}
+              {isWeighable && safePalletTypes.length > 0 && (
+                <div>
+                  <SectionLabel>משטח</SectionLabel>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    <Chip
+                      selected={!formData.pallet_type}
+                      onClick={() => setFormData(prev => ({ ...prev, pallet_type: "" }))}
+                    >
+                      ללא
+                    </Chip>
+                    {safePalletTypes.map(pallet => pallet && (
+                      <Chip
+                        key={pallet.id}
+                        selected={formData.pallet_type === pallet.name}
+                        onClick={() => setFormData(prev => ({ ...prev, pallet_type: pallet.name }))}
+                      >
+                        {pallet.name}
+                        <div className={cn("text-[10px] mt-0.5", formData.pallet_type === pallet.name ? "text-indigo-200" : "text-gray-400")}>
+                          {pallet.weight} ק"ג
+                        </div>
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── 5. כמויות ומשקלים ─────────────────────────────────────── */}
+              <div className={cn("grid gap-3", isWeighable ? "grid-cols-2" : "grid-cols-1")}>
+                <div>
+                  <Label htmlFor="package_count" className="text-sm font-semibold text-gray-800">
+                    כמות אריזות {!isWeighable && '*'}
+                  </Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    id="package_count"
+                    name="package_count"
+                    value={formData.package_count}
+                    onChange={(e) => setFormData(prev => ({ ...prev, package_count: e.target.value }))}
+                    onBlur={handleBlur}
+                    min="0"
+                    step="1"
+                    required={!isWeighable}
+                    className="h-12 text-lg mt-1"
+                    placeholder="0"
+                  />
+                </div>
+
+                {isWeighable && (
+                  <div>
+                    <Label htmlFor="gross_weight" className="text-sm font-semibold text-gray-800">ברוטו (ק"ג) *</Label>
+                    <Input
+                      ref={grossWeightRef}
+                      type="number"
+                      inputMode="decimal"
+                      id="gross_weight"
+                      name="gross_weight"
+                      value={formData.gross_weight}
+                      onChange={(e) => setFormData(prev => ({ ...prev, gross_weight: e.target.value }))}
+                      onBlur={handleBlur}
+                      min="0"
+                      step="0.01"
+                      required
+                      className={cn("h-12 text-lg mt-1", isCopyMode && "border-green-500 bg-green-50")}
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* חישוב טרה/נטו — שקיל בלבד */}
+              {isWeighable && (
+                <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="text-gray-500">טרה <span className="font-mono font-medium text-gray-700">{displayValues.tare_weight}</span></span>
+                    <span className="text-gray-300">|</span>
+                    <span className="text-gray-700 font-semibold">נטו <span className="font-mono font-bold text-green-700 text-base">{displayValues.net_weight}</span> ק"ג</span>
+                  </div>
+                  {isMobile && (
+                    <Button type="button" onClick={performCalculations} variant="ghost" size="sm" className="text-blue-600 h-8">
+                      <Calculator className="w-4 h-4 ml-1" /> חשב
                     </Button>
                   )}
                 </div>
+              )}
+
+              {/* ── 6. תמחור ──────────────────────────────────────────────── */}
+              <div className="bg-blue-50 p-4 rounded-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-sm">תמחור</h3>
+                  {isWeighable && (
+                    <div className="flex rounded-lg overflow-hidden border border-blue-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, pricing_method: 'per_kg' }))}
+                        className={cn("px-3 py-1.5 font-medium", formData.pricing_method === 'per_kg' ? "bg-blue-600 text-white" : "bg-white text-gray-600")}
+                      >
+                        לפי ק"ג
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, pricing_method: 'per_unit' }))}
+                        className={cn("px-3 py-1.5 font-medium", formData.pricing_method === 'per_unit' ? "bg-blue-600 text-white" : "bg-white text-gray-600")}
+                      >
+                        לפי יחידה
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="price_per_unit" className="text-xs">
+                      מחיר {(isWeighable && formData.pricing_method === 'per_kg') ? 'לק"ג' : 'ליחידה'} (₪)
+                    </Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      id="price_per_unit"
+                      name="price_per_unit"
+                      value={formData.price_per_unit}
+                      onChange={(e) => setFormData(prev => ({ ...prev, price_per_unit: e.target.value }))}
+                      onBlur={handleBlur}
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      className="h-10 mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="discount_percentage" className="text-xs">הנחה (%)</Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      id="discount_percentage"
+                      name="discount_percentage"
+                      value={formData.discount_percentage}
+                      onChange={(e) => setFormData(prev => ({ ...prev, discount_percentage: e.target.value }))}
+                      onBlur={handleBlur}
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      placeholder="0"
+                      className="h-10 mt-1"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-100">
+                  <span className="text-sm font-semibold text-gray-700">סכום כולל</span>
+                  <span className="font-mono font-bold text-xl text-blue-700">₪{displayValues.item_total}</span>
+                </div>
               </div>
-            </div>
+            </>
           )}
 
-          {/* Pricing Section */}
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <h3 className="font-semibold mb-3">תמחור</h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {/* Pricing Method - only for weighable items */}
-              {isWeighable && (
-                <div>
-                  <Label htmlFor="pricing_method">שיטת תמחור</Label>
-                  <Select
-                    value={formData.pricing_method}
-                    onValueChange={(value) => setFormData(prev => ({ ...prev, pricing_method: value }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="per_kg">לפי ק"ג</SelectItem>
-                      <SelectItem value="per_unit">לפי יחידה</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              
-              <div>
-                <Label htmlFor="price_per_unit">
-                  מחיר {isWeighable ? (formData.pricing_method === 'per_kg' ? 'לק"ג' : 'ליחידה') : 'ליחידה'} (₪)
-                </Label>
-                <Input
-                  type="number"
-                  id="price_per_unit"
-                  name="price_per_unit"
-                  value={formData.price_per_unit}
-                  onChange={(e) => setFormData(prev => ({ ...prev, price_per_unit: e.target.value }))}
-                  onBlur={handleBlur}
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                />
-              </div>
-              
-              <div>
-                <Label htmlFor="discount_percentage">הנחה (%)</Label>
-                <Input
-                  type="number"
-                  id="discount_percentage"
-                  name="discount_percentage"
-                  value={formData.discount_percentage}
-                  onChange={(e) => setFormData(prev => ({ ...prev, discount_percentage: e.target.value }))}
-                  onBlur={handleBlur}
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  placeholder="0"
-                />
-              </div>
-              
-              <div>
-                <Label className="font-bold">סכום כולל (₪)</Label>
-                <Input
-                  value={`₪${displayValues.item_total}`}
-                  readOnly
-                  className="bg-white font-mono font-bold text-lg border-blue-500"
-                />
-              </div>
-            </div>
-          </div>
-
           {/* Action Buttons */}
-          <div className="flex justify-end gap-3 pt-4 border-t">
-            <Button type="button" variant="outline" onClick={onCancel}>
+          <div className="flex gap-3 pt-2">
+            <Button type="button" variant="outline" onClick={onCancel} className="flex-1 sm:flex-initial h-11">
               ביטול
             </Button>
-            <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
+            <Button type="submit" className="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-700 h-11" disabled={!productChosen}>
               {item ? 'עדכן פריט' : 'הוסף פריט'}
             </Button>
           </div>

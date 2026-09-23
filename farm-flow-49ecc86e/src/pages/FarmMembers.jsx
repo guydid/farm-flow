@@ -13,7 +13,7 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   Users2, UserPlus, Trash2, Crown, Shield, HardHat, Eye,
-  Loader2, Info, Bell,
+  Loader2, Info, Bell, Languages, RotateCcw, Mail,
 } from 'lucide-react';
 import { getToken } from '@/api/localClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -34,7 +34,7 @@ function apiFetch(path, opts = {}) {
   });
 }
 
-const EMPTY_INVITE = { email: '', full_name: '', password: '', role: 'worker' };
+const EMPTY_INVITE = { email: '', full_name: '', password: '', role: 'worker', field_worker: false };
 const EMPTY_NOTIF  = { title: '', body: '', type: 'info' };
 
 export default function FarmMembers() {
@@ -49,6 +49,10 @@ export default function FarmMembers() {
   const [invite, setInvite]           = useState(EMPTY_INVITE);
   const [inviting, setInviting]       = useState(false);
   const [inviteErr, setInviteErr]     = useState('');
+  const [reinvite, setReinvite]       = useState(false); // מצב הזמנה חוזרת לחבר קיים
+  const [sendEmail, setSendEmail]     = useState(true);   // שליחת מייל הזמנה דרך Gmail
+  const [inviteResult, setInviteResult] = useState(null); // תוצאה: סטטוס מייל + לינק
+  const [copied, setCopied]           = useState(false);
 
   // Notification dialog
   const [showNotif, setShowNotif]     = useState(false);
@@ -104,13 +108,53 @@ export default function FarmMembers() {
         method: 'POST',
         body: JSON.stringify({ ...invite, farm_id: user.current_farm_id }),
       });
-      const data = await res.json();
-      if (!res.ok) { setInviteErr(data.error || 'שגיאה בהזמנה'); return; }
-      setShowInvite(false);
-      setInvite(EMPTY_INVITE);
+      const res2 = await res.json();
+      if (!res.ok) { setInviteErr(res2.error || 'שגיאה בהזמנה'); return; }
       await reloadMembers();
+      // מציגים מסך תוצאה: סטטוס שליחת המייל + לינק כניסה להעתקה
+      setInviteResult({
+        email: res2.email,
+        password: invite.password && invite.password.length >= 6 ? invite.password : '',
+        invite_link: res2.invite_link || '',
+        email_sent: !!res2.email_sent,
+        email_error: res2.email_error || '',
+        reinvited: !!res2.reinvited,
+      });
     } catch { setInviteErr('שגיאת רשת'); }
     finally { setInviting(false); }
+  };
+
+  // העתקת פרטי הכניסה (לינק + אימייל + סיסמה) ללוח — לשליחה ידנית (וואטסאפ וכו')
+  const copyInvite = async () => {
+    if (!inviteResult) return;
+    const text = [
+      'הוזמנת למערכת farm-flow',
+      `כניסה: ${inviteResult.invite_link}`,
+      `אימייל: ${inviteResult.email}`,
+      inviteResult.password ? `סיסמה: ${inviteResult.password}` : null,
+    ].filter(Boolean).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('העתק ידנית:', text);
+    }
+  };
+
+  // הזמנה חוזרת לחבר קיים — ממלא מראש את הטופס לאיפוס פרטי כניסה
+  const reinviteMember = (member) => {
+    setReinvite(true);
+    setInviteErr('');
+    setInviteResult(null);
+    setInvite({
+      email: member.email || '',
+      full_name: member.full_name || '',
+      password: '',
+      role: member.role || 'worker',
+      field_worker: !!member.field_worker,
+    });
+    setShowInvite(true);
   };
 
   // ── Role change ──────────────────────────────────────────────────────────────
@@ -120,6 +164,31 @@ export default function FarmMembers() {
       body: JSON.stringify({ role: newRole }),
     });
     if (res.ok) await reloadMembers();
+  };
+
+  // ── Toggle Thai field-worker mode (reduced UI) on an existing member ──────────
+  const handleFieldWorkerToggle = async (memberId, value) => {
+    const res = await apiFetch(`/farm-members/${memberId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ field_worker: value }),
+    });
+    if (res.ok) await reloadMembers();
+  };
+
+  // ── Fill English names (name_en) on seedings/varieties/activities for field workers ──
+  const [backfilling, setBackfilling] = useState(false);
+  const handleBackfillNames = async () => {
+    setBackfilling(true);
+    try {
+      const res = await apiFetch('/i18n/backfill-names', { method: 'POST', body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'שגיאה');
+      window.alert(`עודכנו ${data.updated} שמות באנגלית (מזרעים, זנים, סוגי פעילות, גידולים).`);
+    } catch (e) {
+      window.alert(e.message || 'שגיאה במילוי השמות');
+    } finally {
+      setBackfilling(false);
+    }
   };
 
   // ── Remove ───────────────────────────────────────────────────────────────────
@@ -166,6 +235,12 @@ export default function FarmMembers() {
           {currentFarm && <p className="text-gray-500 text-sm mt-0.5">משק: {currentFarm.name}</p>}
         </div>
         <div className="flex gap-2">
+          {canManage && (
+            <Button variant="outline" onClick={handleBackfillNames} disabled={backfilling} className="flex items-center gap-2" title="ממלא שמות אנגלית למזרעים/זנים/פעילויות עבור עובדי שדה">
+              {backfilling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Languages className="h-4 w-4" />}
+              מלא שמות אנגלית
+            </Button>
+          )}
           {canNotify && (
             <Button variant="outline" onClick={() => setShowNotif(true)} className="flex items-center gap-2">
               <Bell className="h-4 w-4" />
@@ -234,6 +309,9 @@ export default function FarmMembers() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-gray-900">{member.full_name || '—'}</span>
                       {isMe && <span className="text-xs text-gray-400">(אתה)</span>}
+                      {!!member.field_worker && (
+                        <Badge className="bg-amber-100 text-amber-700 text-xs">🇹🇭 עובד שדה</Badge>
+                      )}
                       {!member.is_active && (
                         <Badge variant="outline" className="text-red-600 border-red-300 text-xs">מושבת</Badge>
                       )}
@@ -242,8 +320,20 @@ export default function FarmMembers() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    {canManage && !isMe && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className={`h-8 text-xs ${member.field_worker ? 'bg-amber-600 hover:bg-amber-700 text-white border-amber-600' : 'text-amber-700 border-amber-300'}`}
+                        onClick={() => handleFieldWorkerToggle(member.id, !member.field_worker)}
+                        title="עובד שדה תאילנדי — ממשק מצומצם בלבד"
+                      >
+                        🇹🇭 {member.field_worker ? 'תאילנדי' : 'סמן תאילנדי'}
+                      </Button>
+                    )}
                     {canManage && !isMe ? (
-                      <Select value={member.role} onValueChange={val => handleRoleChange(member.id, val)}>
+                      <Select value={member.role} disabled={!!member.field_worker} onValueChange={val => handleRoleChange(member.id, val)}>
                         <SelectTrigger className="w-28 h-8 text-sm">
                           <SelectValue />
                         </SelectTrigger>
@@ -259,6 +349,16 @@ export default function FarmMembers() {
                       </Badge>
                     )}
 
+                    {canManage && !isMe && (
+                      <Button
+                        variant="ghost" size="icon"
+                        className="h-8 w-8 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50"
+                        onClick={() => reinviteMember(member)}
+                        title="הזמנה חוזרת — איפוס פרטי כניסה"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    )}
                     {(canManage || isMe) && !isMe && (
                       <Button
                         variant="ghost" size="icon"
@@ -277,51 +377,109 @@ export default function FarmMembers() {
       </div>
 
       {/* ── Invite Dialog ─────────────────────────────────────────────────── */}
-      <Dialog open={showInvite} onOpenChange={open => { setShowInvite(open); if (!open) { setInvite(EMPTY_INVITE); setInviteErr(''); } }}>
+      <Dialog open={showInvite} onOpenChange={open => { setShowInvite(open); if (!open) { setInvite(EMPTY_INVITE); setInviteErr(''); setReinvite(false); setInviteResult(null); setCopied(false); setSendEmail(true); } }}>
         <DialogContent className="sm:max-w-md" dir="rtl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5 text-indigo-600" /> הזמן חבר למשק
+              {inviteResult
+                ? <><Mail className="h-5 w-5 text-indigo-600" /> ההזמנה נשלחה</>
+                : reinvite
+                ? <><RotateCcw className="h-5 w-5 text-indigo-600" /> הזמנה חוזרת</>
+                : <><UserPlus className="h-5 w-5 text-indigo-600" /> הזמן חבר למשק</>}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <Label>אימייל *</Label>
-              <Input type="email" placeholder="example@email.com" dir="ltr"
-                value={invite.email} onChange={e => setInvite(p => ({ ...p, email: e.target.value }))} />
+
+          {inviteResult ? (
+            /* ── מסך תוצאה: סטטוס מייל + לינק להעתקה ── */
+            <div className="space-y-3 py-2">
+              <div className={`rounded-lg p-3 text-sm ${inviteResult.email_sent ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-amber-50 border border-amber-200 text-amber-800'}`}>
+                {inviteResult.email_sent
+                  ? `✓ מייל הזמנה נשלח אל ${inviteResult.email}`
+                  : `המייל לא נשלח${inviteResult.email_error ? ` (${inviteResult.email_error})` : ''}. העתק את הלינק ושלח ידנית.`}
+              </div>
+              <div>
+                <Label>לינק כניסה</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input readOnly dir="ltr" value={inviteResult.invite_link} className="bg-gray-50 text-xs" />
+                  <Button type="button" variant="outline" onClick={copyInvite} className="flex-shrink-0">
+                    {copied ? 'הועתק!' : 'העתק'}
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  אימייל: <span dir="ltr">{inviteResult.email}</span>
+                  {inviteResult.password ? <> · סיסמה: <span dir="ltr">{inviteResult.password}</span></> : null}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">"העתק" מעתיק לינק + אימייל + סיסמה לשליחה ידנית (וואטסאפ וכו').</p>
+              </div>
             </div>
-            <div>
-              <Label>שם מלא</Label>
-              <Input placeholder="שם החבר"
-                value={invite.full_name} onChange={e => setInvite(p => ({ ...p, full_name: e.target.value }))} />
+          ) : (
+            /* ── טופס הזמנה ── */
+            <div className="space-y-4 py-2">
+              <div>
+                <Label>אימייל *</Label>
+                <Input type="email" placeholder="example@email.com" dir="ltr" readOnly={reinvite}
+                  className={reinvite ? 'bg-gray-50' : ''}
+                  value={invite.email} onChange={e => setInvite(p => ({ ...p, email: e.target.value }))} />
+              </div>
+              <div>
+                <Label>שם מלא</Label>
+                <Input placeholder="שם החבר"
+                  value={invite.full_name} onChange={e => setInvite(p => ({ ...p, full_name: e.target.value }))} />
+              </div>
+              <div>
+                <Label>סיסמה</Label>
+                <Input type="password" placeholder={reinvite ? 'סיסמה חדשה (לפחות 6 תווים)' : 'לפחות 6 תווים (לחשבון חדש)'} dir="ltr"
+                  value={invite.password} onChange={e => setInvite(p => ({ ...p, password: e.target.value }))} />
+                <p className="text-xs text-gray-400 mt-1">
+                  {reinvite
+                    ? 'הזן סיסמה חדשה כדי לאפס למשתמש את פרטי הכניסה (השאר ריק כדי לא לשנות).'
+                    : 'אם המשתמש כבר קיים במערכת — הסיסמה לא תשתנה'}
+                </p>
+              </div>
+              <div>
+                <Label>תפקיד</Label>
+                <Select value={invite.field_worker ? 'worker' : invite.role} disabled={invite.field_worker} onValueChange={val => setInvite(p => ({ ...p, role: val }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(ROLES).map(([r, info]) => (
+                      <SelectItem key={r} value={r}>
+                        <span className="flex items-center gap-2">{info.label} — {info.desc}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <label className="flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 p-3 cursor-pointer">
+                <input type="checkbox" className="h-4 w-4 accent-indigo-600"
+                  checked={sendEmail} onChange={e => setSendEmail(e.target.checked)} />
+                <span className="text-sm text-indigo-800 flex items-center gap-1.5">
+                  <Mail className="h-4 w-4" /> שלח מייל הזמנה דרך Gmail המחובר
+                </span>
+              </label>
+              <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 cursor-pointer">
+                <input type="checkbox" className="mt-0.5 h-4 w-4 accent-amber-600"
+                  checked={!!invite.field_worker}
+                  onChange={e => setInvite(p => ({ ...p, field_worker: e.target.checked }))} />
+                <span className="text-sm text-amber-800">
+                  <span className="font-medium">עובד שדה (תאילנדית)</span> — ממשק מצומצם בלבד: מזרעים פעילים, הזנת קטיפים ופעילות. נכנס כ"worker".
+                </span>
+              </label>
+              {inviteErr && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{inviteErr}</p>}
             </div>
-            <div>
-              <Label>סיסמה</Label>
-              <Input type="password" placeholder="לפחות 6 תווים (לחשבון חדש)" dir="ltr"
-                value={invite.password} onChange={e => setInvite(p => ({ ...p, password: e.target.value }))} />
-              <p className="text-xs text-gray-400 mt-1">אם המשתמש כבר קיים במערכת — הסיסמה לא תשתנה</p>
-            </div>
-            <div>
-              <Label>תפקיד</Label>
-              <Select value={invite.role} onValueChange={val => setInvite(p => ({ ...p, role: val }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ROLES).map(([r, info]) => (
-                    <SelectItem key={r} value={r}>
-                      <span className="flex items-center gap-2">{info.label} — {info.desc}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {inviteErr && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{inviteErr}</p>}
-          </div>
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowInvite(false)}>ביטול</Button>
-            <Button onClick={handleInvite} disabled={inviting || !invite.email}>
-              {inviting && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
-              הזמן
-            </Button>
+            {inviteResult ? (
+              <Button onClick={() => setShowInvite(false)}>סיום</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setShowInvite(false)}>ביטול</Button>
+                <Button onClick={handleInvite} disabled={inviting || !invite.email}>
+                  {inviting && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
+                  {reinvite ? 'שלח הזמנה חוזרת' : 'הזמן'}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

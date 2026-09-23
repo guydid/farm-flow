@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
 import { Plus, Edit, Trash2, Save, X } from "lucide-react";
 import { format } from "date-fns";
@@ -18,11 +19,14 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
   const [sheetTypes, setSheetTypes] = useState([]);
   const [currentFarm, setCurrentFarm] = useState(null);
   const [editingSheet, setEditingSheet] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set()); // בחירה מרובה בטבלה
+  const [bulkStatus, setBulkStatus] = useState("installed");
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
   const [newSheet, setNewSheet] = useState({
     sheet_number: "",
+    sheet_number_to: "",   // אופציונלי: טווח מספרים → הוספת כמה יריעות במקביל
     sub_plot: "",
     direction: "north",
     length: "",
@@ -39,7 +43,7 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
 
   const loadData = useCallback(async () => {
     if (!plot?.id) return;
-    
+
     try {
       const user = await User.me();
       if (!user.current_farm_id) {
@@ -56,6 +60,7 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
 
       setSheets(Array.isArray(plotSheets) ? plotSheets : []);
       setSheetTypes(Array.isArray(allSheetTypes) ? allSheetTypes : []);
+      setSelectedIds(new Set());
     } catch (error) {
       console.error("Failed to load sheet data:", error);
       toast({ title: "שגיאה", description: "טעינת נתוני יריעות נכשלה.", variant: "destructive" });
@@ -68,29 +73,63 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
     }
   }, [isOpen, loadData]);
 
+  // המספרים שייווצרו: מספר בודד, או טווח "ממספר" עד "עד מספר" (כולל)
+  const MAX_BULK = 200;
+  const plannedNumbers = (() => {
+    const from = parseInt(newSheet.sheet_number, 10);
+    if (isNaN(from)) return [];
+    const to = newSheet.sheet_number_to === "" ? from : parseInt(newSheet.sheet_number_to, 10);
+    if (isNaN(to) || to < from) return [from];
+    return Array.from({ length: Math.min(to - from + 1, MAX_BULK) }, (_, i) => from + i);
+  })();
+  const existingNumbers = new Set(sheets.map(sh => Number(sh.sheet_number)));
+  const numbersToCreate = plannedNumbers.filter(n => !existingNumbers.has(n));
+  const rangeTooLarge = newSheet.sheet_number_to !== "" &&
+    parseInt(newSheet.sheet_number_to, 10) - parseInt(newSheet.sheet_number, 10) + 1 > MAX_BULK;
+
   const handleAddSheet = async () => {
     if (!newSheet.sheet_number || !currentFarm) {
       toast({ title: "שגיאה", description: "מספר יריעה ומשק נדרשים.", variant: "destructive" });
       return;
     }
+    if (rangeTooLarge) {
+      toast({ title: "שגיאה", description: `ניתן להוסיף עד ${MAX_BULK} יריעות בפעם אחת.`, variant: "destructive" });
+      return;
+    }
+    if (numbersToCreate.length === 0) {
+      toast({ title: "שגיאה", description: "כל המספרים בטווח כבר קיימים בחלקה זו.", variant: "destructive" });
+      return;
+    }
 
     setIsLoading(true);
     try {
-      await PlasticSheet.create({
-        ...newSheet,
+      const { sheet_number_to, ...base } = newSheet;
+      const items = numbersToCreate.map(n => ({
+        ...base,
         farm_id: currentFarm.id,
         plot_id: plot.id,
-        sheet_number: parseInt(newSheet.sheet_number),
-        length: parseFloat(newSheet.length) || 0,
-        width: parseFloat(newSheet.width) || 0,
-        weight: parseFloat(newSheet.weight) || 0,
-        price: parseFloat(newSheet.price) || 0,
-        replacement_cycle_months: parseInt(newSheet.replacement_cycle_months) || 12
+        sheet_number: n,
+        length: parseFloat(base.length) || 0,
+        width: parseFloat(base.width) || 0,
+        weight: parseFloat(base.weight) || 0,
+        price: parseFloat(base.price) || 0,
+        replacement_cycle_months: parseInt(base.replacement_cycle_months) || 12
+      }));
+      // יריעה בודדת — כמו קודם; כמה יריעות — בבקשה אחת
+      if (items.length === 1) await PlasticSheet.create(items[0]);
+      else await PlasticSheet.bulkCreate(items);
+
+      const skipped = plannedNumbers.length - numbersToCreate.length;
+      toast({
+        title: "הצלחה",
+        description: items.length === 1
+          ? "יריעה נוספה בהצלחה."
+          : `נוספו ${items.length} יריעות (${numbersToCreate[0]}–${numbersToCreate[numbersToCreate.length - 1]})` +
+            (skipped > 0 ? `, ${skipped} דולגו כי כבר קיימות.` : ".")
       });
-      
-      toast({ title: "הצלחה", description: "יריעה נוספה בהצלחה." });
       setNewSheet({
         sheet_number: "",
+        sheet_number_to: "",
         sub_plot: "",
         direction: "north",
         length: "",
@@ -158,6 +197,36 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
     setIsLoading(false);
   };
 
+  const toggleSelected = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const allSelected = sheets.length > 0 && sheets.every(sh => selectedIds.has(sh.id));
+  const toggleSelectAll = () => setSelectedIds(allSelected ? new Set() : new Set(sheets.map(sh => sh.id)));
+
+  // שינוי סטטוס לכל היריעות שנבחרו — בקשת רשת אחת
+  const handleBulkStatus = async () => {
+    const ids = sheets.filter(sh => selectedIds.has(sh.id)).map(sh => sh.id);
+    if (ids.length === 0) return;
+    setIsLoading(true);
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      await PlasticSheet.bulkUpdate(ids.map(id => ({
+        id,
+        status: bulkStatus,
+        // מעבר ל"מותקן" מעדכן גם תאריך התקנה להיום
+        ...(bulkStatus === 'installed' ? { installation_date: today } : {})
+      })));
+      toast({ title: "הצלחה", description: `הסטטוס עודכן ל"${getStatusText(bulkStatus)}" עבור ${ids.length} יריעות.` });
+      loadData();
+    } catch (error) {
+      console.error("Failed to bulk update sheets:", error);
+      toast({ title: "שגיאה", description: "עדכון הסטטוס נכשל.", variant: "destructive" });
+    }
+    setIsLoading(false);
+  };
+
   const getStatusVariant = (status) => {
     const variants = {
       installed: "bg-green-100 text-green-800",
@@ -204,12 +273,29 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <Label>מספר יריעה *</Label>
-                  <Input
-                    type="number"
-                    value={newSheet.sheet_number}
-                    onChange={(e) => setNewSheet({...newSheet, sheet_number: e.target.value})}
-                    placeholder="מספר יריעה"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      value={newSheet.sheet_number}
+                      onChange={(e) => setNewSheet({...newSheet, sheet_number: e.target.value})}
+                      placeholder="ממספר"
+                    />
+                    <span className="text-gray-400 shrink-0">עד</span>
+                    <Input
+                      type="number"
+                      value={newSheet.sheet_number_to}
+                      onChange={(e) => setNewSheet({...newSheet, sheet_number_to: e.target.value})}
+                      placeholder="עד מספר (אופציונלי)"
+                    />
+                  </div>
+                  <p className={`text-xs mt-1 ${rangeTooLarge ? 'text-red-600' : 'text-gray-500'}`}>
+                    {rangeTooLarge
+                      ? `עד ${MAX_BULK} יריעות בפעם אחת`
+                      : plannedNumbers.length > 1
+                        ? `ייווצרו ${numbersToCreate.length} יריעות עם אותם פרטים` +
+                          (plannedNumbers.length - numbersToCreate.length > 0 ? ` (${plannedNumbers.length - numbersToCreate.length} כבר קיימות ידולגו)` : "")
+                        : 'למילוי טווח: הזן גם "עד מספר"'}
+                  </p>
                 </div>
                 <div>
                   <Label>תת-חלקה</Label>
@@ -293,9 +379,9 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
                 </div>
               </div>
               <div className="mt-4">
-                <Button onClick={handleAddSheet} disabled={isLoading}>
+                <Button onClick={handleAddSheet} disabled={isLoading || rangeTooLarge}>
                   <Plus className="w-4 h-4 mr-2" />
-                  הוסף יריעה
+                  {numbersToCreate.length > 1 ? `הוסף ${numbersToCreate.length} יריעות` : "הוסף יריעה"}
                 </Button>
               </div>
             </CardContent>
@@ -304,7 +390,31 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
           {/* Existing sheets table */}
           <Card>
             <CardHeader>
-              <CardTitle>יריעות קיימות</CardTitle>
+              <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+                <span>יריעות קיימות {sheets.length > 0 && <span className="text-sm font-normal text-gray-500">({sheets.length})</span>}</span>
+                {selectedIds.size > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-normal">
+                    <span className="text-gray-600">נבחרו {selectedIds.size}</span>
+                    <Select value={bulkStatus} onValueChange={setBulkStatus}>
+                      <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="installed">מותקן</SelectItem>
+                        <SelectItem value="to_order">להזמנה</SelectItem>
+                        <SelectItem value="ordered">הוזמן</SelectItem>
+                        <SelectItem value="in_stock">במלאי</SelectItem>
+                        <SelectItem value="needs_replacement">צריך החלפה</SelectItem>
+                        <SelectItem value="replaced">הוחלף</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" onClick={handleBulkStatus} disabled={isLoading}>
+                      עדכן סטטוס ל-{selectedIds.size} יריעות
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                      <X className="w-4 h-4 ml-1" />בטל בחירה
+                    </Button>
+                  </div>
+                )}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {sheets.length === 0 ? (
@@ -313,6 +423,9 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} aria-label="בחר הכל" />
+                      </TableHead>
                       <TableHead>מספר יריעה</TableHead>
                       <TableHead>תת-חלקה</TableHead>
                       <TableHead>כיוון</TableHead>
@@ -325,7 +438,14 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
                   </TableHeader>
                   <TableBody>
                     {sheets.map((sheet) => (
-                      <TableRow key={sheet.id}>
+                      <TableRow key={sheet.id} data-state={selectedIds.has(sheet.id) ? "selected" : undefined}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedIds.has(sheet.id)}
+                            onCheckedChange={() => toggleSelected(sheet.id)}
+                            aria-label={`בחר יריעה ${sheet.sheet_number}`}
+                          />
+                        </TableCell>
                         <TableCell>{sheet.sheet_number}</TableCell>
                         <TableCell>{sheet.sub_plot || '-'}</TableCell>
                         <TableCell>
