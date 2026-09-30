@@ -34,10 +34,10 @@ export function packagingsForSeeding(seeding, packagings, products, { keepName }
   const isGeneral = (p) => !Array.isArray(p.product_ids) || p.product_ids.length === 0;
   const byCrop = all.filter(p => !isGeneral(p) && p.product_ids.some(id => cropProductIds.has(id)));
   const general = all.filter(isGeneral);
-  // מתאימות לגידול קודם, אחריהן הכלליות. אם שום דבר לא תואם — מציגים את כל אריזות המשק
-  // (עדיף רשימה מלאה מרשימה ריקה שחוסמת הזנת קטיף).
-  let out = [...byCrop, ...general];
-  if (out.length === 0) out = all;
+  // מתאימות לגידול קודם, אחריהן הכלליות. אם אף אריזה משויכת לא תואמת (מוצרים לא נטענו,
+  // למזרע אין סוג גידול, או שסוג הגידול של המוצר שונה) — מציגים את כל אריזות המשק.
+  // רשימה מלאה עדיפה על רשימה שמכילה רק את האריזות הכלליות ("יחידה") וחוסמת הזנת קטיף.
+  let out = byCrop.length > 0 ? [...byCrop, ...general] : all;
   if (keepName && !out.some(p => p.name === keepName)) {
     const cur = all.find(p => p.name === keepName);
     if (cur) out = [...out, cur];

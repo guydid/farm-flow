@@ -121,7 +121,7 @@ export default function Seedings() {
       if (got.packagings) primeList(`packaging_${fid}`, got.packagings);
       if (got.products)   primeList(`products_${fid}`, got.products);
       
-      console.log('Seedings loadData results:', { seedingsData, plotsData, varietiesData, pesticidesData, packagingsData });
+      console.log('Seedings loadData results:', { seedingsData, plotsData, varietiesData, pesticidesData, packagingsData, productsData });
       
       setSeedings(safeArray(seedingsData));
       setPlots(safeArray(plotsData));
