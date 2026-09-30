@@ -56,7 +56,8 @@ export function invalidateList(entityKey) {
 
 // הזנת קאש של רשימה שהגיעה מטעינה מרוכזת (batch) — כדי שעמודים אחרים ייהנו ממנה
 export function primeList(entityKey, data) {
-  if (Array.isArray(data)) queryClientInstance.setQueryData(['list', entityKey], data);
+  // רשימה ריקה לא נשמרת בקאש: תוצאה ריקה זמנית לא תיתקע ל-10 דקות
+  if (Array.isArray(data) && data.length > 0) queryClientInstance.setQueryData(['list', entityKey], data);
 }
 
 // קריאה מהקאש בלבד (ללא רשת) — מחזיר undefined אם אין/פג תוקף

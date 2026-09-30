@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from "react";
 import { varietiesForSeeding, packagingsForSeeding } from "@/lib/seedingFilters";
-import { Activity, Harvest, Spraying, ActivityType } from "@/entities/all";
+import { Activity, Harvest, Spraying, ActivityType, Packaging, Product } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,22 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
   const { toast } = useToast();
 
   const [activityTypes, setActivityTypes] = useState([]);
+
+  // גיבוי: אם העמוד לא העביר אריזות/מוצרים (רשימה ריקה), נטען אותם ישירות עם פתיחת הטופס
+  const [localPackagings, setLocalPackagings] = useState([]);
+  const [localProducts, setLocalProducts] = useState([]);
+  useEffect(() => {
+    if (!isDialogOpen || actionType !== 'harvest' || !seeding?.farm_id) return;
+    const farmFilter = { farm_id: seeding.farm_id };
+    if (!Array.isArray(packagings) || packagings.length === 0) {
+      Packaging.filter(farmFilter).then(d => setLocalPackagings(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+    if (!Array.isArray(products) || products.length === 0) {
+      Product.filter(farmFilter).then(d => setLocalProducts(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+  }, [isDialogOpen, actionType, seeding?.farm_id, packagings, products]);
+  const effectivePackagings = (Array.isArray(packagings) && packagings.length > 0) ? packagings : localPackagings;
+  const effectiveProducts = (Array.isArray(products) && products.length > 0) ? products : localProducts;
 
   // Mobile spraying wizard step: 1 = details, 2 = pesticides
   const [sprayingStep, setSprayingStep] = useState(1);
@@ -51,7 +67,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
   // Auto-calculate weight based on package count and type
   useEffect(() => {
     if (actionType === 'harvest' && formData.package_count && formData.packaging) {
-      const selectedPackaging = (Array.isArray(packagings) ? packagings : []).find(p => p && p.name === formData.packaging);
+      const selectedPackaging = effectivePackagings.find(p => p && p.name === formData.packaging);
       if (selectedPackaging && typeof selectedPackaging.expected_weight === 'number') {
         const calculatedWeight = parseFloat(formData.package_count) * selectedPackaging.expected_weight;
         setFormData(prev => ({ ...prev, quantity: calculatedWeight.toFixed(2) }));
@@ -61,7 +77,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
     } else if (actionType === 'harvest' && (!formData.package_count || !formData.packaging)) {
         setFormData(prev => ({ ...prev, quantity: '' }));
     }
-  }, [formData.package_count, formData.packaging, packagings, actionType]);
+  }, [formData.package_count, formData.packaging, effectivePackagings, actionType]);
 
   // Auto-recalculate pesticide quantities when area changes
   useEffect(() => {
@@ -326,7 +342,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
   // זנים ואריזות לפי המזרע (זנים משויכים; אריזות לפי מוצרי סוג הגידול)
   const safeVarieties = Array.isArray(varieties) ? varieties : [];
   const relevantVarieties = varietiesForSeeding(seeding, safeVarieties);
-  const safePackagings = packagingsForSeeding(seeding, packagings, products);
+  const safePackagings = packagingsForSeeding(seeding, effectivePackagings, effectiveProducts);
 
   return (
     <div>

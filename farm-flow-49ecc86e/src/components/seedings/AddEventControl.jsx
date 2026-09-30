@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { Activity, Harvest, Spraying, ActivityType, PlotSeeding, Plot } from "@/entities/all";
+import { Activity, Harvest, Spraying, ActivityType, PlotSeeding, Plot, Packaging, Product } from "@/entities/all";
 import PesticideSelector from "./PesticideSelector";
 import { format } from "date-fns";
 import SprayingForm from "./SprayingForm";
@@ -87,10 +87,26 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
       .filter(Boolean); // Remove nulls
   }, [seeding, varieties]);
 
+  // גיבוי: אם העמוד לא העביר אריזות/מוצרים (רשימה ריקה), נטען אותם ישירות עם פתיחת טופס קטיף
+  const [localPackagings, setLocalPackagings] = useState([]);
+  const [localProducts, setLocalProducts] = useState([]);
+  useEffect(() => {
+    if (!isOpen || eventType !== 'harvest' || !seeding?.farm_id) return;
+    const farmFilter = { farm_id: seeding.farm_id };
+    if (!Array.isArray(packagings) || packagings.length === 0) {
+      Packaging.filter(farmFilter).then(d => setLocalPackagings(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+    if (!Array.isArray(products) || products.length === 0) {
+      Product.filter(farmFilter).then(d => setLocalProducts(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+  }, [isOpen, eventType, seeding?.farm_id, packagings, products]);
+  const effectivePackagings = (Array.isArray(packagings) && packagings.length > 0) ? packagings : localPackagings;
+  const effectiveProducts = (Array.isArray(products) && products.length > 0) ? products : localProducts;
+
   // אריזות רלוונטיות למזרע (לפי מוצרים של סוג הגידול); בעריכה שומרים את הערך הנוכחי
   const relevantPackagings = React.useMemo(
-    () => packagingsForSeeding(seeding, packagings, products, { keepName: formData.packaging }),
-    [seeding, packagings, products, formData.packaging]
+    () => packagingsForSeeding(seeding, effectivePackagings, effectiveProducts, { keepName: formData.packaging }),
+    [seeding, effectivePackagings, effectiveProducts, formData.packaging]
   );
 
   // Set default variety to the one with most seedlings
@@ -136,7 +152,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
   useEffect(() => {
     // Auto-calculate weight for harvest
     if (eventType === 'harvest' && formData.package_count && formData.packaging) {
-      const selectedPackaging = (Array.isArray(packagings) ? packagings : []).find(p => p.name === formData.packaging);
+      const selectedPackaging = effectivePackagings.find(p => p && p.name === formData.packaging);
       if (selectedPackaging && typeof selectedPackaging.expected_weight === 'number') {
         const calculatedWeight = parseFloat(formData.package_count) * selectedPackaging.expected_weight;
         setFormData(prev => ({ ...prev, quantity: calculatedWeight.toFixed(2), weight: calculatedWeight.toFixed(2) }));
@@ -146,7 +162,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
     } else if (eventType === 'harvest' && (!formData.package_count || !formData.packaging)) {
         setFormData(prev => ({ ...prev, quantity: '', weight: '' }));
     }
-  }, [formData.package_count, formData.packaging, packagings, eventType]);
+  }, [formData.package_count, formData.packaging, effectivePackagings, eventType]);
 
 
   const resetForm = useCallback(() => {
