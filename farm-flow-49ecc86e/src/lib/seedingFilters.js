@@ -22,15 +22,22 @@ export function varietiesForSeeding(seeding, varieties, { keepId } = {}) {
 export function packagingsForSeeding(seeding, packagings, products, { keepName } = {}) {
   const all = (Array.isArray(packagings) ? packagings : [])
     .filter(p => p && (!seeding?.farm_id || !p.farm_id || p.farm_id === seeding.farm_id));
-  const crop = seeding?.crop_type;
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const crop = norm(seeding?.crop_type);
+  // התאמת גידול "רכה": שווה, או שאחד מכיל את השני (למשל "עגבניה" ↔ "עגבניה צרי")
+  const cropMatches = (pc) => { const c = norm(pc); return !!crop && !!c && (c === crop || c.includes(crop) || crop.includes(c)); };
   const cropProductIds = new Set(
     (Array.isArray(products) ? products : [])
-      .filter(p => p && crop && p.crop_type === crop)
+      .filter(p => p && cropMatches(p.crop_type))
       .map(p => p.id)
   );
-  let out = all.filter(p =>
-    !Array.isArray(p.product_ids) || p.product_ids.length === 0 || p.product_ids.some(id => cropProductIds.has(id))
-  );
+  const isGeneral = (p) => !Array.isArray(p.product_ids) || p.product_ids.length === 0;
+  const byCrop = all.filter(p => !isGeneral(p) && p.product_ids.some(id => cropProductIds.has(id)));
+  const general = all.filter(isGeneral);
+  // מתאימות לגידול קודם, אחריהן הכלליות. אם שום דבר לא תואם — מציגים את כל אריזות המשק
+  // (עדיף רשימה מלאה מרשימה ריקה שחוסמת הזנת קטיף).
+  let out = [...byCrop, ...general];
+  if (out.length === 0) out = all;
   if (keepName && !out.some(p => p.name === keepName)) {
     const cur = all.find(p => p.name === keepName);
     if (cur) out = [...out, cur];

@@ -20,7 +20,10 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
   const [currentFarm, setCurrentFarm] = useState(null);
   const [editingSheet, setEditingSheet] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set()); // בחירה מרובה בטבלה
-  const [bulkStatus, setBulkStatus] = useState("installed");
+  // עריכה מרובה: רק שדות שמולאו מוחלים על היריעות שנבחרו ("" = ללא שינוי)
+  const EMPTY_BULK = { status: "", direction: "", sub_plot: "", width: "", length: "", sheet_type: "" };
+  const [bulkEdit, setBulkEdit] = useState(EMPTY_BULK);
+  const [showAddForm, setShowAddForm] = useState(false); // טופס ההוספה מוסתר מאחורי כפתור
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
@@ -205,24 +208,36 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
   const allSelected = sheets.length > 0 && sheets.every(sh => selectedIds.has(sh.id));
   const toggleSelectAll = () => setSelectedIds(allSelected ? new Set() : new Set(sheets.map(sh => sh.id)));
 
-  // שינוי סטטוס לכל היריעות שנבחרו — בקשת רשת אחת
-  const handleBulkStatus = async () => {
+  // השדות שיוחלו על היריעות שנבחרו (רק מה שמולא)
+  const bulkPatch = (() => {
+    const patch = {};
+    if (bulkEdit.status) {
+      patch.status = bulkEdit.status;
+      // מעבר ל"מותקן" מעדכן גם תאריך התקנה להיום
+      if (bulkEdit.status === 'installed') patch.installation_date = format(new Date(), 'yyyy-MM-dd');
+    }
+    if (bulkEdit.direction) patch.direction = bulkEdit.direction;
+    if (bulkEdit.sub_plot.trim() !== "") patch.sub_plot = bulkEdit.sub_plot.trim();
+    if (bulkEdit.width !== "") patch.width = parseFloat(bulkEdit.width) || 0;
+    if (bulkEdit.length !== "") patch.length = parseFloat(bulkEdit.length) || 0;
+    if (bulkEdit.sheet_type.trim() !== "") patch.sheet_type = bulkEdit.sheet_type.trim();
+    return patch;
+  })();
+  const bulkFieldCount = Object.keys(bulkPatch).filter(k => k !== 'installation_date').length;
+
+  // עדכון כל היריעות שנבחרו — בקשת רשת אחת
+  const handleBulkUpdate = async () => {
     const ids = sheets.filter(sh => selectedIds.has(sh.id)).map(sh => sh.id);
-    if (ids.length === 0) return;
+    if (ids.length === 0 || bulkFieldCount === 0) return;
     setIsLoading(true);
     try {
-      const today = format(new Date(), 'yyyy-MM-dd');
-      await PlasticSheet.bulkUpdate(ids.map(id => ({
-        id,
-        status: bulkStatus,
-        // מעבר ל"מותקן" מעדכן גם תאריך התקנה להיום
-        ...(bulkStatus === 'installed' ? { installation_date: today } : {})
-      })));
-      toast({ title: "הצלחה", description: `הסטטוס עודכן ל"${getStatusText(bulkStatus)}" עבור ${ids.length} יריעות.` });
+      await PlasticSheet.bulkUpdate(ids.map(id => ({ id, ...bulkPatch })));
+      toast({ title: "הצלחה", description: `עודכנו ${ids.length} יריעות (${bulkFieldCount} שדות).` });
+      setBulkEdit(EMPTY_BULK);
       loadData();
     } catch (error) {
       console.error("Failed to bulk update sheets:", error);
-      toast({ title: "שגיאה", description: "עדכון הסטטוס נכשל.", variant: "destructive" });
+      toast({ title: "שגיאה", description: "העדכון המרובה נכשל.", variant: "destructive" });
     }
     setIsLoading(false);
   };
@@ -261,12 +276,25 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Add new sheet form */}
+          {/* Add new sheet form — collapsed behind a button */}
+          {!showAddForm ? (
+            <div className="flex justify-end">
+              <Button onClick={() => setShowAddForm(true)}>
+                <Plus className="w-4 h-4 ml-2" />
+                הוספת יריעה
+              </Button>
+            </div>
+          ) : (
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Plus className="w-5 h-5" />
-                הוספת יריעה חדשה
+              <CardTitle className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2">
+                  <Plus className="w-5 h-5" />
+                  הוספת יריעה חדשה
+                </span>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowAddForm(false)} aria-label="סגור טופס הוספה">
+                  <X className="w-4 h-4" />
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -378,14 +406,16 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
                   </Select>
                 </div>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 flex items-center gap-2">
                 <Button onClick={handleAddSheet} disabled={isLoading || rangeTooLarge}>
                   <Plus className="w-4 h-4 mr-2" />
                   {numbersToCreate.length > 1 ? `הוסף ${numbersToCreate.length} יריעות` : "הוסף יריעה"}
                 </Button>
+                <Button type="button" variant="outline" onClick={() => setShowAddForm(false)}>סגור</Button>
               </div>
             </CardContent>
           </Card>
+          )}
 
           {/* Existing sheets table */}
           <Card>
@@ -393,28 +423,72 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
               <CardTitle className="flex flex-wrap items-center justify-between gap-2">
                 <span>יריעות קיימות {sheets.length > 0 && <span className="text-sm font-normal text-gray-500">({sheets.length})</span>}</span>
                 {selectedIds.size > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-normal">
+                  <div className="flex items-center gap-2 text-sm font-normal">
                     <span className="text-gray-600">נבחרו {selectedIds.size}</span>
-                    <Select value={bulkStatus} onValueChange={setBulkStatus}>
-                      <SelectTrigger className="h-8 w-40"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="installed">מותקן</SelectItem>
-                        <SelectItem value="to_order">להזמנה</SelectItem>
-                        <SelectItem value="ordered">הוזמן</SelectItem>
-                        <SelectItem value="in_stock">במלאי</SelectItem>
-                        <SelectItem value="needs_replacement">צריך החלפה</SelectItem>
-                        <SelectItem value="replaced">הוחלף</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button size="sm" onClick={handleBulkStatus} disabled={isLoading}>
-                      עדכן סטטוס ל-{selectedIds.size} יריעות
-                    </Button>
                     <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
                       <X className="w-4 h-4 ml-1" />בטל בחירה
                     </Button>
                   </div>
                 )}
               </CardTitle>
+              {selectedIds.size > 0 && (
+                <div className="mt-3 p-3 rounded-lg border bg-blue-50/60 space-y-3">
+                  <p className="text-xs text-gray-600">עריכה מרובה: מלא רק את השדות שברצונך לשנות. שדות ריקים לא ישתנו.</p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <div>
+                      <Label className="text-xs">סטטוס</Label>
+                      <Select value={bulkEdit.status || "__none__"} onValueChange={(v) => setBulkEdit({ ...bulkEdit, status: v === "__none__" ? "" : v })}>
+                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">ללא שינוי</SelectItem>
+                          <SelectItem value="installed">מותקן</SelectItem>
+                          <SelectItem value="to_order">להזמנה</SelectItem>
+                          <SelectItem value="ordered">הוזמן</SelectItem>
+                          <SelectItem value="in_stock">במלאי</SelectItem>
+                          <SelectItem value="needs_replacement">צריך החלפה</SelectItem>
+                          <SelectItem value="replaced">הוחלף</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">כיוון</Label>
+                      <Select value={bulkEdit.direction || "__none__"} onValueChange={(v) => setBulkEdit({ ...bulkEdit, direction: v === "__none__" ? "" : v })}>
+                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">ללא שינוי</SelectItem>
+                          <SelectItem value="north">צפון</SelectItem>
+                          <SelectItem value="south">דרום</SelectItem>
+                          <SelectItem value="east">מזרח</SelectItem>
+                          <SelectItem value="west">מערב</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">תת-חלקה</Label>
+                      <Input className="h-8" value={bulkEdit.sub_plot} onChange={(e) => setBulkEdit({ ...bulkEdit, sub_plot: e.target.value })} placeholder="ללא שינוי" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">רוחב (מ')</Label>
+                      <Input className="h-8" type="number" step="0.1" value={bulkEdit.width} onChange={(e) => setBulkEdit({ ...bulkEdit, width: e.target.value })} placeholder="ללא שינוי" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">אורך (מ')</Label>
+                      <Input className="h-8" type="number" step="0.1" value={bulkEdit.length} onChange={(e) => setBulkEdit({ ...bulkEdit, length: e.target.value })} placeholder="ללא שינוי" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">סוג יריעה</Label>
+                      <Input className="h-8" value={bulkEdit.sheet_type} onChange={(e) => setBulkEdit({ ...bulkEdit, sheet_type: e.target.value })} placeholder="ללא שינוי" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={handleBulkUpdate} disabled={isLoading || bulkFieldCount === 0}>
+                      <Save className="w-4 h-4 ml-1" />
+                      עדכן {selectedIds.size} יריעות{bulkFieldCount > 0 ? ` (${bulkFieldCount} שדות)` : ""}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setBulkEdit(EMPTY_BULK)} disabled={bulkFieldCount === 0}>נקה שדות</Button>
+                  </div>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {sheets.length === 0 ? (
