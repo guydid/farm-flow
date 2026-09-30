@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Subscription, Vehicle } from "@/entities/all";
 import { getMeCached, getFarmCached } from "@/api/cachedReads";
+import { useVersionCheck, formatVersion } from "@/lib/appVersion";
 import { batchFetch } from "@/api/localClient";
 import { segmentForType } from "./components/layout/alertSegments";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -32,6 +33,8 @@ export default function Layout({ children, currentPageName }) {
     return saved ? JSON.parse(saved) : {};
   });
   const location = useLocation();
+  // גרסת build נוכחית + זיהוי גרסה חדשה בשרת (טאב ישן ממשיך להריץ קוד ישן עד רענון)
+  const { updateAvailable, latest } = useVersionCheck(location.pathname);
 
   useEffect(() => {
     localStorage.setItem('dismissedNotifications', JSON.stringify(dismissedNotifications));
@@ -474,12 +477,21 @@ export default function Layout({ children, currentPageName }) {
                       <div className="text-xs text-gray-500 truncate">{currentUser.email}</div>
                   </div>
                 </div>
+                <div className="px-3 pb-1 text-[10px] text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis opacity-0 group-hover:opacity-100 transition-opacity duration-300" title="גרסת המערכת">
+                  {formatVersion()}
+                </div>
               </div>
             )}
           </div>
         </aside>
 
         <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
+          {updateAvailable && (
+            <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-sm px-4 py-2 flex flex-wrap items-center justify-center gap-3" dir="rtl">
+              <span>גרסה חדשה של המערכת זמינה{latest?.build ? ` (${latest.build})` : ""}. הגרסה שפתוחה אצלך ישנה.</span>
+              <Button size="sm" className="h-7" onClick={() => window.location.reload()}>רענן עכשיו</Button>
+            </div>
+          )}
           <TopBar
             onMenuClick={() => setSidebarOpen(true)}
             currentUser={currentUser}

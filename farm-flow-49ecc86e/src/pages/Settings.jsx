@@ -46,6 +46,7 @@ import SubscriptionManager from '../components/settings/SubscriptionManager';
 import CustomersManager from "../components/settings/CustomersManager";
 import ProductsManager from "../components/settings/ProductsManager";
 import ActivityTypesManager from "../components/settings/ActivityTypesManager";
+import { formatVersion } from "@/lib/appVersion";
 import PrinterSettings from '../components/settings/PrinterSettings';
 import InputTypesManager from '../components/settings/InputTypesManager';
 import AISettingsManager from '../components/settings/AISettingsManager';
@@ -141,6 +142,7 @@ export default function Settings() {
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-3 lg:mb-6">
           <h1 className="text-xl lg:text-3xl font-bold">הגדרות{currentFarm ? ` — ${currentFarm.name}` : ''}</h1>
+          <span className="text-[11px] text-gray-400 whitespace-nowrap" title="גרסת המערכת">{formatVersion()}</span>
         </div>
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
