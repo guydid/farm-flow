@@ -1499,8 +1499,9 @@ function findExistingInvoice(farmId, extracted, attachmentName, fromEmail) {
     if (!typesCompatible) continue;
     const existingNum = normNum(d.invoice_number);
 
-    // שכבה 4: סריקה ידנית — אין כתובת שולח להשוות אליה, ולכן מספר חשבונית + סכום מספיקים
-    if (!senderEmail) {
+    // שכבה 4: סריקה ידנית — אין כתובת שולח להשוות אליה, ולכן מספר חשבונית + סכום מספיקים.
+    // חל גם כשהקיימת היא סריקה (בלי שולח) והחדשה הגיעה מ-Gmail — אחרת העותק מהמייל נשמר שוב.
+    if (!senderEmail || !d.source_meta?.from) {
       if (!extractedNum || !existingNum || extractedNum !== existingNum) continue;
       const vatA = String(extracted.supplier_vat_id || '').replace(/\D/g, '');
       const vatB = String(d.extracted_raw?.supplier_vat_id || '').replace(/\D/g, '');
@@ -1696,9 +1697,13 @@ app.post('/api/invoices/:id/send', authMiddleware, aiLimiter, async (req, res) =
     // ערך שדות (שם ספק וכו') בזמן הזה. מיזוג על צילום ישן היה דורס את העריכה.
     const freshRow = db.prepare("SELECT data FROM entities WHERE entity_type='invoices' AND id=?").get(req.params.id);
     const freshInv = freshRow ? JSON.parse(freshRow.data || '{}') : inv;
+    // ה-PDF שיצא חוזר לעיתים דרך סנכרון Gmail (תיקיית "נשלח" / עותק CC) — ה-hash שלו
+    // נשמר כדי שהסנכרון יזהה אותו כקובץ מוכר ולא ייצור חשבונית כפולה.
+    const sentPdfSha256 = crypto.createHash('sha256').update(pdf).digest('hex');
     const updated = {
       ...freshInv, sent_to_bookkeeper_at: NOW(), sent_to: to, status: 'sent',
       pdf_file_name: pdfName, pdf_url: pdfUrl,
+      source_meta: { ...(freshInv.source_meta || {}), sent_pdf_sha256: sentPdfSha256 },
     };
     db.prepare("UPDATE entities SET data=?, updated_at=? WHERE entity_type='invoices' AND id=?")
       .run(JSON.stringify(updated), NOW(), req.params.id);
@@ -2418,6 +2423,16 @@ async function tryFileAsEmployeeDocument(farmId, localPath, ctx) {
   };
 }
 
+// מייל יוצא של האפליקציה: נשלח מחשבון ה-Gmail המחובר, הנושא בפורמט buildBookkeeperSubject
+// ("חשבונית • …" עם מפרידי •) וכל הקבצים המצורפים בפורמט buildInvoiceFilename ("חשבונית_…pdf").
+function isOwnBookkeeperMail(conn, fromEmail, subject, attachments) {
+  const me = String(conn?.email || '').toLowerCase().trim();
+  if (!me || String(fromEmail || '').toLowerCase().trim() !== me) return false;
+  const subj = String(subject || '').trim();
+  if (!/^(fwd?:\s*|re:\s*)*חשבונית(\s+•\s+|$)/i.test(subj)) return false;
+  return attachments.length > 0 && attachments.every(a => /^חשבונית_.*\.pdf$/i.test(String(a.filename || '')));
+}
+
 async function runGmailSync(farmId, conn, opts = {}) {
   const accessToken = await ensureGmailAccessToken(farmId, conn);
 
@@ -2459,7 +2474,10 @@ async function runGmailSync(farmId, conn, opts = {}) {
   ]);
   // אותו קובץ בייט-בייט שהגיע שוב (העברה/תזכורת ממייל אחר) — message_id שונה, ו-findExistingInvoice
   // מנוטרל כשהחילוץ לא החזיר סכום. sha256 של תוכן הקובץ תופס את זה בלי תלות בחילוץ.
-  const seenFileHashes = new Set(invoiceMetas.map(d => d.source_meta?.file_sha256).filter(Boolean));
+  const seenFileHashes = new Set([
+    ...invoiceMetas.map(d => d.source_meta?.file_sha256),
+    ...invoiceMetas.map(d => d.source_meta?.sent_pdf_sha256), // ה-PDF שהאפליקציה שלחה למנהלת החשבונות
+  ].filter(Boolean));
   const ignoreRules = getGmailIgnoreRules(farmId);
 
   do {
@@ -2483,6 +2501,16 @@ async function runGmailSync(farmId, conn, opts = {}) {
       // Apply subject filter (or accept when a configured label is matching the messages)
       const subjectOk = conn.label ? true : subjectRegex.test(subject);
       if (!subjectOk || attachments.length === 0) { skipped++; reportProgress('scanning'); continue; }
+
+      // המייל שהאפליקציה עצמה שלחה למנהלת החשבונות (נושא "חשבונית • ספק • מס׳ …" מחשבון המשתמש)
+      // מופיע ב-has:attachment דרך תיקיית "נשלח". לא חשבונית חדשה — מדלגים בלי חילוץ.
+      if (isOwnBookkeeperMail(conn, from.email, subject, attachments)) {
+        console.log(`[gmail-sync] own outgoing bookkeeper mail (${subject.slice(0, 60)}) — skipped`);
+        dismissGmailMessageId(farmId, msg.id);
+        seenInvoiceKeys.add(msg.id);
+        skipped++; reportProgress('scanning');
+        continue;
+      }
 
       // קבצים שהמשתמש כבר סימן כ"לא חשבונית" — מדלגים לפני החילוץ, כדי לא לבזבז קריאת AI
       const keptAttachments = attachments.filter(att => !matchesIgnoreRule(ignoreRules, from.email, att.filename));
