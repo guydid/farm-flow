@@ -9,7 +9,7 @@ const path = require('path');
 const DB_PATH = '/home/nitur/farm-flow/backend/data/farmflow.db';
 const UPLOADS = '/home/nitur/farm-flow/backend/uploads';
 const APPLY = process.argv.includes('--apply');
-const STAMP = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+const STAMP = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, ''); // YYYYMMDDHHMM — ריצה חוזרת באותו יום לא דורסת גיבוי קודם
 const NOW = () => new Date().toISOString();
 
 const db = new Database(DB_PATH);
