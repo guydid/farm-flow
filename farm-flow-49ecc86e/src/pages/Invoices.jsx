@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
   Plus, Search, FileText, Camera, Upload, Loader2, Mail,
   CheckCircle2, Clock, AlertTriangle, SlidersHorizontal, ChevronDown, ChevronUp,
@@ -27,13 +28,16 @@ const STATUS_LABEL = {
   reviewed: 'נבדק',
   approved: 'מאושר',
   rejected: 'נדחה',
+  sent: 'נשלח לחשבונות', // נקבע אוטומטית ע"י השרת אחרי שליחה במייל למנהלת החשבונות
 };
 const STATUS_COLOR = {
   pending: 'bg-amber-100 text-amber-700 border-amber-200',
   reviewed: 'bg-blue-100 text-blue-700 border-blue-200',
   approved: 'bg-green-100 text-green-700 border-green-200',
   rejected: 'bg-red-100 text-red-700 border-red-200',
+  sent: 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
+const SENT_BADGE_CLASS = 'bg-emerald-600 text-white border-emerald-600';
 const SOURCE_LABEL = { upload: 'העלאה', gmail: 'Gmail', manual: 'ידני' };
 
 // שמות חודשים קשיחים ולא locale של date-fns — נמנע מתלות בטעינת locale שאולי לא מותקן
@@ -98,6 +102,7 @@ export default function Invoices() {
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [cropFile, setCropFile] = useState(null);
+  const [dupPrompt, setDupPrompt] = useState(null); // { existing, reason, file } — הסריקה זוהתה ככפילות
   const [view, setView] = useState(() => {
     try { return localStorage.getItem('invoices_view') === 'gallery' ? 'gallery' : 'list'; } catch { return 'list'; }
   });
@@ -151,7 +156,9 @@ export default function Invoices() {
     const s = search.trim().toLowerCase();
     return invoices.filter(inv => {
       if (supplierFilter !== 'all' && inv.supplier_id !== supplierFilter) return false;
-      if (statusFilter !== 'all' && (inv.status || 'pending') !== statusFilter) return false;
+      if (statusFilter === 'sent_mail') { if (!inv.sent_to_bookkeeper_at) return false; }
+      else if (statusFilter === 'unsent_mail') { if (inv.sent_to_bookkeeper_at) return false; }
+      else if (statusFilter !== 'all' && (inv.status || 'pending') !== statusFilter) return false;
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
       if (!s) return true;
       return (
@@ -266,19 +273,26 @@ export default function Invoices() {
     else uploadAndScan(file);
   };
 
-  const uploadAndScan = async (file) => {
+  const uploadAndScan = async (file, { force = false } = {}) => {
     if (!file) return;
     setScanning(true);
     try {
-      const toSend = await downscaleImage(file); // הקטנה בדפדפן לפני העלאה (מהיר בנייד)
+      const toSend = force ? file : await downscaleImage(file); // הקטנה בדפדפן לפני העלאה (מהיר בנייד)
       const fd = new FormData();
       fd.append('file', toSend);
+      if (force) fd.append('force', '1');
       const res = await fetch(`${BASE_URL}/invoices/scan`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${getToken()}` },
         body: fd,
       });
       const data = await res.json();
+      if (res.status === 409 && data.duplicate) {
+        // השרת זיהה שהחשבונית כבר קיימת — המשתמש בוחר: לפתוח את הקיימת או לשמור בכל זאת.
+        // שומרים את הקובץ שכבר הוקטן כדי לא להקטין פעמיים אם יבחר "שמור בכל זאת".
+        setDupPrompt({ existing: data.existing, reason: data.reason, file: toSend });
+        return;
+      }
       if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
       const invId = data.invoice.id;
       const createdDesc = `סופק: ${data.supplier?.name || '—'} · סה"כ: ${fmtCurrency(data.extracted?.total, data.extracted?.currency)}`;
@@ -597,6 +611,9 @@ export default function Invoices() {
                   <SelectItem value="reviewed">{STATUS_LABEL.reviewed}</SelectItem>
                   <SelectItem value="approved">{STATUS_LABEL.approved}</SelectItem>
                   <SelectItem value="rejected">{STATUS_LABEL.rejected}</SelectItem>
+                  <SelectItem value="sent">{STATUS_LABEL.sent}</SelectItem>
+                  <SelectItem value="sent_mail">✉ נשלח במייל</SelectItem>
+                  <SelectItem value="unsent_mail">✉ טרם נשלח במייל</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
@@ -668,6 +685,11 @@ export default function Invoices() {
                     <Badge className={`absolute top-2 left-2 text-xs ${STATUS_COLOR[inv.status || 'pending']}`}>
                       {STATUS_LABEL[inv.status || 'pending']}
                     </Badge>
+                    {inv.sent_to_bookkeeper_at && (
+                      <Badge className={`absolute bottom-2 left-2 text-xs shadow ${SENT_BADGE_CLASS}`} title={`נשלח אל ${inv.sent_to || ''} · ${inv.sent_to_bookkeeper_at.slice(0, 10)}`}>
+                        <Mail className="w-3 h-3 ml-1" />נשלח
+                      </Badge>
+                    )}
 
                     <div className="p-2">
                       <p className="text-sm font-semibold text-gray-900 truncate">
@@ -744,7 +766,11 @@ export default function Invoices() {
                           <h3 className="font-semibold text-gray-900 truncate">{inv.supplier_name || supplierName(inv.supplier_id)}</h3>
                           <Badge className={`text-xs ${STATUS_COLOR[status]}`}>{STATUS_LABEL[status]}</Badge>
                           {inv.source === 'gmail' && <Badge variant="outline" className="text-xs"><Mail className="w-3 h-3 ml-1" />{SOURCE_LABEL[inv.source]}</Badge>}
-                          {inv.sent_to_bookkeeper_at && <Badge className="text-xs bg-green-100 text-green-700 border-green-200"><Mail className="w-3 h-3 ml-1" />נשלח</Badge>}
+                          {inv.sent_to_bookkeeper_at && (
+                            <Badge className={`text-xs ${SENT_BADGE_CLASS}`} title={`נשלח אל ${inv.sent_to || ''}`}>
+                              <Mail className="w-3 h-3 ml-1" />נשלח {inv.sent_to_bookkeeper_at.slice(8, 10)}/{inv.sent_to_bookkeeper_at.slice(5, 7)}
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
                           {inv.invoice_number && <span>מס׳ {inv.invoice_number}</span>}
@@ -780,6 +806,54 @@ export default function Invoices() {
           </div>
         )}
       </div>
+
+      {/* כפילות בסריקה — החשבונית כבר קיימת */}
+      <Dialog open={!!dupPrompt} onOpenChange={(o) => { if (!o) setDupPrompt(null); }}>
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="w-5 h-5" /> חשבונית זו כבר קיימת
+            </DialogTitle>
+            <DialogDescription>
+              {dupPrompt?.reason === 'same_file'
+                ? 'קובץ זהה כבר נשמר במערכת.'
+                : 'נמצאה חשבונית עם אותו מספר ואותו סכום.'}
+            </DialogDescription>
+          </DialogHeader>
+          {dupPrompt?.existing && (
+            <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
+              <p className="font-semibold text-gray-900">{dupPrompt.existing.supplier_name || '—'}</p>
+              <p className="text-gray-600">
+                {fmtCurrency(dupPrompt.existing.total, dupPrompt.existing.currency)}
+                {dupPrompt.existing.invoice_number ? ` · מס׳ ${dupPrompt.existing.invoice_number}` : ''}
+                {dupPrompt.existing.date ? ` · ${dupPrompt.existing.date}` : ''}
+              </p>
+              <div className="flex flex-wrap gap-1 pt-1">
+                <Badge className={`text-xs ${STATUS_COLOR[dupPrompt.existing.status || 'pending']}`}>{STATUS_LABEL[dupPrompt.existing.status || 'pending']}</Badge>
+                {dupPrompt.existing.source && <Badge variant="outline" className="text-xs">{SOURCE_LABEL[dupPrompt.existing.source] || dupPrompt.existing.source}</Badge>}
+                {dupPrompt.existing.sent_to_bookkeeper_at && (
+                  <Badge className={`text-xs ${SENT_BADGE_CLASS}`}><Mail className="w-3 h-3 ml-1" />נשלח {dupPrompt.existing.sent_to_bookkeeper_at.slice(0, 10)}</Badge>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              className="w-full sm:w-auto"
+              onClick={() => { const id = dupPrompt?.existing?.id; setDupPrompt(null); if (id) navigate(`${createPageUrl('InvoiceDetail')}?id=${id}`); }}
+            >
+              פתח את החשבונית הקיימת
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => { const f = dupPrompt?.file; setDupPrompt(null); if (f) uploadAndScan(f, { force: true }); }}
+            >
+              שמור בכל זאת
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* מסך קרופ */}
       {cropFile && (
@@ -823,6 +897,7 @@ export default function Invoices() {
               <p className="text-xs text-white/70 truncate">
                 {fmtCurrency(lightbox.total, lightbox.currency)}
                 {lightbox.invoice_number ? ` · מס׳ ${lightbox.invoice_number}` : ''}
+                {lightbox.sent_to_bookkeeper_at ? ` · ✉ נשלח ${lightbox.sent_to_bookkeeper_at.slice(0, 10)}` : ''}
               </p>
             </div>
             <a

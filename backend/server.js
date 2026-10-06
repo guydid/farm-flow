@@ -1467,10 +1467,13 @@ function findOrCreateSupplier(farmId, { name, vat_id, phone, address, email } = 
 //   3. כתובת השולח + תאריך + סכום, רק כשלשני הצדדים אין מספר חשבונית.
 // ל-Invoice.pdf ול-Receipt.pdf של אותה עסקה יש אותו ספק, מספר וסכום — שני מסמכים
 // שונים שאסור לקפל לאחד, ולכן שכבות 2-3 דורשות שסוג המסמך לא יסתור.
+//   4. (סריקה ידנית בלבד — אין שולח) מספר חשבונית + סכום, כל עוד ח.פ. הספק לא סותר.
+//      תופס חשבונית שנסרקה במצלמה אחרי שכבר הגיעה ב-Gmail או הועלתה בעבר.
 function findExistingInvoice(farmId, extracted, attachmentName, fromEmail) {
   if (extracted?.total == null) return null;
   const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const normNum = s => String(s || '').replace(/\s/g, '').toLowerCase();
+  // רק אותיות וספרות — בסריקת מצלמה "INV-554" נקרא לעיתים כ-"INV 554" או "INV554"
+  const normNum = s => String(s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
   const fileKey = attachmentName ? `${norm(attachmentName)}|${extracted.total}` : null;
   const senderEmail = norm(fromEmail);
   const extractedNum = normNum(extracted.invoice_number);
@@ -1486,19 +1489,41 @@ function findExistingInvoice(farmId, extracted, attachmentName, fromEmail) {
       return { id: r.id, ...d };
     }
 
-    if (!senderEmail || norm(d.source_meta?.from) !== senderEmail) continue;
     if (Number(d.total) !== Number(extracted.total)) continue;
     const typeA = extracted.invoice_type || null;
     const typeB = d.invoice_type || null;
     const typesCompatible = !typeA || !typeB || typeA === typeB;
     if (!typesCompatible) continue;
+    const existingNum = normNum(d.invoice_number);
+
+    // שכבה 4: סריקה ידנית — אין כתובת שולח להשוות אליה, ולכן מספר חשבונית + סכום מספיקים
+    if (!senderEmail) {
+      if (!extractedNum || !existingNum || extractedNum !== existingNum) continue;
+      const vatA = String(extracted.supplier_vat_id || '').replace(/\D/g, '');
+      const vatB = String(d.extracted_raw?.supplier_vat_id || '').replace(/\D/g, '');
+      if (vatA && vatB && vatA !== vatB) continue;
+      return { id: r.id, ...d };
+    }
+
+    if (norm(d.source_meta?.from) !== senderEmail) continue;
 
     // שכבה 2: אותו שולח + אותו מספר חשבונית + אותו סכום
-    const existingNum = normNum(d.invoice_number);
     if (extractedNum && existingNum && extractedNum === existingNum) return { id: r.id, ...d };
 
     // שכבה 3: אין מספר חשבונית בשני הצדדים — אותו שולח + תאריך + סכום
     if (!extractedNum && !existingNum && extracted.date && d.date === extracted.date) return { id: r.id, ...d };
+  }
+  return null;
+}
+
+// אותו קובץ בייט-בייט שכבר נשמר (מ-Gmail או מהעלאה קודמת) — בלי תלות בחילוץ.
+function findInvoiceByFileHash(farmId, sha256) {
+  if (!sha256) return null;
+  const rows = db.prepare("SELECT id, data FROM entities WHERE entity_type='invoices' AND farm_id=?").all(farmId);
+  for (const r of rows) {
+    let d;
+    try { d = JSON.parse(r.data || '{}'); } catch { continue; }
+    if (d.source_meta?.file_sha256 === sha256) return { id: r.id, ...d };
   }
   return null;
 }
@@ -1545,24 +1570,56 @@ app.post('/api/invoices/scan', authMiddleware, aiLimiter, upload.single('file'),
   }
 
   const filePath = path.join(UPLOADS_DIR, req.file.filename);
+  const farmId = user.current_farm_id;
+  const force = String(req.body?.force || req.query?.force || '') === '1';
+  const originalName = req.file.originalname || null;
+
+  // תשובת "כפילות": הקובץ שהועלה נמחק, והלקוח מקבל את פרטי החשבונית הקיימת כדי להציע
+  // לפתוח אותה או לשמור בכל זאת (force=1). לא מבזבזים קריאת AI על קובץ זהה בייט-בייט.
+  const duplicateResponse = (existing, reason) => {
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(409).json({
+      success: false, duplicate: true, reason,
+      error: 'חשבונית זו כבר קיימת במערכת',
+      existing: {
+        id: existing.id, supplier_name: existing.supplier_name || null, invoice_number: existing.invoice_number || null,
+        total: existing.total ?? null, currency: existing.currency || 'ILS', date: existing.date || null,
+        source: existing.source || null, status: existing.status || 'pending',
+        sent_to_bookkeeper_at: existing.sent_to_bookkeeper_at || null, file_name: existing.file_name || null,
+      },
+    });
+  };
+
   try {
+    const fileSha256 = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    if (!force) {
+      const sameFile = findInvoiceByFileHash(farmId, fileSha256);
+      if (sameFile) return duplicateResponse(sameFile, 'same_file');
+    }
+
     const { method, data: extracted } = await runDocumentExtraction(filePath, 'invoice');
+
+    if (!force) {
+      const dup = findExistingInvoice(farmId, extracted, originalName, null);
+      if (dup) return duplicateResponse(dup, 'same_content');
+    }
 
     const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
     const hostWithoutPort = host.split(':')[0];
     const protocol = req.headers['x-forwarded-proto'] || 'http';
     const file_url = `${protocol}://${hostWithoutPort}/uploads/${req.file.filename}`;
 
-    const supplier = findOrCreateSupplier(user.current_farm_id, {
+    const supplier = findOrCreateSupplier(farmId, {
       name: extracted.supplier_name,
       vat_id: extracted.supplier_vat_id,
       phone: extracted.supplier_phone,
       address: extracted.supplier_address,
     });
     const invoice = saveInvoiceFromExtraction(
-      user.current_farm_id, supplier.id, extracted,
+      farmId, supplier.id, extracted,
       { file_url, filename: req.file.filename },
-      'upload'
+      'upload',
+      { attachment_name: originalName, method, file_sha256: fileSha256, ...(force ? { forced_duplicate: true } : {}) }
     );
     res.json({ success: true, method, invoice, supplier, extracted });
   } catch (err) {

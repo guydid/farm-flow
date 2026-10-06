@@ -25,6 +25,7 @@ const STATUS_OPTIONS = [
   { value: 'reviewed', label: 'נבדק' },
   { value: 'approved', label: 'מאושר' },
   { value: 'rejected', label: 'נדחה' },
+  { value: 'sent', label: 'נשלח לחשבונות' },
 ];
 
 function fileUrlWithToken(url) {
