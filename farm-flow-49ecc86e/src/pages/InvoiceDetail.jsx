@@ -311,6 +311,7 @@ export default function InvoiceDetail() {
                       <SelectItem value="deal_invoice">חשבונית עסקה</SelectItem>
                       <SelectItem value="receipt">קבלה</SelectItem>
                       <SelectItem value="credit">זיכוי</SelectItem>
+                      <SelectItem value="delivery_note">תעודת משלוח</SelectItem>
                       <SelectItem value="other">אחר</SelectItem>
                     </SelectContent>
                   </Select>

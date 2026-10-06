@@ -554,7 +554,10 @@ Extract ONLY these fields as a JSON object — do not invent values, use null wh
 - supplier_phone: string or null
 - supplier_address: string or null
 - invoice_number: string ("מספר חשבונית", "Invoice #", "מס' חשבונית")
-- invoice_type: one of "tax_invoice" (חשבונית מס), "deal_invoice" (חשבונית עסקה), "receipt" (קבלה), "credit" (זיכוי), "other"
+- invoice_type: one of "tax_invoice" (חשבונית מס), "deal_invoice" (חשבונית עסקה), "receipt" (קבלה), "credit" (זיכוי), "delivery_note" (תעודת משלוח), "other"
+  IMPORTANT: a delivery note (תעודת משלוח / ת. משלוח / תעודת הובלה / Delivery Note / Packing Slip) lists goods delivered
+  and is NOT a payment demand — classify it as "delivery_note" even when quantities or prices appear.
+  If the document is titled "חשבונית מס" (or includes "חשבונית") it is an invoice, not a delivery note.
 - date: YYYY-MM-DD (the invoice date, "תאריך")
 - due_date: YYYY-MM-DD or null (תאריך פירעון)
 - subtotal: number or null (סכום לפני מע"מ)
@@ -1599,6 +1602,15 @@ app.post('/api/invoices/scan', authMiddleware, aiLimiter, upload.single('file'),
 
     const { method, data: extracted } = await runDocumentExtraction(filePath, 'invoice');
 
+    // תעודת משלוח אינה חשבונית — לא נשמרת (אלא אם המשתמש מתעקש עם force=1)
+    if (!force && extracted?.invoice_type === 'delivery_note') {
+      try { fs.unlinkSync(filePath); } catch {}
+      return res.status(422).json({
+        success: false, skipped: 'delivery_note', error: 'זוהתה תעודת משלוח — לא נשמרה כחשבונית',
+        extracted: { supplier_name: extracted.supplier_name || null, invoice_number: extracted.invoice_number || null, date: extracted.date || null, total: extracted.total ?? null, currency: extracted.currency || 'ILS' },
+      });
+    }
+
     if (!force) {
       const dup = findExistingInvoice(farmId, extracted, originalName, null);
       if (dup) return duplicateResponse(dup, 'same_content');
@@ -2423,6 +2435,7 @@ async function runGmailSync(farmId, conn, opts = {}) {
 
   let pageToken = null;
   let scanned = 0, saved = 0, skipped = 0, total = 0, filedToEmployees = 0;
+  let deliveryNotes = 0; // תעודות משלוח שדולגו
 
   // דיווח התקדמות לממשק. total הוא resultSizeEstimate של Gmail — הערכה בלבד, ולכן
   // הממשק מציג "~" ומגביל את האחוז ל-100.
@@ -2475,6 +2488,7 @@ async function runGmailSync(farmId, conn, opts = {}) {
       const keptAttachments = attachments.filter(att => !matchesIgnoreRule(ignoreRules, from.email, att.filename));
       if (keptAttachments.length === 0) { skipped++; reportProgress('scanning'); seenInvoiceKeys.add(msg.id); continue; }
 
+      let msgSaved = 0, msgDeliveryNotes = 0;
       for (const att of keptAttachments) {
         try {
           const attRes = await gmailApiGet(accessToken, `/gmail/v1/users/me/messages/${msg.id}/attachments/${att.attachmentId}`);
@@ -2503,6 +2517,15 @@ async function runGmailSync(farmId, conn, opts = {}) {
             }
           } catch (exErr) {
             console.log(`[gmail-sync] extraction failed for ${att.filename} (${String(exErr?.message || exErr).slice(0, 80)}) — saving as pending for manual entry`);
+          }
+
+          // תעודת משלוח — לא חשבונית. לא נשמרת, ולא מנסים לתייק כמסמך עובד.
+          if (extracted?.invoice_type === 'delivery_note') {
+            console.log(`[gmail-sync] ${att.filename} is a delivery note — skipped`);
+            try { fs.unlinkSync(localPath); } catch {}
+            msgDeliveryNotes++; deliveryNotes++; skipped++;
+            reportProgress('scanning');
+            continue;
           }
 
           // לא חשבונית? ייתכן שזה מסמך של עובד (פוליסה, אישור משרד הפנים, ויזה).
@@ -2554,12 +2577,14 @@ async function runGmailSync(farmId, conn, opts = {}) {
             { message_id: msg.id, subject, from: from.email, date: dateHeader, attachment_name: att.filename, method, file_sha256: fileSha256 }
           );
           seenFileHashes.add(fileSha256);
-          saved++;
+          saved++; msgSaved++;
           reportProgress('scanning');
         } catch (attErr) {
           console.error('[gmail-sync] attachment failed:', att.filename, String(attErr?.message || attErr));
         }
       }
+      // מייל שהכיל רק תעודות משלוח — נרשם כ-dismissed, אחרת החלון האחורי היה מחלץ אותו מחדש בכל סנכרון
+      if (msgDeliveryNotes > 0 && msgSaved === 0) dismissGmailMessageId(farmId, msg.id);
       seenInvoiceKeys.add(msg.id);
     }
   } while (pageToken);
@@ -2570,7 +2595,7 @@ async function runGmailSync(farmId, conn, opts = {}) {
   const updated = {
     ...fresh,
     last_sync_at: NOW(),
-    last_sync_result: { scanned, saved, skipped, filedToEmployees },
+    last_sync_result: { scanned, saved, skipped, filedToEmployees, deliveryNotes },
     needs_reauth: false,
     last_error: null,
     last_error_at: null,

@@ -287,6 +287,11 @@ export default function Invoices() {
         body: fd,
       });
       const data = await res.json();
+      if (res.status === 422 && data.skipped === 'delivery_note') {
+        // זוהתה תעודת משלוח — לא נשמרה; המשתמש יכול להתעקש לשמור בכל זאת
+        setDupPrompt({ reason: 'delivery_note', extracted: data.extracted, file: toSend });
+        return;
+      }
       if (res.status === 409 && data.duplicate) {
         // השרת זיהה שהחשבונית כבר קיימת — המשתמש בוחר: לפתוח את הקיימת או לשמור בכל זאת.
         // שומרים את הקובץ שכבר הוקטן כדי לא להקטין פעמיים אם יבחר "שמור בכל זאת".
@@ -363,7 +368,8 @@ export default function Invoices() {
 
       if (st?.last_sync_result && !st.syncing) {
         const r = st.last_sync_result;
-        toast({ title: 'סנכרון Gmail הושלם', description: `נסרקו ${r.scanned}, נשמרו ${r.saved}, דולגו ${r.skipped}` });
+        const extra = r.deliveryNotes ? `, תעודות משלוח ${r.deliveryNotes}` : '';
+        toast({ title: 'סנכרון Gmail הושלם', description: `נסרקו ${r.scanned}, נשמרו ${r.saved}, דולגו ${r.skipped}${extra}` });
       }
       await load();
     } catch (e) {
@@ -812,14 +818,27 @@ export default function Invoices() {
         <DialogContent dir="rtl" className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-700">
-              <AlertTriangle className="w-5 h-5" /> חשבונית זו כבר קיימת
+              <AlertTriangle className="w-5 h-5" />
+              {dupPrompt?.reason === 'delivery_note' ? 'זוהתה תעודת משלוח' : 'חשבונית זו כבר קיימת'}
             </DialogTitle>
             <DialogDescription>
-              {dupPrompt?.reason === 'same_file'
-                ? 'קובץ זהה כבר נשמר במערכת.'
-                : 'נמצאה חשבונית עם אותו מספר ואותו סכום.'}
+              {dupPrompt?.reason === 'delivery_note'
+                ? 'המסמך נראה כתעודת משלוח ולא כחשבונית, ולכן לא נשמר.'
+                : dupPrompt?.reason === 'same_file'
+                  ? 'קובץ זהה כבר נשמר במערכת.'
+                  : 'נמצאה חשבונית עם אותו מספר ואותו סכום.'}
             </DialogDescription>
           </DialogHeader>
+          {dupPrompt?.reason === 'delivery_note' && dupPrompt?.extracted && (
+            <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
+              <p className="font-semibold text-gray-900">{dupPrompt.extracted.supplier_name || '—'}</p>
+              <p className="text-gray-600">
+                {dupPrompt.extracted.invoice_number ? `מס׳ ${dupPrompt.extracted.invoice_number}` : ''}
+                {dupPrompt.extracted.date ? ` · ${dupPrompt.extracted.date}` : ''}
+                {dupPrompt.extracted.total != null ? ` · ${fmtCurrency(dupPrompt.extracted.total, dupPrompt.extracted.currency)}` : ''}
+              </p>
+            </div>
+          )}
           {dupPrompt?.existing && (
             <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
               <p className="font-semibold text-gray-900">{dupPrompt.existing.supplier_name || '—'}</p>
@@ -838,12 +857,18 @@ export default function Invoices() {
             </div>
           )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button
-              className="w-full sm:w-auto"
-              onClick={() => { const id = dupPrompt?.existing?.id; setDupPrompt(null); if (id) navigate(`${createPageUrl('InvoiceDetail')}?id=${id}`); }}
-            >
-              פתח את החשבונית הקיימת
-            </Button>
+            {dupPrompt?.reason === 'delivery_note' ? (
+              <Button className="w-full sm:w-auto" onClick={() => setDupPrompt(null)}>
+                אישור
+              </Button>
+            ) : (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => { const id = dupPrompt?.existing?.id; setDupPrompt(null); if (id) navigate(`${createPageUrl('InvoiceDetail')}?id=${id}`); }}
+              >
+                פתח את החשבונית הקיימת
+              </Button>
+            )}
             <Button
               variant="outline"
               className="w-full sm:w-auto"
