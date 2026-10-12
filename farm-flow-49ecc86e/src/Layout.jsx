@@ -58,7 +58,8 @@ export default function Layout({ children, currentPageName }) {
       ]).catch(() => [[], [], [], [], []]);
 
       // Employee notifications - only employees from the current farm
-      const safeEmployees = Array.isArray(employees) ? employees : [];
+      // עובדים בארכיון לא מייצרים התראות (דרכון/אשרה)
+      const safeEmployees = (Array.isArray(employees) ? employees : []).filter(e => e && !e.archived);
       
       safeEmployees.forEach(emp => {
         if (!emp) return; // Safety check for null/undefined employee objects

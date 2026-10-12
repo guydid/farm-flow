@@ -45,7 +45,7 @@ function buildAlerts(employees, vehicles) {
 
   // Employees (סגמנט: עובדים) — דרכון / ויזה
   employees
-    .filter(e => e && e.status !== "inactive")
+    .filter(e => e && e.status !== "inactive" && !e.archived)
     .forEach(e => {
       const name = e.nickname || `${e.first_name || ""} ${e.last_name || ""}`.trim();
       const link = createPageUrl("EmployeeDetail") + `?id=${e.id}`;
@@ -110,7 +110,7 @@ export default function MobileDashboard() {
   const allAlerts    = buildAlerts(allEmployees, allVehicles).map(a => ({ ...a, key: `${a.link}|${a.kind}` }));
   const alerts       = allAlerts.filter(a => !dismissedKeys.has(a.key));
   const errCount     = alerts.filter(a => a.kind === "error").length;
-  const activeEmployees = allEmployees.filter(e => e?.status === "active");
+  const activeEmployees = allEmployees.filter(e => e?.status === "active" && !e.archived);
 
   const dismissAlert = (e, key) => {
     e.preventDefault();

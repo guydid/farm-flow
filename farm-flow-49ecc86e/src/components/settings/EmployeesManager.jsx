@@ -44,7 +44,7 @@ export default function EmployeesManager() {
                 ManpowerCompany.filter(farmFilter).catch(() => [])
             ]);
             
-            setEmployees(Array.isArray(employeesData) ? employeesData : []);
+            setEmployees((Array.isArray(employeesData) ? employeesData : []).filter(e => e && !e.archived));
             setManpowerCompanies(Array.isArray(companiesData) ? companiesData : []);
         } catch (error) {
             console.error("Failed to load employees data:", error);

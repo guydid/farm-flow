@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectValue, SelectTrigger } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, User as UserIcon, Filter, Search, Printer, AlertTriangle, X, Copy, Check, SlidersHorizontal, ChevronDown, ChevronUp, Users } from 'lucide-react';
+import { Plus, User as UserIcon, Filter, Search, Printer, AlertTriangle, X, Copy, Check, SlidersHorizontal, ChevronDown, ChevronUp, Users, Archive, ArchiveRestore, Loader2 } from 'lucide-react';
+import { isArchived, isArchivable, setArchived } from '@/components/employees/archive';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { useToast } from "@/components/ui/use-toast";
@@ -25,12 +26,15 @@ export default function Employees() {
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [users, setUsers] = useState([]);
     const [copiedField, setCopiedField] = useState(null);
+    const [me, setMe] = useState(null);
+    const [archiving, setArchiving] = useState(null); // employee id | 'bulk'
     const { toast } = useToast();
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
             const user = await getMeCached();
+            setMe(user);
             if (!user.current_farm_id) {
                 console.warn("No current farm ID found for the user.");
                 setIsLoading(false);
@@ -119,13 +123,49 @@ export default function Employees() {
         return company ? company.name : "חברה לא נמצאה";
     }, [manpowerCompanies]);
 
+    // ארכיון: עובדים בארכיון מוצגים רק בלשונית "ארכיון"
+    const showArchive = filterStatus === 'archived';
+    const visibleBase = useMemo(() => (Array.isArray(employees) ? employees : []).filter(e => e && isArchived(e) === showArchive), [employees, showArchive]);
+    const archivedCount = useMemo(() => (Array.isArray(employees) ? employees : []).filter(isArchived).length, [employees]);
+    const archivable = useMemo(() => (Array.isArray(employees) ? employees : []).filter(isArchivable), [employees]);
+
+    const toggleArchive = async (emp, archived) => {
+        setArchiving(emp.id);
+        try {
+            await setArchived(emp, archived, me);
+            setEmployees(prev => prev.map(e => (e.id === emp.id ? { ...e, archived } : e)));
+            toast({ title: archived ? 'הועבר לארכיון' : 'הוחזר מהארכיון', description: emp.full_name });
+        } catch (e) {
+            toast({ title: 'שגיאה', description: e.message, variant: 'destructive' });
+        } finally {
+            setArchiving(null);
+        }
+    };
+
+    const archiveAllInactive = async () => {
+        if (!archivable.length) return;
+        if (!window.confirm(`להעביר לארכיון ${archivable.length} עובדים לא פעילים / שנטשו? אפשר להחזיר אותם מלשונית "ארכיון".`)) return;
+        setArchiving('bulk');
+        try {
+            for (const emp of archivable) await setArchived(emp, true, me);
+            const ids = new Set(archivable.map(e => e.id));
+            setEmployees(prev => prev.map(e => (ids.has(e.id) ? { ...e, archived: true } : e)));
+            if (filterStatus === 'inactive' || filterStatus === 'abandoned') setFilterStatus('all');
+            toast({ title: `${ids.size} עובדים הועברו לארכיון` });
+        } catch (e) {
+            toast({ title: 'שגיאה', description: e.message, variant: 'destructive' });
+            loadData();
+        } finally {
+            setArchiving(null);
+        }
+    };
+
     const filteredEmployees = useMemo(() => {
-        const safeEmployees = Array.isArray(employees) ? employees : [];
-        return safeEmployees.filter(emp => {
+        return visibleBase.filter(emp => {
             if (!emp) return false;
 
-            // Status filter
-            const statusMatch = filterStatus === "all" || emp.status === filterStatus;
+            // Status filter (בלשונית הארכיון — כל הסטטוסים)
+            const statusMatch = filterStatus === "all" || filterStatus === "archived" || emp.status === filterStatus;
 
             // Company filter (NEW)
             const companyMatch = filterCompany === "all" ||
@@ -142,11 +182,11 @@ export default function Employees() {
 
             return statusMatch && companyMatch && searchMatch;
         });
-    }, [employees, filterStatus, filterCompany, searchText]);
+    }, [visibleBase, filterStatus, filterCompany, searchText]);
 
     // Count employees per status (from full list, not filtered)
     const statusCounts = useMemo(() => {
-        const safe = Array.isArray(employees) ? employees : [];
+        const safe = (Array.isArray(employees) ? employees : []).filter(e => !isArchived(e));
         return safe.reduce((acc, e) => {
             const s = e?.status || 'active';
             acc[s] = (acc[s] || 0) + 1;
@@ -161,6 +201,7 @@ export default function Employees() {
         { key: 'on_leave',   label: 'בחופשה',       dot: 'bg-yellow-500', active: 'bg-yellow-500 text-white border-yellow-500', passive: 'bg-white border-gray-200 text-gray-700 hover:border-yellow-400' },
         { key: 'abandoned',  label: 'נטש',          dot: 'bg-purple-500', active: 'bg-purple-600 text-white border-purple-600', passive: 'bg-white border-gray-200 text-gray-700 hover:border-purple-400' },
         { key: 'inter_visa', label: 'אינטרוויזה',   dot: 'bg-blue-500',   active: 'bg-blue-600 text-white border-blue-600',    passive: 'bg-white border-gray-200 text-gray-700 hover:border-blue-400' },
+        { key: 'archived',   label: 'ארכיון',       dot: 'bg-gray-500',   active: 'bg-gray-700 text-white border-gray-700',    passive: 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-400' },
     ];
 
     const copyToClipboard = async (text, fieldName) => {
@@ -338,10 +379,19 @@ export default function Employees() {
                     <div>
                         <h1 className="text-xl lg:text-3xl font-bold text-gray-900">עובדים</h1>
                         <p className="text-xs text-gray-500 mt-0.5">
-                            {filteredEmployees.length} מתוך {employees.length} עובדים
+                            {showArchive ? `${filteredEmployees.length} עובדים בארכיון` : `${filteredEmployees.length} מתוך ${employees.length - archivedCount} עובדים`}
+                            {!showArchive && archivedCount > 0 && <span className="text-gray-400"> · {archivedCount} בארכיון</span>}
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
+                        {!showArchive && archivable.length > 0 && (
+                            <Button onClick={archiveAllInactive} variant="outline" size="sm" disabled={archiving === 'bulk'} className="flex items-center gap-1.5"
+                                    title="העברת כל העובדים הלא פעילים ושנטשו לארכיון">
+                                {archiving === 'bulk' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+                                <span className="hidden sm:inline">ארכב לא פעילים ({archivable.length})</span>
+                                <span className="sm:hidden">{archivable.length}</span>
+                            </Button>
+                        )}
                         <Button
                             onClick={handlePrintReport}
                             variant="outline"
@@ -364,7 +414,7 @@ export default function Employees() {
                 {employees.length > 0 && (
                     <div className="flex gap-2 overflow-x-auto pb-1 mb-4 scrollbar-hide -mx-1 px-1">
                         {STATUS_CONFIG.map(({ key, label, dot, active, passive }) => {
-                            const count = key === 'all' ? employees.length : (statusCounts[key] || 0);
+                            const count = key === 'all' ? employees.length - archivedCount : key === 'archived' ? archivedCount : (statusCounts[key] || 0);
                             if (key !== 'all' && count === 0) return null;
                             const isActive = filterStatus === key;
                             return (
@@ -397,7 +447,7 @@ export default function Employees() {
                             <SlidersHorizontal className="w-4 h-4 text-gray-500" />
                             <span>
                                 סינון
-                                {filterStatus !== 'all' && <span className="mr-1 text-blue-600">· {filterStatus === 'active' ? 'פעילים' : filterStatus === 'inactive' ? 'לא פעילים' : filterStatus === 'on_leave' ? 'בחופשה' : filterStatus === 'abandoned' ? 'נוטשים' : 'בהליך אשרה'}</span>}
+                                {filterStatus !== 'all' && <span className="mr-1 text-blue-600">· {filterStatus === 'active' ? 'פעילים' : filterStatus === 'inactive' ? 'לא פעילים' : filterStatus === 'on_leave' ? 'בחופשה' : filterStatus === 'abandoned' ? 'נוטשים' : filterStatus === 'archived' ? 'ארכיון' : 'בהליך אשרה'}</span>}
                                 {filterCompany !== 'all' && <span className="mr-1 text-blue-600">· חברה</span>}
                                 {searchText && <span className="mr-1 text-blue-600">· "{searchText}"</span>}
                             </span>
@@ -424,6 +474,7 @@ export default function Employees() {
                                     <SelectItem value="on_leave">בחופשה</SelectItem>
                                     <SelectItem value="abandoned">נוטשים</SelectItem>
                                     <SelectItem value="inter_visa">בהליך אשרה</SelectItem>
+                                    <SelectItem value="archived">ארכיון</SelectItem>
                                 </SelectContent>
                             </Select>
                             <Select value={filterCompany} onValueChange={(v) => { setFilterCompany(v); setFiltersOpen(false); }}>
@@ -478,6 +529,7 @@ export default function Employees() {
                                             <SelectItem value="on_leave">בחופשה</SelectItem>
                                             <SelectItem value="abandoned">נוטשים</SelectItem>
                                             <SelectItem value="inter_visa">בהליך אשרה</SelectItem>
+                                            <SelectItem value="archived">ארכיון</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
@@ -554,8 +606,20 @@ export default function Employees() {
                                        </div>
                                    </CardHeader>
                                    <CardContent className="flex-grow space-y-3">
-                                       <div className="flex items-center justify-between">
-                                           {getStatusBadge(employee.status)}
+                                       <div className="flex items-center justify-between gap-2">
+                                           <div className="flex items-center gap-1.5">
+                                               {getStatusBadge(employee.status)}
+                                               {isArchived(employee) && <Badge className="bg-gray-200 text-gray-700">בארכיון</Badge>}
+                                           </div>
+                                           {(isArchived(employee) || employee.status !== 'active') && (
+                                               <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-gray-500"
+                                                       disabled={archiving === employee.id}
+                                                       onClick={() => toggleArchive(employee, !isArchived(employee))}>
+                                                   {archiving === employee.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                       : isArchived(employee) ? <><ArchiveRestore className="w-3.5 h-3.5 ml-1" />החזר</>
+                                                       : <><Archive className="w-3.5 h-3.5 ml-1" />לארכיון</>}
+                                               </Button>
+                                           )}
                                        </div>
 
                                        <div className="text-sm text-muted-foreground space-y-1">

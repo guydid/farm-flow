@@ -14,6 +14,8 @@ import { ArrowRight, Loader2, Camera, User as UserIcon, FileText, Trash2, Downlo
 import { createPageUrl } from "@/utils";
 import { Badge } from "@/components/ui/badge";
 import EmployeeTimeline from "@/components/employees/EmployeeTimeline";
+import { isArchived, setArchived } from "@/components/employees/archive";
+import { Archive, ArchiveRestore } from "lucide-react";
 
 const getInitials = (firstName, lastName) => {
     let initials = '';
@@ -116,6 +118,9 @@ export default function EmployeeDetail() {
         } else {
             updateData.termination_date = null; // Clear termination date if not applicable
         }
+
+        // חזרה לפעיל מוציאה מהארכיון
+        if (newStatus === 'active' && isArchived(employee)) Object.assign(updateData, { archived: false, archived_at: null, archived_by: null });
 
         try {
             await Employee.update(employee.id, updateData);
@@ -364,15 +369,31 @@ export default function EmployeeDetail() {
                                             <DropdownMenuItem onClick={() => handleStatusChange('inter_visa')}>בהליך אשרה</DropdownMenuItem>
                                         </DropdownMenuContent>
                                     </DropdownMenu>
+                                    {isArchived(employee) && <Badge className="bg-gray-200 text-gray-700 mr-2">בארכיון</Badge>}
                                 </div>
                             </div>
                         </div>
+                        <div className="flex gap-2">
+                        {(isArchived(employee) || employee.status !== 'active') && (
+                            <Button variant="outline" onClick={async () => {
+                                try {
+                                    await setArchived(employee, !isArchived(employee), currentUser);
+                                    toast({ title: isArchived(employee) ? 'העובד הוחזר מהארכיון' : 'העובד הועבר לארכיון' });
+                                    loadData();
+                                } catch (e) {
+                                    toast({ title: 'שגיאה', description: e.message, variant: 'destructive' });
+                                }
+                            }}>
+                                {isArchived(employee) ? <><ArchiveRestore className="w-4 h-4 ml-2" />החזר מהארכיון</> : <><Archive className="w-4 h-4 ml-2" />העבר לארכיון</>}
+                            </Button>
+                        )}
                         <Link to={createPageUrl(`EditEmployee?id=${employee.id}`)}>
                             <Button variant="outline">
                                 <Edit className="w-4 h-4 ml-2" />
                                 ערוך
                             </Button>
                         </Link>
+                        </div>
                     </div>
                 </div>
 

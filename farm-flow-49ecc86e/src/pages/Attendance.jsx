@@ -371,7 +371,7 @@ export default function Attendance() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">— ללא קישור —</SelectItem>
-                          {employees.map(e => (
+                          {employees.filter(e => !e.archived || e.id === w.employee_id).map(e => (
                             <SelectItem key={e.id} value={e.id}>{e.full_name || `${e.first_name || ''} ${e.last_name || ''}`.trim()}</SelectItem>
                           ))}
                         </SelectContent>

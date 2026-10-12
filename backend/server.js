@@ -4542,7 +4542,7 @@ app.post('/api/attendance/auto-link', authMiddleware, (req, res) => {
 
   const employees = db.prepare("SELECT id, data FROM entities WHERE entity_type='employees' AND farm_id=?").all(farmId)
     .map(r => { try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return null; } })
-    .filter(Boolean);
+    .filter(e => e && !e.archived); // עובדים בארכיון לא מקושרים אוטומטית לשעון
   const byKey = {};   // normalized name → employees
   const byTcid = {};  // employee time_clock_id → employees (deterministic key)
   for (const e of employees) {
