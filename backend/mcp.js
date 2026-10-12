@@ -54,12 +54,15 @@ const ENTITIES = {
   vehicles:                'כלי רכב',
   vehicle_treatments:      'טיפולי רכב',
   company_settings:        'פרטי חברה',
-  pesticide_prices:        'מחירון קנייה של המשק לחומרי הדברה (product_name, price, unit)',
-  pesticide_stock:         'תנועות מלאי חומרי הדברה (type: count/purchase/adjustment). היתרה עצמה — בכלי pesticide_stock',
+  pesticide_prices:        'מחירון קנייה של המשק לחומרי הדברה — רשומה אחת לתכשיר: product_name, price (₪ ליחידה), unit (ליטר/מ"ל/ק"ג/גרם/יח\'), supplier, date',
+  pesticide_stock:         'תנועות מלאי חומרי הדברה: type count (ספירה — קובעת יתרה) / purchase (קנייה) / adjustment (תיקון ±), product_name, quantity, unit, date, supplier, cost_per_unit, notes. היתרה מחושבת — בכלי pesticide_stock',
   pest_recommendations:    'המלצות הדברה מפיקוח מזיקים (status: pending/done/cancelled) — כתיבה רק דרך propose_pest_action / update_pest_action',
 };
 // המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
-const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations', 'pesticide_stock', 'pesticide_prices']);
+const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations']);
+// טבלאות המלאי/מחירון — נכתבות גם בטוקן "פיקוח מזיקים" (create_record/update_record מוגבלים אליהן), עם אימות
+const PEST_WRITABLE = ['pesticide_stock', 'pesticide_prices'];
+const STOCK_TYPES = ['count', 'purchase', 'adjustment'];
 // ערכים זהים ל-src/components/pest/pestConstants.js
 const PEST_SEVERITIES = ['low', 'medium', 'high'];
 const PEST_METHODS = ['chemical', 'biological'];
@@ -225,7 +228,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       ctx.canWrite ? 'This token may create and update records (no delete).' : 'This token is read-only.',
       'Pest control: inspect a plot with pest_plot_context, then propose treatments with propose_pest_action. '
         + 'Proposals appear in the app as pending until a worker executes them in the field (only the app marks them done).',
-      ctx.canWritePest ? 'This token may create and update pest control recommendations.' : 'This token cannot write pest control recommendations.',
+      ctx.canWritePest ? 'This token may create and update pest control recommendations, pesticide prices (pesticide_prices) and stock movements (pesticide_stock). Use pesticide_stock (tool) for current balances.' : 'This token cannot write pest control recommendations.',
     ].join('\n');
   }
 
@@ -397,15 +400,16 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         },
       );
     }
-    if (ctx.canWrite) {
+    if (ctx.canWrite || ctx.canWritePest) {
+      const writable = ctx.canWrite ? writableEnum : PEST_WRITABLE;
       tools.push(
         {
           name: 'create_record',
           title: 'Create record',
-          description: 'Creates a record in this farm. Call describe_entity first so the field names match existing records.',
+          description: 'Creates a record in this farm. Call describe_entity first so the field names match existing records. pesticide_stock: {type: count|purchase|adjustment, product_name, quantity, unit, date, supplier?, cost_per_unit?, notes?} — a purchase with cost_per_unit also updates the price list. pesticide_prices: {product_name, price, unit, supplier?, date?} — one record per product (an existing one is updated).',
           inputSchema: {
             type: 'object',
-            properties: { entity: { type: 'string', enum: writableEnum }, data: { type: 'object' } },
+            properties: { entity: { type: 'string', enum: writable }, data: { type: 'object' } },
             required: ['entity', 'data'],
           },
           annotations: { readOnlyHint: false, destructiveHint: false },
@@ -416,7 +420,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           description: 'Merges the given fields into an existing record (fields not given are kept).',
           inputSchema: {
             type: 'object',
-            properties: { entity: { type: 'string', enum: writableEnum }, id: { type: 'string' }, data: { type: 'object' } },
+            properties: { entity: { type: 'string', enum: writable }, id: { type: 'string' }, data: { type: 'object' } },
             required: ['entity', 'id', 'data'],
           },
           annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
@@ -435,6 +439,63 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       // Tool-level failures are returned to the model, not as protocol errors.
       return { isError: true, content: [{ type: 'text', text: e.message }] };
     }
+  }
+
+  function checkWriteAccess(ctx, entity) {
+    if (ctx.canWrite) return;
+    if (ctx.canWritePest && PEST_WRITABLE.includes(entity)) return;
+    throw new Error(ctx.canWritePest ? `This token may write only: ${PEST_WRITABLE.join(', ')}` : 'This token is read-only');
+  }
+
+  // תנועת מלאי — אותם כללים כמו בטופס באפליקציה
+  function validateStockMovement(ctx, d) {
+    let name = String(d.product_name || '').trim().replace(/\s+/g, ' ');
+    let pesticideId = d.pesticide_id || null;
+    if (pesticideId) {
+      const row = db.prepare("SELECT data FROM entities WHERE entity_type = 'pesticides' AND id = ? AND (farm_id IS NULL OR farm_id = ?)").get(pesticideId, ctx.farmId);
+      if (!row) throw new Error(`unknown pesticide_id ${pesticideId}`);
+      if (!name) name = JSON.parse(row.data || '{}').product_name || '';
+    }
+    if (!name) throw new Error('product_name (or pesticide_id) is required');
+    if (!STOCK_TYPES.includes(d.type)) throw new Error(`type must be one of: ${STOCK_TYPES.join(', ')}`);
+    const qty = Number(d.quantity);
+    if (!Number.isFinite(qty)) throw new Error('quantity must be a number');
+    if (d.type !== 'adjustment' && qty < 0) throw new Error(`quantity cannot be negative for ${d.type} (use type adjustment)`);
+    if (d.type === 'purchase' && qty === 0) throw new Error('purchase quantity must be positive');
+    const unit = String(d.unit || '').trim() || 'ליטר';
+    if (/^(%|אחוז)$/.test(unit)) throw new Error('stock is kept in liters/kg/units, not percent');
+    const date = d.date === undefined ? NOW().slice(0, 10) : d.date;
+    checkDate('date', date);
+    const cost = d.cost_per_unit === undefined || d.cost_per_unit === null || d.cost_per_unit === '' ? null : Number(d.cost_per_unit);
+    if (cost !== null && !(Number.isFinite(cost) && cost >= 0)) throw new Error('cost_per_unit must be a non-negative number');
+    return {
+      type: d.type, product_name: name, pesticide_id: pesticideId, quantity: qty, unit, date,
+      ...(d.type === 'purchase' ? { supplier: String(d.supplier || '').trim(), cost_per_unit: cost } : {}),
+      notes: String(d.notes || '').trim(), created_by: d.created_by || `סוכן: ${ctx.tokenName}`,
+    };
+  }
+
+  // קנייה עם מחיר מעדכנת את המחירון, כמו בטופס הקנייה באפליקציה
+  function syncPurchasePrice(ctx, m) {
+    if (m.type !== 'purchase' || m.cost_per_unit == null) return;
+    upsertPesticidePrice(db, ctx.farmId, {
+      product_name: m.product_name, price: m.cost_per_unit, unit: m.unit, pesticide_id: m.pesticide_id,
+      supplier: m.supplier, source: 'purchase', date: m.date, updated_by: `סוכן: ${ctx.tokenName}`,
+    }, { uuidv4, NOW });
+  }
+
+  function savePriceRecord(ctx, d) {
+    const price = d.price === null || d.price === '' ? null : Number(d.price);
+    if (d.price === undefined) throw new Error('price is required (number, or null to clear)');
+    if (price !== null && !(Number.isFinite(price) && price >= 0)) throw new Error('price must be a non-negative number or null');
+    if (/^(%|אחוז)$/.test(String(d.unit || '').trim())) throw new Error('price unit must be a quantity unit (ליטר, מ"ל, ק"ג, גרם, יח\'), not percent');
+    if (d.date !== undefined) checkDate('date', d.date);
+    const saved = upsertPesticidePrice(db, ctx.farmId, {
+      product_name: d.product_name, price, unit: d.unit, pesticide_id: d.pesticide_id, supplier: d.supplier,
+      source: 'agent', date: d.date, updated_by: `סוכן: ${ctx.tokenName}`,
+    }, { uuidv4, NOW });
+    console.log(`[MCP] token ${ctx.tokenId} saved pesticide_prices/${saved.id}`);
+    return formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'pesticide_prices' AND id = ?").get(saved.id));
   }
 
   function checkEntity(entity, { write = false } = {}) {
@@ -617,34 +678,42 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       }
 
       case 'create_record': {
-        if (!ctx.canWrite) throw new Error('This token is read-only');
+        checkWriteAccess(ctx, args.entity);
         checkEntity(args.entity, { write: true });
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
+        if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
         const id = uuidv4();
-        const data = { ...args.data };
+        const data = args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data) : { ...args.data };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
         const now = NOW();
         db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
           .run(id, args.entity, ctx.farmId, JSON.stringify(data), now, now);
         if (args.entity === 'activities' || args.entity === 'harvests') syncSeedingDates(data.seeding_id);
+        if (args.entity === 'pesticide_stock') syncPurchasePrice(ctx, data);
         console.log(`[MCP] token ${ctx.tokenId} created ${args.entity}/${id}`);
         return formatEntity(db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(args.entity, id));
       }
 
       case 'update_record': {
-        if (!ctx.canWrite) throw new Error('This token is read-only');
+        checkWriteAccess(ctx, args.entity);
         checkEntity(args.entity, { write: true });
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
         const row = fetchRow(ctx, args.entity, args.id);
         let existing; try { existing = JSON.parse(row.data || '{}'); } catch { existing = {}; }
-        const updated = { ...existing, ...args.data };
+        if (args.entity === 'pesticide_prices') {
+          if (args.data.product_name !== undefined && String(args.data.product_name).trim() !== existing.product_name) throw new Error('product_name of a price record cannot be changed; create a record for the other product');
+          return savePriceRecord(ctx, { ...existing, ...args.data, product_name: existing.product_name });
+        }
+        let updated = { ...existing, ...args.data };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
+        if (args.entity === 'pesticide_stock') updated = { ...validateStockMovement(ctx, updated), created_by: existing.created_by || '', updated_by: `סוכן: ${ctx.tokenName}` };
         db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = ? AND id = ?')
           .run(JSON.stringify(updated), NOW(), args.entity, row.id);
         if (args.entity === 'activities' || args.entity === 'harvests') {
           syncSeedingDates(updated.seeding_id);
           if (existing.seeding_id && existing.seeding_id !== updated.seeding_id) syncSeedingDates(existing.seeding_id);
         }
+        if (args.entity === 'pesticide_stock') syncPurchasePrice(ctx, updated);
         console.log(`[MCP] token ${ctx.tokenId} updated ${args.entity}/${row.id}`);
         return formatEntity(db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(args.entity, row.id));
       }
