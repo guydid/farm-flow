@@ -100,9 +100,11 @@ export default function PesticidesManager() {
         const group = selectedGroups[gi];
         setImportProgress(`טוען קבוצה ${gi + 1}/${selectedGroups.length}: ${group}...`);
         let offset = 0;
-        const limit = 500;
+        const limit = 1000;
 
+        // ללא תקרה: בקבוצת "ירקות" לבדה יש ~16,500 רשומות (התקרה הקודמת של 1,500 השמיטה ~90% מהתכשירים)
         while (true) {
+          setImportProgress(`טוען קבוצה ${gi + 1}/${selectedGroups.length}: ${group} (${offset} רשומות)...`);
           let url = `${GOV_API}?resource_id=${RESOURCE_ID}&limit=${limit}&offset=${offset}`;
           url += `&filters=${encodeURIComponent(JSON.stringify({ 'קבוצת גידולים': group }))}`;
 
@@ -121,7 +123,7 @@ export default function PesticidesManager() {
 
           if (govData.result.records.length < limit) break;
           offset += limit;
-          if (offset >= 1500) break;
+          if (Number.isFinite(govData.result.total) && offset >= govData.result.total) break;
         }
       }
 
@@ -133,7 +135,13 @@ export default function PesticidesManager() {
       setImportProgress(`שולח ${allRecords.length} רשומות לשמירה...`);
 
       // Send records to backend in chunks (200 per request ≈ ~400KB each)
-      const CHUNK_SIZE = 200;
+      // שולחים רק את השדות שהשרת שומר — הרשומה המלאה כבדה פי ~4
+      const KEEP = ['מספר רשיון', 'שם תכשיר', 'סוג פעילות', 'בעל רשיון', 'חומר פעיל', 'ריכוז חומר פעיל', 'גידול', 'נגע',
+                    'מינון ליישום', 'נפח ליישום', 'תווית', 'תקופת המתנה', 'קבוצת גידולים'];
+      for (let i = 0; i < allRecords.length; i++) {
+        allRecords[i] = Object.fromEntries(KEEP.map(k => [k, allRecords[i][k]]));
+      }
+      const CHUNK_SIZE = 500;
       let totalNew = 0, totalUpdated = 0, totalSkipped = 0;
 
       for (let i = 0; i < allRecords.length; i += CHUNK_SIZE) {

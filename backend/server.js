@@ -3247,7 +3247,7 @@ app.post('/api/functions/importPesticides', authMiddleware, async (req, res) => 
           }
           if (govData.result.records.length < limit) break;
           offset += limit;
-          if (offset >= 1500) break;
+          if (Number.isFinite(govData.result.total) && offset >= govData.result.total) break;
         }
       }
     } catch (fetchErr) {
@@ -3272,6 +3272,8 @@ app.post('/api/functions/importPesticides', authMiddleware, async (req, res) => 
 
   let newCount = 0, updatedCount = 0, skippedCount = 0;
 
+  // טרנזקציה אחת לכל הבקשה — אלפי INSERT בודדים בלי טרנזקציה איטיים מאוד ב-SQLite
+  db.transaction(() => {
   for (const record of allRecords) {
     try {
       // Note: field is 'מספר רשיון' (not 'מספר רישיון') in this dataset
@@ -3336,6 +3338,7 @@ app.post('/api/functions/importPesticides', authMiddleware, async (req, res) => 
       skippedCount++;
     }
   }
+  })();
 
   return res.json({
     data: {
