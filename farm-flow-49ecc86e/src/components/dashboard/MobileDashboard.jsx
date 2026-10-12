@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { getCropIcon } from "../seedings/CropIcons";
 import { segmentMeta, ALERT_SEGMENT_ORDER } from "../layout/alertSegments";
+import RecentUpdates from "./RecentUpdates";
 
 /* ─── Page shortcuts config ──────────────────────────────────────── */
 const PAGE_SHORTCUTS = [
@@ -469,6 +470,9 @@ export default function MobileDashboard() {
           </div>
         </div>
       )}
+
+      {/* ── Recent updates ──────────────────────────────────────────── */}
+      <RecentUpdates compact />
 
       {/* ── Active Employees mini strip ─────────────────────────────── */}
       {activeEmployees.length > 0 && (

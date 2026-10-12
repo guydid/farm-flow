@@ -379,8 +379,9 @@ function syncSeedingDates(seedingId) {
   next.end_date = uprooting;
 
   if (JSON.stringify(next) === JSON.stringify(seed)) return;
-  db.prepare("UPDATE entities SET data=?, updated_at=? WHERE entity_type='seedings' AND id=?")
-    .run(JSON.stringify(next), NOW(), seedingId);
+  // שדות נגזרים בלבד — לא מקדמים updated_at, כדי שקטיף/פעילות לא יופיעו גם כ"עדכון מזרע" בעדכונים האחרונים
+  db.prepare("UPDATE entities SET data=? WHERE entity_type='seedings' AND id=?")
+    .run(JSON.stringify(next), seedingId);
 }
 
 // סוגי פעילות ברירת מחדל שנדרשים לסנכרון התאריכים — נוצרים לכל משק אם חסרים
@@ -4204,6 +4205,17 @@ app.get('/api/pesticide-stock', authMiddleware, (req, res) => {
   res.json({ farm_id: farmId, products });
 });
 
+// עדכונים אחרונים לדשבורד — ראה recentUpdates.js
+const { getRecentUpdates } = require('./recentUpdates');
+app.get('/api/recent-updates', authMiddleware, (req, res) => {
+  const user = getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const farmId = req.query.farm_id || user.current_farm_id;
+  if (!farmId || !user.farm_ids.includes(farmId)) return res.status(403).json({ error: 'אין גישה למשק' });
+  const types = req.query.types ? String(req.query.types).split(',').map(t => t.trim()).filter(Boolean) : null;
+  res.json(getRecentUpdates(db, farmId, { limit: req.query.limit, before: req.query.before || null, types }));
+});
+
 // מחירון קנייה של המשק (לא על הקטלוג המשותף)
 function pesticidePriceFarm(req, res) {
   const user = getUser(req.user.id);
@@ -4819,7 +4831,7 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
         if (!item || typeof item !== 'object') continue;
         const id = item.id || uuidv4();
         const farm_id = item.farm_id || user.current_farm_id;
-        const data = { ...item };
+        const data = { ...item, _by: user.full_name || user.email };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
         ins.run(id, entity, farm_id, JSON.stringify(data), now, now);
         ids.push(id);
@@ -4859,7 +4871,8 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
     );
   }
 
-  const data = { ...req.body };
+  // _by — מי יצר/עדכן אחרון (מוצג ב"עדכונים אחרונים")
+  const data = { ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
 
   db.prepare('INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
@@ -4902,7 +4915,7 @@ app.patch('/api/:entity', authMiddleware, (req, res) => {
     for (const item of items) {
       const row = byId.get(item.id);
       let existing; try { existing = JSON.parse(row.data || '{}'); } catch { existing = {}; }
-      const updated = { ...existing, ...item };
+      const updated = { ...existing, ...item, _by: user.full_name || user.email };
       ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
       upd.run(JSON.stringify(updated), now, entity, item.id);
       if (entity === 'activities' || entity === 'harvests') syncSeedingDates(updated.seeding_id);
@@ -4929,7 +4942,7 @@ app.put('/api/:entity/:id', authMiddleware, (req, res) => {
   }
 
   const existing = JSON.parse(row.data || '{}');
-  const updated = { ...existing, ...req.body };
+  const updated = { ...existing, ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
 
   // Pesticides always remain in shared catalog (farm_id = NULL)

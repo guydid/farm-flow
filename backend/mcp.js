@@ -683,7 +683,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
         if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
         const id = uuidv4();
-        const data = args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data) : { ...args.data };
+        const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data) : args.data), _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
         const now = NOW();
         db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -704,9 +704,9 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           if (args.data.product_name !== undefined && String(args.data.product_name).trim() !== existing.product_name) throw new Error('product_name of a price record cannot be changed; create a record for the other product');
           return savePriceRecord(ctx, { ...existing, ...args.data, product_name: existing.product_name });
         }
-        let updated = { ...existing, ...args.data };
+        let updated = { ...existing, ...args.data, _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
-        if (args.entity === 'pesticide_stock') updated = { ...validateStockMovement(ctx, updated), created_by: existing.created_by || '', updated_by: `סוכן: ${ctx.tokenName}` };
+        if (args.entity === 'pesticide_stock') updated = { ...validateStockMovement(ctx, updated), created_by: existing.created_by || '', updated_by: `סוכן: ${ctx.tokenName}`, _by: `סוכן: ${ctx.tokenName}` };
         db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = ? AND id = ?')
           .run(JSON.stringify(updated), NOW(), args.entity, row.id);
         if (args.entity === 'activities' || args.entity === 'harvests') {

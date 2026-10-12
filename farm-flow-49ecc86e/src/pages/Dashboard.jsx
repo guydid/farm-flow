@@ -12,6 +12,7 @@ const HarvestChart = lazy(() => import("../components/dashboard/HarvestChart"));
 const IncomeDistributionChart = lazy(() => import("../components/dashboard/IncomeDistributionChart"));
 const DashboardSummary = lazy(() => import("../components/dashboard/DashboardSummary"));
 const MobileDashboard = lazy(() => import("../components/dashboard/MobileDashboard"));
+import RecentUpdates from "../components/dashboard/RecentUpdates";
 const EventsTimelineChart = lazy(() => import("../components/dashboard/EventsTimelineChart"));
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -223,6 +224,10 @@ export default function Dashboard() {
             <Suspense fallback={<DashboardSkeleton />}>
               <ErrorBoundary>
                 <DashboardSummary seedings={seedings} plots={plots} harvests={harvests} />
+              </ErrorBoundary>
+
+              <ErrorBoundary>
+                <RecentUpdates />
               </ErrorBoundary>
               
               <ErrorBoundary>
