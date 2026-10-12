@@ -16,7 +16,7 @@ import RecommendationForm from '@/components/pest/RecommendationForm';
 import StockTab, { fetchStock } from '@/components/pest/StockTab';
 import { fetchPesticidePrices, farmPriceFor } from '@/api/pesticidePrices';
 import SprayingForm from '@/components/seedings/SprayingForm';
-import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES } from '@/components/pest/pestConstants';
+import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES, isPercentUnit, sprayVolumeFromText } from '@/components/pest/pestConstants';
 
 const fmtDate = (d) => { try { return format(parseISO(d), 'dd/MM/yy'); } catch { return d || ''; } };
 
@@ -268,7 +268,7 @@ function RecommendationCard({ rec, plotName, onExecute, onEdit, onCancel }) {
           {(rec.recommended_pesticides || []).map((p, i) => (
             <div key={i} className="flex justify-between text-sm gap-2">
               <span className="font-medium truncate">{p.pesticide_name}</span>
-              <span className="text-gray-600 whitespace-nowrap">{p.dosage_per_dunam != null ? `${p.dosage_per_dunam} ${p.unit || ''}/דונם` : 'מינון לפי תווית'}</span>
+              <span className="text-gray-600 whitespace-nowrap">{p.dosage_per_dunam != null ? (isPercentUnit(p.unit) ? `${p.dosage_per_dunam}% בתרסיס` : `${p.dosage_per_dunam} ${p.unit || ''}/דונם`) : 'מינון לפי תווית'}</span>
             </div>
           ))}
           {rec.treatment_type && <div className="text-xs text-gray-500 pt-1">יישום: {treatmentLabel(rec.treatment_type)}</div>}
@@ -319,13 +319,18 @@ function ExecuteDialog({ rec, me, prices = [], plots, seedings, plotSeedings, pe
     area_covered: seeding?.total_area || plot.size || '',
     performed_by: me?.full_name || '',
     notes: `לפי המלצת פיקוח: ${rec.pest}${rec.notes ? ` — ${rec.notes}` : ''}`,
+    // תכשירים באחוזים: נפח התרסיס מההמלצה, או מהקטלוג — SprayingForm ממיר לליטרים
+    spray_volume: rec.spray_volume || (rec.recommended_pesticides || [])
+      .filter(p => isPercentUnit(p.unit))
+      .map(p => sprayVolumeFromText(pesticides.find(x => x.id === p.pesticide_id)?.volume))
+      .find(Boolean) || '',
     applied_pesticides: (rec.recommended_pesticides || []).map(p => {
       const cat = pesticides.find(x => x.id === p.pesticide_id) || {};
       const unit = p.unit || cat.unit || 'מ"ל';
       return {
         pesticide_id: p.pesticide_id || null, pesticide_name: p.pesticide_name, active_ingredient: p.active_ingredient || cat.active_ingredients || '',
         quantity: '', unit, recommended_dosage: p.dosage_per_dunam || 0,
-        cost_per_unit: farmPriceFor(prices, p.pesticide_name, unit) ?? (cat.cost_per_unit || 0), concentration: cat.concentration || '', formulation: cat.formulation || '',
+        cost_per_unit: farmPriceFor(prices, p.pesticide_name, isPercentUnit(unit) ? 'ליטר' : unit) ?? (cat.cost_per_unit || 0), concentration: cat.concentration || '', formulation: cat.formulation || '',
       };
     }),
   }), [rec, seeding, plot.size, me, pesticides, prices]);

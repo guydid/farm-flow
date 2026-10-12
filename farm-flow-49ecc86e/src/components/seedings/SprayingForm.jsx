@@ -12,6 +12,19 @@ import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchPesticidePrices, farmPriceFor } from "@/api/pesticidePrices";
+import { isPercentUnit, parseDosage, sprayVolumeFromText, percentToLiters } from "@/components/pest/pestConstants";
+
+// מינון באחוזים הוא ריכוז בתרסיס — בהדברה עצמה הכמות נשמרת תמיד בליטרים.
+// גם רשומות ישנות שנשמרו עם יחידה "%" מומרות כאן (האחוז נשמר ב-concentration_percent).
+function normalizeApplied(list, area) {
+  return (list || []).map(ap => {
+    if (ap.concentration_percent > 0) return { ...ap, unit: 'ליטר', recommended_dosage: 0 };
+    if (!isPercentUnit(ap.unit)) return ap;
+    const a = parseFloat(area);
+    const pct = parseFloat(ap.recommended_dosage) || (a > 0 && parseFloat(ap.quantity) > 0 ? parseFloat(ap.quantity) / a : null);
+    return { ...ap, concentration_percent: pct, unit: 'ליטר', recommended_dosage: 0, quantity: '' };
+  });
+}
 
 export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onCancel, initialData = null }) {
   const { toast } = useToast();
@@ -26,7 +39,9 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
     area_covered: initialData?.area_covered?.toString() || seeding?.total_area?.toString() || '', // Ensure area_covered is stored as string initially
     performed_by: initialData?.performed_by || '',
     notes: initialData?.notes || '',
-    applied_pesticides: initialData?.applied_pesticides || [],
+    // נפח תרסיס (ליטר לדונם) — נדרש לתכשירים שהמינון שלהם באחוזים
+    spray_volume: initialData?.spray_volume ? String(initialData.spray_volume) : '',
+    applied_pesticides: normalizeApplied(initialData?.applied_pesticides, initialData?.area_covered ?? seeding?.total_area),
   });
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -44,6 +59,10 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
       const area = parseFloat(formData.area_covered);
       if (!isNaN(area) && area > 0) {
         const updated = formData.applied_pesticides.map(ap => {
+          // באחוזים: ליטרים = % × נפח תרסיס לדונם × שטח
+          if (ap.concentration_percent > 0) {
+            return { ...ap, quantity: percentToLiters(ap.concentration_percent, formData.spray_volume, area) };
+          }
           // Use the stored recommended_dosage (which is dosagePerDunam)
           const recommendedDosage = parseFloat(ap.recommended_dosage);
           if (!isNaN(recommendedDosage) && recommendedDosage > 0) {
@@ -59,7 +78,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
         setFormData(prev => ({ ...prev, applied_pesticides: updated }));
       }
     }
-  }, [formData.area_covered, formData.applied_pesticides.length]); // Re-evaluate when area_covered or number of pesticides changes
+  }, [formData.area_covered, formData.spray_volume, formData.applied_pesticides.length]); // Re-evaluate when area_covered or number of pesticides changes
 
   const handleAddPesticide = (pesticide) => {
     const existingIndex = formData.applied_pesticides.findIndex(p => p.pesticide_id === pesticide.id);
@@ -70,6 +89,33 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
         description: `${pesticide.product_name} כבר נמצא ברשימה.`,
         variant: "destructive"
       });
+      setSearchTerm('');
+      setShowPesticidesList(false);
+      return;
+    }
+
+    // מינון באחוזים ("1 אחוז") — ריכוז בתרסיס; הכמות בליטרים לפי נפח התרסיס
+    const parsed = parseDosage(pesticide);
+    if (parsed.unit === '%' && parsed.dose > 0) {
+      const catalogVolume = sprayVolumeFromText(pesticide.volume);
+      const volume = formData.spray_volume || (catalogVolume ? String(catalogVolume) : '');
+      setFormData(prev => ({
+        ...prev,
+        spray_volume: prev.spray_volume || volume,
+        applied_pesticides: [...prev.applied_pesticides, {
+          pesticide_id: pesticide.id,
+          pesticide_name: pesticide.product_name,
+          active_ingredient: pesticide.active_ingredients,
+          concentration_percent: parsed.dose,
+          quantity: percentToLiters(parsed.dose, prev.spray_volume || volume, prev.area_covered),
+          unit: 'ליטר',
+          recommended_dosage: 0,
+          cost_per_unit: farmPriceFor(farmPrices, pesticide.product_name, 'ליטר') ?? (pesticide.cost_per_unit || 0),
+          concentration: pesticide.concentration || '',
+          formulation: pesticide.formulation || '',
+        }],
+      }));
+      toast({ title: "חומר נוסף", description: `${pesticide.product_name}: ${parsed.dose}% מהתרסיס. הכמות מחושבת בליטרים לפי נפח התרסיס.` });
       setSearchTerm('');
       setShowPesticidesList(false);
       return;
@@ -190,6 +236,11 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
       return;
     }
 
+    if (formData.applied_pesticides.some(p => p.concentration_percent > 0) && !(parseFloat(formData.spray_volume) > 0)) {
+      toast({ title: "שגיאה", description: "יש תכשיר במינון באחוזים — נא להזין נפח תרסיס (ליטר לדונם) כדי לחשב את הכמות בליטרים.", variant: "destructive" });
+      return;
+    }
+
     const totalCalculatedCost = formData.applied_pesticides.reduce((sum, item) => {
         const quantity = parseFloat(item.quantity) || 0;
         const cost = parseFloat(item.cost_per_unit) || 0;
@@ -204,6 +255,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
       treatment_type: formData.treatment_type,
       treatment_time: formData.treatment_time,
       area_covered: parseFloat(formData.area_covered) || 0,
+      spray_volume: parseFloat(formData.spray_volume) || null,
       performed_by: formData.performed_by || '',
       applied_pesticides: formData.applied_pesticides.map(p => ({
         pesticide_id: p.pesticide_id,
@@ -214,7 +266,8 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
         active_ingredient: p.active_ingredient,
         concentration: p.concentration,
         formulation: p.formulation,
-        recommended_dosage: parseFloat(p.recommended_dosage) || 0 // Ensure this is numeric
+        recommended_dosage: parseFloat(p.recommended_dosage) || 0, // Ensure this is numeric
+        ...(p.concentration_percent > 0 ? { concentration_percent: parseFloat(p.concentration_percent) } : {}),
       })),
       total_cost: parseFloat(totalCalculatedCost.toFixed(2)), // Ensure total cost is numeric and fixed
       notes: formData.notes
@@ -551,6 +604,22 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
             </div>
           )}
 
+          {formData.applied_pesticides.some(p => p.concentration_percent > 0) && (
+            <div className="flex flex-wrap items-end gap-3 p-3 rounded-xl border border-amber-200 bg-amber-50/60">
+              <div>
+                <Label htmlFor="spray_volume">נפח תרסיס (ליטר לדונם) *</Label>
+                <Input id="spray_volume" type="number" inputMode="decimal" step="any" className="w-28 mt-1 bg-white"
+                       value={formData.spray_volume}
+                       onChange={(e) => setFormData(prev => ({ ...prev, spray_volume: e.target.value }))} />
+              </div>
+              <p className="text-xs text-amber-800 flex-1 min-w-[180px]">
+                תכשיר במינון באחוזים: הכמות נרשמת בליטרים = אחוז × נפח תרסיס × שטח.
+                {parseFloat(formData.spray_volume) > 0 && parseFloat(formData.area_covered) > 0 &&
+                  ` סה"כ תרסיס: ${Math.round(parseFloat(formData.spray_volume) * parseFloat(formData.area_covered))} ליטר.`}
+              </p>
+            </div>
+          )}
+
           {/* טבלת חומרים שנוספו */}
           {formData.applied_pesticides.length > 0 ? (
             <>
@@ -561,7 +630,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                     <TableRow>
                       <TableHead className="w-8 text-center">#</TableHead>
                       <TableHead className="w-[25%]">חומר</TableHead>
-                      <TableHead className="w-[15%]">מינון/דונם</TableHead>
+                      <TableHead className="w-[15%]">מינון</TableHead>
                       <TableHead className="w-[15%]">כמות כוללת</TableHead>
                       <TableHead className="w-[15%]">עלות/יח'</TableHead>
                       <TableHead className="w-[15%]">סה"כ</TableHead>
@@ -582,7 +651,9 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                           )}
                         </TableCell>
                         <TableCell className="text-sm text-gray-600">
-                          {item.recommended_dosage > 0 ? (
+                          {item.concentration_percent > 0 ? (
+                            <span className="font-medium text-amber-700">{item.concentration_percent}% בתרסיס</span>
+                          ) : item.recommended_dosage > 0 ? (
                             <span className="font-medium text-blue-600">
                               {item.recommended_dosage} {item.unit}/דונם
                             </span>
@@ -604,6 +675,11 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                           {item.recommended_dosage > 0 && formData.area_covered && parseFloat(formData.area_covered) > 0 && (
                             <div className="text-xs text-gray-500 mt-1">
                               ({item.recommended_dosage} × {formData.area_covered} דונם)
+                            </div>
+                          )}
+                          {item.concentration_percent > 0 && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              ({item.concentration_percent}% × {formData.spray_volume || '?'} ליטר × {formData.area_covered || '?'} דונם)
                             </div>
                           )}
                         </TableCell>
@@ -675,9 +751,9 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
 
                       <div className="grid grid-cols-2 gap-2 text-sm mt-3">
                         <div>
-                          <Label>מינון/דונם:</Label>
+                          <Label>{item.concentration_percent > 0 ? 'ריכוז:' : 'מינון/דונם:'}</Label>
                           <p className="font-medium text-blue-600">
-                            {item.recommended_dosage > 0 ? `${item.recommended_dosage} ${item.unit}/דונם` : '-'}
+                            {item.concentration_percent > 0 ? `${item.concentration_percent}% בתרסיס` : item.recommended_dosage > 0 ? `${item.recommended_dosage} ${item.unit}/דונם` : '-'}
                           </p>
                         </div>
                         <div>
@@ -695,6 +771,11 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
                           {item.recommended_dosage > 0 && formData.area_covered && parseFloat(formData.area_covered) > 0 && (
                             <p className="text-xs text-gray-500 mt-1">
                               ({item.recommended_dosage} × {formData.area_covered} דונם)
+                            </p>
+                          )}
+                          {item.concentration_percent > 0 && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              ({item.concentration_percent}% × {formData.spray_volume || '?'} ליטר × {formData.area_covered || '?'} דונם)
                             </p>
                           )}
                         </div>

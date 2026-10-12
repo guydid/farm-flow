@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Search, X, Loader2 } from 'lucide-react';
 import {
-  SEVERITIES, CONTROL_METHODS, TREATMENT_TYPES, ACTIVE_SEEDING_STATUSES, parseDosage,
+  SEVERITIES, CONTROL_METHODS, TREATMENT_TYPES, ACTIVE_SEEDING_STATUSES, parseDosage, isPercentUnit, sprayVolumeFromText,
 } from './pestConstants';
 
 const Chip = ({ active, onClick, children, className = '' }) => (
@@ -35,6 +35,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
     recommended_pesticides: initialData?.recommended_pesticides || [],
     due_date: initialData?.due_date || format(addDays(new Date(), 1), 'yyyy-MM-dd'),
     notes: initialData?.notes || '',
+    spray_volume: initialData?.spray_volume ? String(initialData.spray_volume) : '',
   }));
   const [search, setSearch] = useState('');
   const [saving, setSaving] = useState(false);
@@ -88,6 +89,10 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
   const addPesticide = (p) => {
     if (data.recommended_pesticides.some(x => x.pesticide_id === p.id || x.pesticide_name === p.product_name)) { setSearch(''); setPickerOpen(false); return; }
     const { dose, unit } = parseDosage(p);
+    if (unit === '%' && !data.spray_volume) {
+      const v = sprayVolumeFromText(p.volume);
+      if (v) set({ spray_volume: String(v) });
+    }
     set({
       recommended_pesticides: [...data.recommended_pesticides, {
         pesticide_id: p.id, pesticide_name: p.product_name, active_ingredient: p.active_ingredients || '',
@@ -120,6 +125,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
         recommended_pesticides: data.recommended_pesticides.map(p => ({
           ...p, dosage_per_dunam: p.dosage_per_dunam === '' || p.dosage_per_dunam == null ? null : parseFloat(p.dosage_per_dunam),
         })),
+        spray_volume: data.recommended_pesticides.some(p => isPercentUnit(p.unit)) && parseFloat(data.spray_volume) > 0 ? parseFloat(data.spray_volume) : null,
       });
     } catch (e) {
       setError(e.message || 'השמירה נכשלה');
@@ -232,13 +238,22 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
             </div>
             <Input type="number" inputMode="decimal" step="any" value={p.dosage_per_dunam ?? ''} className="w-20 h-9 text-center"
                    onChange={e => updatePesticide(i, { dosage_per_dunam: e.target.value })} aria-label="מינון לדונם" />
-            <span className="text-xs text-gray-500 w-14">{p.unit}/דונם</span>
+            <span className="text-xs text-gray-500 w-14">{isPercentUnit(p.unit) ? '% בתרסיס' : `${p.unit}/דונם`}</span>
             <button type="button" onClick={() => removePesticide(i)} className="p-1 text-gray-400 hover:text-red-500" aria-label="הסר">
               <X className="w-4 h-4" />
             </button>
           </div>
         ))}
       </section>
+
+      {data.recommended_pesticides.some(p => isPercentUnit(p.unit)) && (
+        <section className="space-y-1.5 p-3 rounded-xl border border-amber-200 bg-amber-50/60">
+          <Label>נפח תרסיס (ליטר לדונם)</Label>
+          <Input type="number" inputMode="decimal" step="any" className="w-28 bg-white" value={data.spray_volume}
+                 onChange={e => set({ spray_volume: e.target.value })} />
+          <p className="text-xs text-amber-800">מינון באחוזים הוא ריכוז בתרסיס. בביצוע, הכמות תירשם בליטרים: אחוז × נפח תרסיס × שטח.</p>
+        </section>
+      )}
 
       <section className="space-y-2">
         <Label>אופן יישום</Label>

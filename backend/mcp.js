@@ -318,8 +318,8 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         properties: {
           pesticide_id: { type: 'string', description: 'Id from the pesticides catalog (preferred)' },
           name: { type: 'string', description: 'Product name, used when pesticide_id is not known; matched against the catalog' },
-          dosage_per_dunam: { type: 'number', description: 'Defaults to the catalog dosage' },
-          unit: { type: 'string', description: 'e.g. מ"ל, גרם, ליטר. Defaults to the catalog unit' },
+          dosage_per_dunam: { type: 'number', description: 'Dose per dunam, or the concentration in percent when unit is "%". Defaults to the catalog dosage' },
+          unit: { type: 'string', description: 'מ"ל, גרם, ליטר, ק"ג per dunam — or "%" for a concentration in the spray mix (catalog doses written as "1 אחוז"). Defaults from the catalog' },
         },
       };
       tools.push(
@@ -339,6 +339,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
               pesticides: { type: 'array', minItems: 1, items: pesticideItem },
               due_date: { type: 'string', description: 'YYYY-MM-DD, default tomorrow' },
               notes: { type: 'string', description: 'Observation and reasoning, shown to the field team' },
+              spray_volume_per_dunam: { type: 'number', description: 'Liters of spray mix per dunam. Needed for "%" products: the field quantity in liters = % × volume × area. Defaults from the catalog volume' },
             },
             required: ['plot_id', 'pest', 'pesticides'],
           },
@@ -359,6 +360,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
               pesticides: { type: 'array', minItems: 1, items: pesticideItem },
               due_date: { type: 'string' },
               notes: { type: 'string' },
+              spray_volume_per_dunam: { type: 'number' },
               status: { type: 'string', enum: ['cancelled'], description: 'Set to cancel the recommendation' },
               cancel_reason: { type: 'string' },
             },
@@ -467,6 +469,16 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       .filter(s => (links.has(s.id) || s.plot_id === plotId) && ACTIVE_SEEDING_STATUSES.includes(s.status));
   }
 
+  function defaultSprayVolume(ctx, pesticides) {
+    for (const p of pesticides) {
+      if (p.unit !== '%' || !p.pesticide_id) continue;
+      const row = db.prepare("SELECT data FROM entities WHERE entity_type = 'pesticides' AND id = ?").get(p.pesticide_id);
+      const v = row && sprayVolumeFromText(JSON.parse(row.data || '{}').volume);
+      if (v) return v;
+    }
+    return null;
+  }
+
   function resolvePesticides(ctx, items) {
     if (!Array.isArray(items) || !items.length) throw new Error('pesticides: at least one item is required');
     const catalog = db.prepare("SELECT * FROM entities WHERE entity_type = 'pesticides' AND (farm_id IS NULL OR farm_id = ?)")
@@ -482,15 +494,39 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       const m = String(p?.dosage || '').match(/(\d+(?:\.\d+)?)/);
       const dose = it.dosage_per_dunam != null ? Number(it.dosage_per_dunam) : (m ? parseFloat(m[1]) : null);
       if (dose != null && !(dose > 0)) throw new Error(`pesticides[${i}]: dosage_per_dunam must be positive`);
+      // "1 אחוז" בקטלוג = ריכוז בתרסיס, לא מינון לדונם. נשמר עם unit '%' — בביצוע הכמות מחושבת בליטרים
+      const unit = normDoseUnit(it.unit) || normDoseUnit(p?.unit) || doseUnitFromText(p?.dosage) || 'מ"ל';
+      if (unit === '%' && dose != null && dose > 20) throw new Error(`pesticides[${i}]: a concentration of ${dose}% is not plausible`);
       return {
         pesticide_id: p?.id || null,
         pesticide_name: p?.product_name || String(it.name).trim(),
         active_ingredient: p?.active_ingredients || '',
         dosage_per_dunam: dose,
-        unit: it.unit || p?.unit || 'מ"ל',
+        unit,
         ...(p ? {} : { not_in_catalog: true }),
       };
     });
+  }
+
+  function normDoseUnit(u) {
+    const s = String(u || '').trim();
+    if (!s) return '';
+    return /^(%|אחוז|percent)$/i.test(s) ? '%' : s;
+  }
+  function doseUnitFromText(t) {
+    const d = String(t || '');
+    if (!d) return '';
+    return /אחוז|%/.test(d) ? '%' : d.includes('ליטר') ? 'ליטר' : d.includes('ק"ג') ? 'ק"ג' : d.includes('גרם') ? 'גרם' : '';
+  }
+  // נפח תרסיס מהקטלוג: "100 - 40 ליטר/דונם" → 100
+  function sprayVolumeFromText(t) {
+    const d = String(t || '');
+    if (!d.includes('ליטר')) return null;
+    const nums = (d.match(/\d+(?:\.\d+)?/g) || []).map(Number).filter(n => n > 0);
+    return nums.length ? Math.max(...nums) : null;
+  }
+  function checkSprayVolume(v) {
+    if (v !== undefined && v !== null && !(typeof v === 'number' && v > 0 && v <= 1000)) throw new Error('spray_volume_per_dunam must be a number of liters between 0 and 1000');
   }
 
   function checkEnum(name, value, allowed) {
@@ -711,6 +747,8 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         checkEnum('treatment_type', args.treatment_type, PEST_TREATMENTS);
         checkDate('due_date', args.due_date);
         const pesticides = resolvePesticides(ctx, args.pesticides);
+        checkSprayVolume(args.spray_volume_per_dunam);
+        const sprayVolume = args.spray_volume_per_dunam ?? (pesticides.some(p => p.unit === '%') ? defaultSprayVolume(ctx, pesticides) : null);
         const today = new Date().toISOString().slice(0, 10);
         const data = {
           plot_id: plot.id, plot_name: plot.name || '',
@@ -721,6 +759,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           recommended_pesticides: pesticides,
           due_date: args.due_date || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
           notes: String(args.notes || '').trim(),
+          ...(sprayVolume ? { spray_volume: sprayVolume } : {}),
           status: 'pending', source: 'agent',
           inspection_date: today, inspector_name: `סוכן: ${ctx.tokenName}`, mcp_token_id: ctx.tokenId,
         };
@@ -759,6 +798,8 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         if (args.pest !== undefined) { patch.pest = String(args.pest).trim(); if (!patch.pest) throw new Error('pest cannot be empty'); }
         if (args.notes !== undefined) patch.notes = String(args.notes).trim();
         if (args.pesticides !== undefined) patch.recommended_pesticides = resolvePesticides(ctx, args.pesticides);
+        checkSprayVolume(args.spray_volume_per_dunam);
+        if (args.spray_volume_per_dunam !== undefined) patch.spray_volume = args.spray_volume_per_dunam;
         if (args.status === 'cancelled') {
           Object.assign(patch, { status: 'cancelled', cancel_reason: String(args.cancel_reason || '').trim(), cancelled_at: NOW(), cancelled_by: `סוכן: ${ctx.tokenName}` });
         }
