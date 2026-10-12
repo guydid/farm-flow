@@ -1112,25 +1112,33 @@ Return ONLY the JSON object, no other text.`
   // Invoices need more tokens (line items can be long); PDFs can have multiple pages
   const maxTokens = documentType === 'invoice' ? (isPdf ? 3000 : 2000) : 512;
 
-  const body = JSON.stringify({
-    model: 'claude-haiku-4-5',
-    max_tokens: maxTokens,
-    messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }]
-  });
+  const callModel = (model) => {
+    const body = JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }]
+    });
+    return httpsRequest({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body)
+      }
+    }, body);
+  };
 
-  console.log(`[Claude Vision] file=${path.basename(filePath)} type=${documentType} mediaType=${mediaType} size=${fileBuffer.length}B`);
+  console.log(`[Claude Vision] model=${CLAUDE_VISION_MODEL} file=${path.basename(filePath)} type=${documentType} mediaType=${mediaType} size=${fileBuffer.length}B`);
 
-  const rawResult = await httpsRequest({
-    hostname: 'api.anthropic.com',
-    path: '/v1/messages',
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body)
-    }
-  }, body);
+  let rawResult = await callModel(CLAUDE_VISION_MODEL);
+  // מודל לא זמין לחשבון (404 / not_found / invalid model) → נסיון חוזר במודל הקודם, כדי שהסריקה לא תיעצר
+  if ((rawResult.status === 404 || rawResult.status === 400) && /not_found|model/i.test(rawResult.body || '') && CLAUDE_VISION_FALLBACK !== CLAUDE_VISION_MODEL) {
+    console.warn(`[Claude Vision] model ${CLAUDE_VISION_MODEL} rejected (HTTP ${rawResult.status}) — falling back to ${CLAUDE_VISION_FALLBACK}`);
+    rawResult = await callModel(CLAUDE_VISION_FALLBACK);
+  }
 
   if (rawResult.status >= 400) {
     console.error(`[Claude Vision] HTTP ${rawResult.status} body=${rawResult.body.slice(0, 500)}`);
@@ -1291,6 +1299,10 @@ function parseInvoiceText(rawText) {
     currency: 'ILS',
   };
 }
+
+// מודל Claude לחילוץ מסמכים (חשבוניות, סריקות, מיילים, ביטוחים, דרכונים). ניתן לעקוף ב-CLAUDE_MODEL
+const CLAUDE_VISION_MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-5-5';
+const CLAUDE_VISION_FALLBACK = 'claude-haiku-4-5';
 
 async function runDocumentExtraction(filePath, documentType) {
   const apiKey  = getAiApiKey();
