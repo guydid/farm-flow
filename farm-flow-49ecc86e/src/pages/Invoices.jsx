@@ -18,8 +18,8 @@ import {
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
-// Lazy — react-image-crop only loads when the user actually crops an image
-const CropDialog = lazy(() => import('@/components/invoices/CropDialog'));
+// Lazy — the scanner (perspective/filters) only loads when the user scans an image
+const ScanDialog = lazy(() => import('@/components/invoices/ScanDialog'));
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -50,40 +50,6 @@ function fmtCurrency(n, c) {
   return `${sign}${Number(n).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// מקטין תמונה בדפדפן לפני העלאה — צילום מהנייד יכול להיות 2-5MB, וההעלאה בחיבור
-// סלולרי איטית. מורידים ל-1568px ו-JPEG כדי שההעלאה תהיה ~300KB ומהירה.
-// PDF וקבצים שאינם תמונה נשלחים כמו שהם. הדפדפן מיישם אוריינטציית EXIF בעת הציור.
-async function downscaleImage(file) {
-  if (!file || !file.type || !file.type.startsWith('image/')) return file;
-  if (file.size < 600 * 1024) return file; // קטן מספיק — לא נוגעים (שמירה על איכות)
-  try {
-    const dataUrl = await new Promise((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => res(fr.result);
-      fr.onerror = rej;
-      fr.readAsDataURL(file);
-    });
-    const img = await new Promise((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = rej;
-      i.src = dataUrl;
-    });
-    const maxSide = 1568;
-    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.82));
-    if (!blob) return file;
-    const baseName = (file.name || 'invoice').replace(/\.[^.]+$/, '');
-    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' });
-  } catch {
-    return file; // נכשל — נשלח את המקור
-  }
-}
-
 export default function Invoices() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -101,8 +67,8 @@ export default function Invoices() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [cropFile, setCropFile] = useState(null);
-  const [dupPrompt, setDupPrompt] = useState(null); // { existing, reason, file } — הסריקה זוהתה ככפילות
+  const [scanFiles, setScanFiles] = useState(null); // תמונות שנבחרו → מסך הסורק
+  const [dupPrompt, setDupPrompt] = useState(null); // { existing, reason, files } — הסריקה זוהתה ככפילות
   const [view, setView] = useState(() => {
     try { return localStorage.getItem('invoices_view') === 'gallery' ? 'gallery' : 'list'; } catch { return 'list'; }
   });
@@ -264,22 +230,30 @@ export default function Invoices() {
   const fileUrl = (inv) =>
     inv.file_name ? `${BASE_URL.replace(/\/api$/, '')}/uploads/${encodeURIComponent(inv.file_name)}?token=${getToken()}` : null;
 
-  // תמונה → פותחים מסך קרופ קודם; PDF/אחר → ישר לסריקה
-  const handlePicked = (file) => {
+  // תמונות → מסך הסורק (יישור, מסננים, כמה עמודים); PDF → ישר לסריקה
+  const handlePicked = (fileList) => {
+    const picked = [...(fileList || [])];
     if (fileRef.current) fileRef.current.value = '';
     if (cameraRef.current) cameraRef.current.value = '';
-    if (!file) return;
-    if (file.type && file.type.startsWith('image/')) setCropFile(file);
-    else uploadAndScan(file);
+    if (!picked.length) return;
+    const pdf = picked.find(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
+    if (pdf) {
+      if (picked.length > 1) toast({ title: 'PDF נסרק לבד', description: 'קבצים נוספים שנבחרו יחד איתו לא נסרקו' });
+      uploadAndScan([pdf]);
+      return;
+    }
+    setScanFiles(picked);
   };
 
-  const uploadAndScan = async (file, { force = false } = {}) => {
-    if (!file) return;
-    setScanning(true);
+  // files: [PDF] — העלאה כמו שהוא; או עמודי JPEG מהסורק — השרת מאחד אותם ל-PDF אחד
+  const uploadAndScan = async (files, { force = false } = {}) => {
+    if (!files?.length) return;
+    setScanning(files.length);
     try {
-      const toSend = force ? file : await downscaleImage(file); // הקטנה בדפדפן לפני העלאה (מהיר בנייד)
       const fd = new FormData();
-      fd.append('file', toSend);
+      const isPdf = files.length === 1 && (files[0].type === 'application/pdf' || /\.pdf$/i.test(files[0].name || ''));
+      if (isPdf) fd.append('file', files[0]);
+      else files.forEach(f => fd.append('pages', f));
       if (force) fd.append('force', '1');
       const res = await fetch(`${BASE_URL}/invoices/scan`, {
         method: 'POST',
@@ -289,17 +263,23 @@ export default function Invoices() {
       const data = await res.json();
       if (res.status === 422 && data.skipped === 'delivery_note') {
         // זוהתה תעודת משלוח — לא נשמרה; המשתמש יכול להתעקש לשמור בכל זאת
-        setDupPrompt({ reason: 'delivery_note', extracted: data.extracted, file: toSend });
+        setDupPrompt({ reason: 'delivery_note', extracted: data.extracted, files });
         return;
       }
       if (res.status === 409 && data.duplicate) {
         // השרת זיהה שהחשבונית כבר קיימת — המשתמש בוחר: לפתוח את הקיימת או לשמור בכל זאת.
-        // שומרים את הקובץ שכבר הוקטן כדי לא להקטין פעמיים אם יבחר "שמור בכל זאת".
-        setDupPrompt({ existing: data.existing, reason: data.reason, file: toSend });
+        // שומרים את העמודים המעובדים, כדי ש"שמור בכל זאת" לא ידרוש לסרוק מחדש.
+        setDupPrompt({ existing: data.existing, reason: data.reason, files });
         return;
       }
       if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
       const invId = data.invoice.id;
+      if (data.extraction_failed) {
+        // ה-PDF נשמר, אבל הנתונים לא חולצו — לא שולחים למנהלת החשבונות חשבונית ריקה
+        toast({ title: 'ה-PDF נשמר — מלא את הפרטים ידנית', description: data.extraction_error || 'חילוץ הנתונים נכשל', variant: 'destructive' });
+        navigate(`${createPageUrl('InvoiceDetail')}?id=${invId}`);
+        return;
+      }
       const createdDesc = `סופק: ${data.supplier?.name || '—'} · סה"כ: ${fmtCurrency(data.extracted?.total, data.extracted?.currency)}`;
 
       // שליחה אוטומטית למנהלת החשבונות (אם הוגדרה כתובת ברירת מחדל ושליחה אוטומטית פעילה)
@@ -568,15 +548,17 @@ export default function Invoices() {
             </Button>
           </div>
         </div>
-        <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={e => handlePicked(e.target.files?.[0])} />
-        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePicked(e.target.files?.[0])} />
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => handlePicked(e.target.files)} />
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePicked(e.target.files)} />
 
         {scanning && (
           <Card className="mb-4 border-indigo-200 bg-indigo-50">
             <CardContent className="p-4 flex items-center gap-3">
               <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
               <div className="text-sm">
-                <p className="font-medium text-indigo-900">מחלץ נתונים מהחשבונית...</p>
+                <p className="font-medium text-indigo-900">
+                  יוצר PDF{scanning > 1 ? ` (${scanning} עמודים)` : ''} ומחלץ נתונים מהחשבונית...
+                </p>
                 <p className="text-indigo-700 text-xs">עוצר עד 30 שניות. אל תסגור את החלון.</p>
               </div>
             </CardContent>
@@ -872,7 +854,7 @@ export default function Invoices() {
             <Button
               variant="outline"
               className="w-full sm:w-auto"
-              onClick={() => { const f = dupPrompt?.file; setDupPrompt(null); if (f) uploadAndScan(f, { force: true }); }}
+              onClick={() => { const f = dupPrompt?.files; setDupPrompt(null); if (f) uploadAndScan(f, { force: true }); }}
             >
               שמור בכל זאת
             </Button>
@@ -880,13 +862,13 @@ export default function Invoices() {
         </DialogContent>
       </Dialog>
 
-      {/* מסך קרופ */}
-      {cropFile && (
+      {/* מסך הסורק */}
+      {scanFiles && (
         <Suspense fallback={null}>
-          <CropDialog
-            file={cropFile}
-            onCancel={() => setCropFile(null)}
-            onConfirm={(f) => { setCropFile(null); uploadAndScan(f); }}
+          <ScanDialog
+            files={scanFiles}
+            onCancel={() => setScanFiles(null)}
+            onConfirm={(pages) => { setScanFiles(null); uploadAndScan(pages); }}
           />
         </Suspense>
       )}

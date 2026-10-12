@@ -1561,27 +1561,45 @@ function saveInvoiceFromExtraction(farmId, supplierId, extracted, fileInfo, sour
   return { id, farm_id: farmId, ...data };
 }
 
-// POST /api/invoices/scan  (multipart: file=<image|pdf>)
-app.post('/api/invoices/scan', authMiddleware, aiLimiter, upload.single('file'), async (req, res) => {
+// POST /api/invoices/scan
+//   multipart: pages=<jpg> × N  — עמודי סריקה מהמצלמה (כבר חתוכים/מיושרים בדפדפן) → PDF אחד
+//          או: file=<image|pdf> — העלאת קובץ בודד (תמונה מומרת ל-PDF, PDF נשמר כמו שהוא)
+// כל סריקה נשמרת כ-PDF, כך שהחשבונית, התצוגה והשליחה למנהלת החשבונות עובדים על אותו קובץ.
+const MAX_SCAN_PAGES = 10;
+app.post('/api/invoices/scan', authMiddleware, aiLimiter,
+  upload.fields([{ name: 'file', maxCount: 1 }, { name: 'pages', maxCount: MAX_SCAN_PAGES }]),
+  async (req, res) => {
+  const uploaded = [...(req.files?.pages || []), ...(req.files?.file || [])];
+  const uploadedPaths = uploaded.map(f => path.join(UPLOADS_DIR, f.filename));
+  const cleanup = (paths) => { for (const p of paths) { try { fs.unlinkSync(p); } catch {} } };
+
   const user = getUser(req.user.id);
-  if (!user || !user.current_farm_id) return res.status(400).json({ error: 'משתמש ללא חוות ברירת מחדל' });
-  if (!req.file) return res.status(400).json({ error: 'לא הועלה קובץ' });
+  if (!user || !user.current_farm_id) { cleanup(uploadedPaths); return res.status(400).json({ error: 'משתמש ללא חוות ברירת מחדל' }); }
+  if (uploaded.length === 0) return res.status(400).json({ error: 'לא הועלה קובץ' });
 
   const member = getFarmMember(user.current_farm_id, req.user.id);
   if (member && member.role === 'viewer') {
-    fs.unlinkSync(path.join(UPLOADS_DIR, req.file.filename));
+    cleanup(uploadedPaths);
     return res.status(403).json({ error: 'משתמש בתפקיד צופה — אין הרשאת יצירה' });
   }
 
-  const filePath = path.join(UPLOADS_DIR, req.file.filename);
   const farmId = user.current_farm_id;
   const force = String(req.body?.force || req.query?.force || '') === '1';
-  const originalName = req.file.originalname || null;
+  const originalName = uploaded[0].originalname || null;
+  const isPdfUpload = uploaded.length === 1 && path.extname(uploaded[0].filename).toLowerCase() === '.pdf';
+  if (!isPdfUpload && uploaded.some(f => path.extname(f.filename).toLowerCase() === '.pdf')) {
+    cleanup(uploadedPaths);
+    return res.status(400).json({ error: 'אפשר לשלב כמה עמודים רק כתמונות' });
+  }
 
-  // תשובת "כפילות": הקובץ שהועלה נמחק, והלקוח מקבל את פרטי החשבונית הקיימת כדי להציע
+  // הקובץ שנשמר על החשבונית: ה-PDF שהועלה, או PDF חדש שנבנה מהתמונות
+  let pdfName = isPdfUpload ? uploaded[0].filename : null;
+  const pdfPath = () => path.join(UPLOADS_DIR, pdfName);
+
+  // תשובת "כפילות": הקבצים נמחקים, והלקוח מקבל את פרטי החשבונית הקיימת כדי להציע
   // לפתוח אותה או לשמור בכל זאת (force=1). לא מבזבזים קריאת AI על קובץ זהה בייט-בייט.
   const duplicateResponse = (existing, reason) => {
-    try { fs.unlinkSync(filePath); } catch {}
+    cleanup(uploadedPaths); if (pdfName) cleanup([pdfPath()]);
     return res.status(409).json({
       success: false, duplicate: true, reason,
       error: 'חשבונית זו כבר קיימת במערכת',
@@ -1595,48 +1613,83 @@ app.post('/api/invoices/scan', authMiddleware, aiLimiter, upload.single('file'),
   };
 
   try {
-    const fileSha256 = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    // ה-hash מחושב על הקבצים כפי שהועלו (לפני בניית ה-PDF), בסדר העמודים
+    const hasher = crypto.createHash('sha256');
+    for (const p of uploadedPaths) hasher.update(fs.readFileSync(p));
+    const fileSha256 = hasher.digest('hex');
     if (!force) {
       const sameFile = findInvoiceByFileHash(farmId, fileSha256);
       if (sameFile) return duplicateResponse(sameFile, 'same_file');
     }
 
-    const { method, data: extracted } = await runDocumentExtraction(filePath, 'invoice');
+    if (!isPdfUpload) {
+      pdfName = `${uuidv4()}.pdf`;
+      fs.writeFileSync(pdfPath(), await imagesToPdf(uploadedPaths));
+    }
+
+    // חילוץ: עמוד בודד — מהתמונה (כל ספקי ה-AI תומכים בה); כמה עמודים — מה-PDF השלם
+    // (Claude קורא את כל העמודים יחד), ואם נכשל — מהעמוד הראשון בלבד.
+    let method = null, extracted = null, extractionError = null;
+    try {
+      if (isPdfUpload || uploaded.length > 1) {
+        try { ({ method, data: extracted } = await runDocumentExtraction(pdfPath(), 'invoice')); }
+        catch (e) {
+          if (isPdfUpload) throw e;
+          console.warn('[invoices/scan] multi-page PDF extraction failed, using page 1:', String(e?.message || e));
+          ({ method, data: extracted } = await runDocumentExtraction(uploadedPaths[0], 'invoice'));
+        }
+      } else {
+        ({ method, data: extracted } = await runDocumentExtraction(uploadedPaths[0], 'invoice'));
+      }
+    } catch (e) {
+      // החילוץ נכשל — החשבונית נשמרת בכל זאת עם ה-PDF, למילוי ידני (לא מאבדים את הסריקה)
+      extractionError = String(e?.message || e);
+      console.error('[invoices/scan] extraction failed, saving for manual entry:', extractionError);
+      extracted = {};
+    }
 
     // תעודת משלוח אינה חשבונית — לא נשמרת (אלא אם המשתמש מתעקש עם force=1)
     if (!force && extracted?.invoice_type === 'delivery_note') {
-      try { fs.unlinkSync(filePath); } catch {}
+      cleanup(uploadedPaths); cleanup([pdfPath()]);
       return res.status(422).json({
         success: false, skipped: 'delivery_note', error: 'זוהתה תעודת משלוח — לא נשמרה כחשבונית',
         extracted: { supplier_name: extracted.supplier_name || null, invoice_number: extracted.invoice_number || null, date: extracted.date || null, total: extracted.total ?? null, currency: extracted.currency || 'ILS' },
       });
     }
 
-    if (!force) {
+    if (!force && !extractionError) {
       const dup = findExistingInvoice(farmId, extracted, originalName, null);
       if (dup) return duplicateResponse(dup, 'same_content');
     }
 
+    // התמונות כבר בתוך ה-PDF — אין צורך לשמור אותן בנפרד
+    if (!isPdfUpload) cleanup(uploadedPaths);
+
     const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
     const hostWithoutPort = host.split(':')[0];
     const protocol = req.headers['x-forwarded-proto'] || 'http';
-    const file_url = `${protocol}://${hostWithoutPort}/uploads/${req.file.filename}`;
+    const file_url = `${protocol}://${hostWithoutPort}/uploads/${pdfName}`;
 
-    const supplier = findOrCreateSupplier(farmId, {
+    const supplier = extractionError ? null : findOrCreateSupplier(farmId, {
       name: extracted.supplier_name,
       vat_id: extracted.supplier_vat_id,
       phone: extracted.supplier_phone,
       address: extracted.supplier_address,
     });
     const invoice = saveInvoiceFromExtraction(
-      farmId, supplier.id, extracted,
-      { file_url, filename: req.file.filename },
+      farmId, supplier?.id || null, extracted,
+      { file_url, filename: pdfName },
       'upload',
-      { attachment_name: originalName, method, file_sha256: fileSha256, ...(force ? { forced_duplicate: true } : {}) }
+      {
+        attachment_name: originalName, method, file_sha256: fileSha256, pages: isPdfUpload ? null : uploaded.length,
+        ...(extractionError ? { extraction_error: extractionError } : {}),
+        ...(force ? { forced_duplicate: true } : {}),
+      }
     );
-    res.json({ success: true, method, invoice, supplier, extracted });
+    res.json({ success: true, method, invoice, supplier, extracted, pages: uploaded.length, extraction_failed: !!extractionError, extraction_error: extractionError });
   } catch (err) {
     console.error('[invoices/scan] error:', String(err?.message || err));
+    cleanup(uploadedPaths); if (pdfName && !isPdfUpload) cleanup([pdfPath()]);
     res.status(500).json({ success: false, error: String(err?.message || err) });
   }
 });
@@ -2240,17 +2293,24 @@ async function invoiceFileToPdf(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.pdf') return fs.readFileSync(filePath);
 
+  return imagesToPdf([filePath]);
+}
+
+// כמה תמונות (עמודי סריקה) → PDF אחד, עמוד לכל תמונה. רוחב העמוד הוא רוחב A4 והגובה
+// לפי יחס התמונה — כך ה-PDF נפתח ומודפס בגודל מסמך רגיל ולא בגודל הפיקסלים.
+const PDF_PAGE_WIDTH_PT = 595; // A4
+async function imagesToPdf(imagePaths) {
   const { PDFDocument } = require('pdf-lib');
   const Jimp = require('jimp');
-  const img = await Jimp.read(filePath); // jimp מתקן אוריינטציית EXIF בקריאה
-  if (Math.max(img.bitmap.width, img.bitmap.height) > 2200) img.scaleToFit(2200, 2200);
-  img.quality(82);
-  const jpg = await img.getBufferAsync(Jimp.MIME_JPEG);
-
   const pdf = await PDFDocument.create();
-  const image = await pdf.embedJpg(jpg);
-  const page = pdf.addPage([image.width, image.height]);
-  page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+  for (const p of imagePaths) {
+    const img = await Jimp.read(p); // jimp מתקן אוריינטציית EXIF בקריאה
+    if (Math.max(img.bitmap.width, img.bitmap.height) > 2200) img.scaleToFit(2200, 2200);
+    img.quality(82);
+    const image = await pdf.embedJpg(await img.getBufferAsync(Jimp.MIME_JPEG));
+    const w = PDF_PAGE_WIDTH_PT, h = Math.round(PDF_PAGE_WIDTH_PT * image.height / image.width);
+    pdf.addPage([w, h]).drawImage(image, { x: 0, y: 0, width: w, height: h });
+  }
   return Buffer.from(await pdf.save());
 }
 
