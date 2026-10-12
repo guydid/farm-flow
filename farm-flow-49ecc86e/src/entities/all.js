@@ -38,6 +38,7 @@ export const Query = createEntity('query');
 export const EmployeeEvent = createEntity('employee_events');
 export const Supplier = createEntity('suppliers');
 export const Invoice = createEntity('invoices');
+export const PestRecommendation = createEntity('pest_recommendations');
 // Time-clock attendance (synced from the JB-Clock bridge, see farmflow_sync.py)
 export const ClockWorker = createEntity('clock_workers');
 export const AttendanceRecord = createEntity('attendance_records');

@@ -54,8 +54,15 @@ const ENTITIES = {
   vehicles:                'כלי רכב',
   vehicle_treatments:      'טיפולי רכב',
   company_settings:        'פרטי חברה',
+  pest_recommendations:    'המלצות הדברה מפיקוח מזיקים (status: pending/done/cancelled) — כתיבה רק דרך propose_pest_action / update_pest_action',
 };
-const READ_ONLY = new Set(['farms', 'pesticides']);
+// המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
+const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations']);
+// ערכים זהים ל-src/components/pest/pestConstants.js
+const PEST_SEVERITIES = ['low', 'medium', 'high'];
+const PEST_METHODS = ['chemical', 'biological'];
+const PEST_TREATMENTS = ['mechanized', 'spray_gun', 'backpack', 'drench'];
+const ACTIVE_SEEDING_STATUSES = ['ordered', 'growing', 'harvesting', 'preparation'];
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
 module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates }) {
@@ -74,6 +81,8 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_tokens_farm ON mcp_tokens(farm_id);
   `);
+  // הרשאת כתיבה מוגבלת לפיקוח מזיקים (בלי כתיבה כללית)
+  try { db.exec('ALTER TABLE mcp_tokens ADD COLUMN pest_write INTEGER DEFAULT 0'); } catch { /* העמודה כבר קיימת */ }
 
   const hashToken = t => crypto.createHash('sha256').update(String(t)).digest('hex');
 
@@ -89,22 +98,25 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
   app.get('/api/mcp/tokens', authMiddleware, (req, res) => {
     const user = requireFarmManager(req, res); if (!user) return;
     const rows = db.prepare(`
-      SELECT t.id, t.name, t.token_prefix, t.can_write, t.revoked, t.created_at, t.last_used_at, u.email AS user_email
+      SELECT t.id, t.name, t.token_prefix, t.can_write, t.pest_write, t.revoked, t.created_at, t.last_used_at, u.email AS user_email
       FROM mcp_tokens t LEFT JOIN users u ON u.id = t.user_id
       WHERE t.farm_id = ? ORDER BY t.created_at DESC`).all(user.current_farm_id);
-    res.json(rows.map(r => ({ ...r, can_write: !!r.can_write, revoked: !!r.revoked })));
+    res.json(rows.map(r => ({ ...r, can_write: !!r.can_write, pest_write: !!r.pest_write, revoked: !!r.revoked })));
   });
 
   app.post('/api/mcp/tokens', authMiddleware, (req, res) => {
     const user = requireFarmManager(req, res); if (!user) return;
     const name = String(req.body?.name || '').trim().slice(0, 80) || 'סוכן חיצוני';
+    // access: read | pest (כתיבה בפיקוח מזיקים בלבד) | write (כתיבה מלאה). can_write נשמר לתאימות.
+    const access = ['read', 'pest', 'write'].includes(req.body?.access) ? req.body.access : (req.body?.can_write ? 'write' : 'read');
+    const canWrite = access === 'write', pestWrite = access !== 'read';
     const token = 'ffmcp_' + crypto.randomBytes(32).toString('hex');
     const id = uuidv4();
-    db.prepare(`INSERT INTO mcp_tokens (id, user_id, farm_id, name, token_hash, token_prefix, can_write, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, user.id, user.current_farm_id, name, hashToken(token), token.slice(0, 12), req.body?.can_write ? 1 : 0, NOW());
+    db.prepare(`INSERT INTO mcp_tokens (id, user_id, farm_id, name, token_hash, token_prefix, can_write, pest_write, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, user.id, user.current_farm_id, name, hashToken(token), token.slice(0, 12), canWrite ? 1 : 0, pestWrite ? 1 : 0, NOW());
     // The plain token is returned exactly once — only its hash is stored.
-    res.status(201).json({ id, name, token, can_write: !!req.body?.can_write });
+    res.status(201).json({ id, name, token, access, can_write: canWrite, pest_write: pestWrite });
   });
 
   app.delete('/api/mcp/tokens/:id', authMiddleware, (req, res) => {
@@ -131,8 +143,10 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
     db.prepare('UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?').run(NOW(), row.id);
     return {
       tokenId: row.id,
+      tokenName: row.name || 'סוכן',
       farmId: row.farm_id,
       canWrite: !!row.can_write && member?.role !== 'viewer',
+      canWritePest: (!!row.can_write || !!row.pest_write) && member?.role !== 'viewer',
       // Same user object the REST routes use, narrowed to this single farm.
       user: { ...user, farm_ids: [row.farm_id], current_farm_id: row.farm_id },
     };
@@ -207,6 +221,9 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       'Start with farm_overview, use describe_entity to learn a type\'s fields, then list_records / get_record.',
       'Relations use *_id fields (e.g. harvests.seeding_id → seedings.id, seedings.plot_id → plots.id).',
       ctx.canWrite ? 'This token may create and update records (no delete).' : 'This token is read-only.',
+      'Pest control: inspect a plot with pest_plot_context, then propose treatments with propose_pest_action. '
+        + 'Proposals appear in the app as pending until a worker executes them in the field (only the app marks them done).',
+      ctx.canWritePest ? 'This token may create and update pest control recommendations.' : 'This token cannot write pest control recommendations.',
     ].join('\n');
   }
 
@@ -266,7 +283,76 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         },
         annotations: { readOnlyHint: true },
       },
+      {
+        name: 'pest_plot_context',
+        title: 'Pest control context for a plot',
+        description: 'Everything needed before recommending a treatment on a plot: plot details, its active seedings (crop, variety, area), sprayings from the last N days, and pending pest recommendations. Call with no plot_id to get a summary of all active plots.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            plot_id: { type: 'string', description: 'Omit for a summary of every active plot' },
+            days: { type: 'integer', minimum: 1, maximum: 365, default: 60, description: 'How far back to include sprayings' },
+          },
+        },
+        annotations: { readOnlyHint: true },
+      },
     ];
+    if (ctx.canWritePest) {
+      const pesticideItem = {
+        type: 'object',
+        properties: {
+          pesticide_id: { type: 'string', description: 'Id from the pesticides catalog (preferred)' },
+          name: { type: 'string', description: 'Product name, used when pesticide_id is not known; matched against the catalog' },
+          dosage_per_dunam: { type: 'number', description: 'Defaults to the catalog dosage' },
+          unit: { type: 'string', description: 'e.g. מ"ל, גרם, ליטר. Defaults to the catalog unit' },
+        },
+      };
+      tools.push(
+        {
+          name: 'propose_pest_action',
+          title: 'Propose pest control action',
+          description: 'Creates a pest control recommendation for a plot. It appears in the app under פיקוח מזיקים as pending until a worker executes it in the field. The farm is notified.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              plot_id: { type: 'string' },
+              seeding_id: { type: 'string', description: 'Optional: a specific active seeding on the plot. Omit for the whole plot.' },
+              pest: { type: 'string', description: 'Pest or disease, in Hebrew where possible (e.g. כנימת עש, קמחון)' },
+              severity: { type: 'string', enum: PEST_SEVERITIES, default: 'medium' },
+              control_method: { type: 'string', enum: PEST_METHODS, default: 'chemical' },
+              treatment_type: { type: 'string', enum: PEST_TREATMENTS, default: 'mechanized' },
+              pesticides: { type: 'array', minItems: 1, items: pesticideItem },
+              due_date: { type: 'string', description: 'YYYY-MM-DD, default tomorrow' },
+              notes: { type: 'string', description: 'Observation and reasoning, shown to the field team' },
+            },
+            required: ['plot_id', 'pest', 'pesticides'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        {
+          name: 'update_pest_action',
+          title: 'Update pending pest control action',
+          description: 'Edits a pending recommendation, or cancels it with status "cancelled". Executed (done) recommendations cannot be changed; only the app marks a recommendation done, when the spraying is recorded.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              pest: { type: 'string' },
+              severity: { type: 'string', enum: PEST_SEVERITIES },
+              control_method: { type: 'string', enum: PEST_METHODS },
+              treatment_type: { type: 'string', enum: PEST_TREATMENTS },
+              pesticides: { type: 'array', minItems: 1, items: pesticideItem },
+              due_date: { type: 'string' },
+              notes: { type: 'string' },
+              status: { type: 'string', enum: ['cancelled'], description: 'Set to cancel the recommendation' },
+              cancel_reason: { type: 'string' },
+            },
+            required: ['id'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+      );
+    }
     if (ctx.canWrite) {
       tools.push(
         {
@@ -329,6 +415,54 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
     return row;
   }
 
+  // ── Pest control helpers ──────────────────────────────────────────────────────
+  const entityRows = (type, farmId) =>
+    db.prepare('SELECT * FROM entities WHERE entity_type = ? AND farm_id = ?').all(type, farmId).map(formatEntity);
+
+  function plotSeedingsOf(farmId, plotId) {
+    const links = new Set(entityRows('plot_seedings', farmId).filter(l => l.plot_id === plotId).map(l => l.seeding_id));
+    return entityRows('seedings', farmId)
+      .filter(s => (links.has(s.id) || s.plot_id === plotId) && ACTIVE_SEEDING_STATUSES.includes(s.status));
+  }
+
+  function resolvePesticides(ctx, items) {
+    if (!Array.isArray(items) || !items.length) throw new Error('pesticides: at least one item is required');
+    const catalog = db.prepare("SELECT * FROM entities WHERE entity_type = 'pesticides' AND (farm_id IS NULL OR farm_id = ?)")
+      .all(ctx.farmId).map(formatEntity);
+    return items.map((it, i) => {
+      let p = it.pesticide_id ? catalog.find(c => c.id === it.pesticide_id) : null;
+      if (it.pesticide_id && !p) throw new Error(`pesticides[${i}]: unknown pesticide_id ${it.pesticide_id}`);
+      if (!p && it.name) {
+        const n = String(it.name).trim().toLowerCase();
+        p = catalog.find(c => String(c.product_name || '').trim().toLowerCase() === n) || null;
+      }
+      if (!p && !it.name) throw new Error(`pesticides[${i}]: pesticide_id or name is required`);
+      const m = String(p?.dosage || '').match(/(\d+(?:\.\d+)?)/);
+      const dose = it.dosage_per_dunam != null ? Number(it.dosage_per_dunam) : (m ? parseFloat(m[1]) : null);
+      if (dose != null && !(dose > 0)) throw new Error(`pesticides[${i}]: dosage_per_dunam must be positive`);
+      return {
+        pesticide_id: p?.id || null,
+        pesticide_name: p?.product_name || String(it.name).trim(),
+        active_ingredient: p?.active_ingredients || '',
+        dosage_per_dunam: dose,
+        unit: it.unit || p?.unit || 'מ"ל',
+        ...(p ? {} : { not_in_catalog: true }),
+      };
+    });
+  }
+
+  function checkEnum(name, value, allowed) {
+    if (value !== undefined && !allowed.includes(value)) throw new Error(`${name} must be one of: ${allowed.join(', ')}`);
+  }
+  function checkDate(name, value) {
+    if (value !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new Error(`${name} must be YYYY-MM-DD`);
+  }
+
+  function notifyFarm(farmId, title, body, type) {
+    db.prepare('INSERT INTO notifications (id, recipient_id, farm_id, title, body, type, sent_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), null, farmId, title, body, type, null, NOW());
+  }
+
   function runTool(ctx, name, args) {
     switch (name) {
       case 'farm_overview': {
@@ -338,7 +472,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
             .map(r => [r.entity_type, r.n]));
         return {
           farm: clip(formatEntity(farmRow)),
-          access: ctx.canWrite ? 'read-write' : 'read-only',
+          access: ctx.canWrite ? 'read-write' : ctx.canWritePest ? 'read-only + pest-control write' : 'read-only',
           entities: entityEnum.map(e => ({ entity: e, description: ENTITIES[e], count: e === 'farms' ? 1 : (counts[e] || 0) })),
         };
       }
@@ -435,6 +569,118 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         }
         console.log(`[MCP] token ${ctx.tokenId} updated ${args.entity}/${row.id}`);
         return formatEntity(db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(args.entity, row.id));
+      }
+
+      case 'pest_plot_context': {
+        const days = Math.min(Math.max(parseInt(args.days, 10) || 60, 1), 365);
+        const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+        const allPlots = entityRows('plots', ctx.farmId);
+        const sprayings = entityRows('sprayings', ctx.farmId).filter(s => String(s.date || '') >= since);
+        const recs = entityRows('pest_recommendations', ctx.farmId);
+        const summarize = (plot) => {
+          const seedings = plotSeedingsOf(ctx.farmId, plot.id);
+          const seedingIds = new Set(seedings.map(s => s.id));
+          return {
+            plot: { id: plot.id, name: plot.name, size_dunam: plot.size ?? null, activity_status: plot.activity_status || 'active' },
+            active_seedings: seedings.map(s => ({
+              id: s.id, name: s.name, crop_type: s.crop_type || null, variety: s.variety_name || s.variety || null,
+              status: s.status, total_area: s.total_area ?? null, seeding_date: s.seeding_date || s.date || null,
+            })),
+            recent_sprayings: sprayings.filter(s => s.plot_id === plot.id || seedingIds.has(s.seeding_id))
+              .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+              .map(s => ({
+                id: s.id, date: s.date, seeding_id: s.seeding_id || null, control_method: s.control_method || null,
+                treatment_type: s.treatment_type || null,
+                pesticides: (s.applied_pesticides || []).map(p => ({ name: p.pesticide_name, active_ingredient: p.active_ingredient || null, quantity: p.quantity, unit: p.unit })),
+                notes: clip(s.notes || ''),
+              })),
+            pending_recommendations: recs.filter(r => r.plot_id === plot.id && (r.status || 'pending') === 'pending')
+              .map(r => ({ id: r.id, pest: r.pest, severity: r.severity, due_date: r.due_date, source: r.source, pesticides: r.recommended_pesticides })),
+          };
+        };
+        if (args.plot_id) {
+          const plot = allPlots.find(p => p.id === args.plot_id);
+          if (!plot) throw new Error(`Unknown plot_id: ${args.plot_id}`);
+          return { since, ...summarize(plot) };
+        }
+        return {
+          since,
+          plots: allPlots.filter(p => p.activity_status !== 'inactive').map(summarize).map(x => ({
+            plot: x.plot,
+            active_seedings: x.active_seedings.map(s => `${s.name}${s.crop_type ? ` (${s.crop_type})` : ''}`),
+            sprayings_in_period: x.recent_sprayings.length,
+            last_spraying: x.recent_sprayings[0]?.date || null,
+            pending_recommendations: x.pending_recommendations.length,
+          })),
+        };
+      }
+
+      case 'propose_pest_action': {
+        if (!ctx.canWritePest) throw new Error('This token cannot write pest control recommendations');
+        const plot = entityRows('plots', ctx.farmId).find(p => p.id === args.plot_id);
+        if (!plot) throw new Error(`Unknown plot_id: ${args.plot_id}`);
+        let seeding = null;
+        if (args.seeding_id) {
+          seeding = plotSeedingsOf(ctx.farmId, plot.id).find(s => s.id === args.seeding_id);
+          if (!seeding) throw new Error(`seeding_id ${args.seeding_id} is not an active seeding on plot ${plot.name}`);
+        }
+        const pest = String(args.pest || '').trim();
+        if (!pest) throw new Error('pest is required');
+        checkEnum('severity', args.severity, PEST_SEVERITIES);
+        checkEnum('control_method', args.control_method, PEST_METHODS);
+        checkEnum('treatment_type', args.treatment_type, PEST_TREATMENTS);
+        checkDate('due_date', args.due_date);
+        const pesticides = resolvePesticides(ctx, args.pesticides);
+        const today = new Date().toISOString().slice(0, 10);
+        const data = {
+          plot_id: plot.id, plot_name: plot.name || '',
+          seeding_id: seeding?.id || null, seeding_name: seeding?.name || '',
+          pest, severity: args.severity || 'medium',
+          control_method: args.control_method || 'chemical',
+          treatment_type: args.treatment_type || 'mechanized',
+          recommended_pesticides: pesticides,
+          due_date: args.due_date || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+          notes: String(args.notes || '').trim(),
+          status: 'pending', source: 'agent',
+          inspection_date: today, inspector_name: `סוכן: ${ctx.tokenName}`, mcp_token_id: ctx.tokenId,
+        };
+        const id = uuidv4(), now = NOW();
+        db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(id, 'pest_recommendations', ctx.farmId, JSON.stringify(data), now, now);
+        notifyFarm(ctx.farmId, 'המלצת הדברה חדשה מהסוכן',
+          `${pest} · ${plot.name}${seeding ? ` · ${seeding.name}` : ''} · ${pesticides.map(p => p.pesticide_name).join(', ')}`,
+          data.severity === 'high' ? 'warning' : 'info');
+        console.log(`[MCP] token ${ctx.tokenId} proposed pest_recommendations/${id}`);
+        const unmatched = pesticides.filter(p => p.not_in_catalog).map(p => p.pesticide_name);
+        return {
+          ...formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'pest_recommendations' AND id = ?").get(id)),
+          ...(unmatched.length ? { warning: `Not found in the pesticides catalog (saved by name only): ${unmatched.join(', ')}` } : {}),
+        };
+      }
+
+      case 'update_pest_action': {
+        if (!ctx.canWritePest) throw new Error('This token cannot write pest control recommendations');
+        const row = fetchRow(ctx, 'pest_recommendations', args.id);
+        let existing; try { existing = JSON.parse(row.data || '{}'); } catch { existing = {}; }
+        if ((existing.status || 'pending') !== 'pending') throw new Error(`Recommendation is ${existing.status}; only pending recommendations can be changed`);
+        checkEnum('severity', args.severity, PEST_SEVERITIES);
+        checkEnum('control_method', args.control_method, PEST_METHODS);
+        checkEnum('treatment_type', args.treatment_type, PEST_TREATMENTS);
+        checkDate('due_date', args.due_date);
+        if (args.status !== undefined && args.status !== 'cancelled') throw new Error('status can only be set to "cancelled"');
+        const patch = {};
+        for (const k of ['severity', 'control_method', 'treatment_type', 'due_date']) if (args[k] !== undefined) patch[k] = args[k];
+        if (args.pest !== undefined) { patch.pest = String(args.pest).trim(); if (!patch.pest) throw new Error('pest cannot be empty'); }
+        if (args.notes !== undefined) patch.notes = String(args.notes).trim();
+        if (args.pesticides !== undefined) patch.recommended_pesticides = resolvePesticides(ctx, args.pesticides);
+        if (args.status === 'cancelled') {
+          Object.assign(patch, { status: 'cancelled', cancel_reason: String(args.cancel_reason || '').trim(), cancelled_at: NOW(), cancelled_by: `סוכן: ${ctx.tokenName}` });
+        }
+        if (!Object.keys(patch).length) throw new Error('Nothing to update');
+        db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = ? AND id = ?')
+          .run(JSON.stringify({ ...existing, ...patch, updated_by: `סוכן: ${ctx.tokenName}` }), NOW(), 'pest_recommendations', row.id);
+        console.log(`[MCP] token ${ctx.tokenId} updated pest_recommendations/${row.id}`);
+        return formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'pest_recommendations' AND id = ?").get(row.id));
       }
 
       default:

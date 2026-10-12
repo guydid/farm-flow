@@ -25,6 +25,7 @@ const AdminPanel = lazy(() => import('./pages/AdminPanel'));
 const FarmMembers = lazy(() => import('./pages/FarmMembers'));
 const Suppliers = lazy(() => import('./pages/Suppliers'));
 const Invoices = lazy(() => import('./pages/Invoices'));
+const PestControl = lazy(() => import('./pages/PestControl'));
 const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'));
 const Attendance = lazy(() => import('./pages/Attendance'));
 
@@ -52,6 +53,7 @@ export const PAGES = {
     "FarmMembers": FarmMembers,
     "Suppliers": Suppliers,
     "Invoices": Invoices,
+    "PestControl": PestControl,
     "InvoiceDetail": InvoiceDetail,
     "Attendance": Attendance,
 }

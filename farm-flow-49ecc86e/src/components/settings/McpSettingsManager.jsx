@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Plug, Copy, Check, Loader2, Plus, Trash2, ShieldAlert, Info, KeyRound } from "lucide-react";
 import { getToken } from "@/api/localClient";
 
@@ -25,6 +24,13 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+const ACCESS_LEVELS = [
+  { id: "read", label: "קריאה בלבד", cls: "bg-gray-100 text-gray-600" },
+  { id: "pest", label: "קריאה + פיקוח מזיקים", cls: "bg-emerald-100 text-emerald-700" },
+  { id: "write", label: "קריאה + כתיבה מלאה", cls: "bg-orange-100 text-orange-700" },
+];
+const accessOf = (t) => ACCESS_LEVELS.find(a => a.id === (t.can_write ? "write" : t.pest_write ? "pest" : "read"));
+
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" }) : "—");
 
 export default function McpSettingsManager() {
@@ -32,7 +38,7 @@ export default function McpSettingsManager() {
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [name, setName] = useState("");
-  const [canWrite, setCanWrite] = useState(false);
+  const [access, setAccess] = useState("read");
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // { token, name } — shown once
   const [copied, setCopied] = useState(null);
@@ -59,11 +65,11 @@ export default function McpSettingsManager() {
     try {
       const d = await apiFetch("/mcp/tokens", {
         method: "POST",
-        body: JSON.stringify({ name: name.trim(), can_write: canWrite }),
+        body: JSON.stringify({ name: name.trim(), access }),
       });
       setCreated(d);
       setName("");
-      setCanWrite(false);
+      setAccess("read");
       load();
     } catch (e) {
       setMessage({ type: "error", text: e.message || "שגיאה ביצירה" });
@@ -135,8 +141,9 @@ export default function McpSettingsManager() {
             <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <span>
               טוקן MCP מאפשר לסוכן AI חיצוני (Claude, n8n וכד') לקרוא את נתוני המשק הנוכחי — מזרעים, קטיפים,
-              פעילויות, תעודות שקילה, חשבוניות ועוד. כל טוקן מוגבל למשק אחד. הרשאת כתיבה מאפשרת יצירה ועדכון
-              רשומות (ללא מחיקה).
+              פעילויות, תעודות שקילה, חשבוניות ועוד. כל טוקן מוגבל למשק אחד. "פיקוח מזיקים" מאפשר לסוכן להציע
+              ולעדכן המלצות הדברה (שמופיעות כממתינות עד לביצוע בשטח); "כתיבה מלאה" מאפשר יצירה ועדכון של כל
+              הרשומות (ללא מחיקה).
             </span>
           </div>
 
@@ -147,10 +154,17 @@ export default function McpSettingsManager() {
               <Label>שם הסוכן</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="למשל: Claude של גיא" />
             </div>
-            <label className="flex items-center gap-2 text-sm h-10 cursor-pointer">
-              <Checkbox checked={canWrite} onCheckedChange={(v) => setCanWrite(!!v)} />
-              הרשאת כתיבה
-            </label>
+            <div className="space-y-1">
+              <Label>הרשאה</Label>
+              <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+                {ACCESS_LEVELS.map(a => (
+                  <button key={a.id} type="button" onClick={() => setAccess(a.id)}
+                          className={`px-2.5 py-1.5 rounded-md text-xs font-medium whitespace-nowrap ${access === a.id ? "bg-white shadow text-gray-900" : "text-gray-600"}`}>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <Button onClick={create} disabled={creating} className="bg-indigo-600 hover:bg-indigo-700 text-white">
               {creating ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Plus className="w-4 h-4 ml-1" />}
               צור טוקן
@@ -192,9 +206,7 @@ export default function McpSettingsManager() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm">{t.name}</span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${t.can_write ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-600"}`}>
-                        {t.can_write ? "קריאה + כתיבה" : "קריאה בלבד"}
-                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${accessOf(t).cls}`}>{accessOf(t).label}</span>
                       {t.revoked && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">בוטל</span>}
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5" dir="ltr" style={{ textAlign: "right" }}>

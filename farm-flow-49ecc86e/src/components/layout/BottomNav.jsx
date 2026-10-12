@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Sprout, Map, MoreHorizontal, Plus, Users2,
   SlidersHorizontal, Layers, Truck, Settings, X, ChevronRight,
   Scissors, ClipboardList, Leaf, Activity, Scale, FileText, Building2, Camera, Clock, HardHat,
-  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets
+  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug
 } from "lucide-react";
 
 // ─── Navigation items ───────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ const mainNav = [
 ];
 
 const moreNav = [
+  { name: "פיקוח מזיקים",     icon: Bug,               path: "PestControl" },
   { name: "עובדים",          icon: Users2,            path: "Employees" },
   { name: "שעון נוכחות",      icon: Clock,             path: "Attendance" },
   { name: "יריעות",           icon: Layers,            path: "Sheets" },
@@ -32,6 +33,7 @@ const moreNav = [
 
 const quickActions = [
   { name: "סרוק חשבונית",   icon: Camera,        path: "Invoices",             param: "?scan=true",   color: "bg-rose-500" },
+  { name: "המלצת הדברה",    icon: Bug,           path: "PestControl",          param: "?create=true", color: "bg-emerald-600" },
   { name: "מזרע חדש",       icon: Sprout,        path: "Seedings",             param: "?create=true", color: "bg-green-500" },
   { name: "הוסף קטיף",     icon: Scissors,      path: "Seedings",             param: "",            color: "bg-amber-500" },
   { name: "אסמכתא שקילה",  icon: Scale,         path: "WeighingCertificates", param: "?create=true", color: "bg-blue-500" },

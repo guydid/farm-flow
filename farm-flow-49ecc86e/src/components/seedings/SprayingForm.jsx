@@ -771,7 +771,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
             parseFloat(formData.area_covered) <= 0
           }
         >
-          {initialData ? 'עדכן הדברה' : 'שמור הדברה'}
+          {initialData?.id ? 'עדכן הדברה' : 'שמור הדברה'}
         </Button>
       </div>
     </form>
