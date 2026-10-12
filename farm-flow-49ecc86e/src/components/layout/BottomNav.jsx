@@ -20,7 +20,7 @@ const mainNav = [
 ];
 
 const moreNav = [
-  { name: "פיקוח מזיקים",     icon: Bug,               path: "PestControl" },
+  { name: "הדברה",            icon: Bug,               path: "PestControl" },
   { name: "עובדים",          icon: Users2,            path: "Employees" },
   { name: "שעון נוכחות",      icon: Clock,             path: "Attendance" },
   { name: "יריעות",           icon: Layers,            path: "Sheets" },

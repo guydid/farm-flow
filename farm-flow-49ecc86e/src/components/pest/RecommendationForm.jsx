@@ -16,9 +16,15 @@ const Chip = ({ active, onClick, children, className = '' }) => (
   </button>
 );
 
+const StockBadge = ({ s }) => (s ? (
+  <span className={`text-[10px] px-1.5 rounded whitespace-nowrap ${s.status === 'out' ? 'bg-red-100 text-red-700' : s.status === 'low' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
+    {s.status === 'out' ? 'אזל' : `במלאי ${s.balance} ${s.unit}`}
+  </span>
+) : null);
+
 // טופס המלצת הדברה: הפקח בוחר חלקה (ואופציונלית מזרע), מזיק, חומרה ותכשירים מומלצים.
 // ההמלצה נשמרת כ"ממתינה" עד שמבצעים אותה בשטח.
-export default function RecommendationForm({ plots, seedings, plotSeedings, pesticides, recentPests, initialData, onSubmit, onCancel }) {
+export default function RecommendationForm({ plots, seedings, plotSeedings, pesticides, stock = [], recentPests, initialData, onSubmit, onCancel }) {
   const [data, setData] = useState(() => ({
     plot_id: initialData?.plot_id || '',
     seeding_id: initialData?.seeding_id || '',
@@ -56,6 +62,10 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
     return [...groups.values()].sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name, 'he'));
   }, [pesticides, data.control_method]);
 
+  // מלאי לפי שם תכשיר — מציג יתרה בבחירה ומקדים תכשירים שיש במחסן
+  const stockOf = useMemo(() => new Map(stock.map(s => [s.key, s])), [stock]);
+  const stockFor = (name) => stockOf.get(String(name || '').trim().replace(/\s+/g, ' ').toLowerCase());
+
   const [pickerOpen, setPickerOpen] = useState(false);
   const q = search.trim().toLowerCase();
   const has = (v, t) => String(v || '').toLowerCase().includes(t);
@@ -63,8 +73,9 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
     const list = q
       ? products.filter(g => g.rows.some(r => [r.product_name, r.active_ingredients, r.manufacturer, r.pest, r.crop].some(v => has(v, q))))
       : products;
-    return list.slice(0, 60);
-  }, [products, q]);
+    const rank = (g) => { const s = stockFor(g.name); return !s ? 1 : s.status === 'out' ? 2 : 0; };
+    return [...list].sort((a, b) => rank(a) - rank(b)).slice(0, 60);
+  }, [products, q, stockOf]);
 
   // השורה המתאימה ביותר לתכשיר: לפי המזיק שבחיפוש/בהמלצה (מינון שונה לכל נגע), אחרת הראשונה עם מינון
   const bestRow = (g) => {
@@ -191,6 +202,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
                     <div className="text-sm font-medium flex items-center gap-1.5">
                       {g.name}
                       {g.own && <span className="text-[10px] px-1.5 rounded bg-blue-100 text-blue-700">של המשק</span>}
+                      <StockBadge s={stockFor(g.name)} />
                     </div>
                     <div className="text-xs text-gray-500">
                       {[r.active_ingredients, r.dosage, r.pest].filter(Boolean).join(' · ')}
@@ -215,7 +227,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
         {data.recommended_pesticides.map((p, i) => (
           <div key={p.pesticide_id || i} className="flex items-center gap-2 p-2 rounded-xl border bg-gray-50">
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">{p.pesticide_name}</div>
+              <div className="text-sm font-medium truncate flex items-center gap-1.5">{p.pesticide_name} <StockBadge s={stockFor(p.pesticide_name)} /></div>
               {p.active_ingredient && <div className="text-xs text-gray-500 truncate">{p.active_ingredient}</div>}
             </div>
             <Input type="number" inputMode="decimal" step="any" value={p.dosage_per_dunam ?? ''} className="w-20 h-9 text-center"

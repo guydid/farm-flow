@@ -54,10 +54,11 @@ const ENTITIES = {
   vehicles:                'כלי רכב',
   vehicle_treatments:      'טיפולי רכב',
   company_settings:        'פרטי חברה',
+  pesticide_stock:         'תנועות מלאי חומרי הדברה (type: count/purchase/adjustment). היתרה עצמה — בכלי pesticide_stock',
   pest_recommendations:    'המלצות הדברה מפיקוח מזיקים (status: pending/done/cancelled) — כתיבה רק דרך propose_pest_action / update_pest_action',
 };
 // המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
-const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations']);
+const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations', 'pesticide_stock']);
 // ערכים זהים ל-src/components/pest/pestConstants.js
 const PEST_SEVERITIES = ['low', 'medium', 'high'];
 const PEST_METHODS = ['chemical', 'biological'];
@@ -65,7 +66,7 @@ const PEST_TREATMENTS = ['mechanized', 'spray_gun', 'backpack', 'drench'];
 const ACTIVE_SEEDING_STATUSES = ['ordered', 'growing', 'harvesting', 'preparation'];
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates }) {
+module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mcp_tokens (
       id TEXT PRIMARY KEY,
@@ -292,6 +293,19 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           properties: {
             plot_id: { type: 'string', description: 'Omit for a summary of every active plot' },
             days: { type: 'integer', minimum: 1, maximum: 365, default: 60, description: 'How far back to include sprayings' },
+          },
+        },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: 'pesticide_stock',
+        title: 'Pesticide stock on the farm',
+        description: 'Current stock of pest control products: balance (stock counts + purchases minus quantities used in recorded sprayings), usage in the last 30 days and status ok/low/out. Check before recommending a product. Products never counted or purchased are not tracked.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            product: { type: 'string', description: 'Optional: filter by product name (substring)' },
+            history: { type: 'boolean', default: false, description: 'Include the movement history per product' },
           },
         },
         annotations: { readOnlyHint: true },
@@ -615,6 +629,13 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         };
       }
 
+      case 'pesticide_stock': {
+        const q = String(args.product || '').trim().toLowerCase();
+        const products = computePesticideStock(db, ctx.farmId, { includeHistory: !!args.history })
+          .filter(p => !q || p.product_name.toLowerCase().includes(q));
+        return { products, note: products.length ? undefined : 'No tracked stock (nothing counted or purchased yet)' };
+      }
+
       case 'propose_pest_action': {
         if (!ctx.canWritePest) throw new Error('This token cannot write pest control recommendations');
         const plot = entityRows('plots', ctx.farmId).find(p => p.id === args.plot_id);
@@ -652,8 +673,14 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           data.severity === 'high' ? 'warning' : 'info');
         console.log(`[MCP] token ${ctx.tokenId} proposed pest_recommendations/${id}`);
         const unmatched = pesticides.filter(p => p.not_in_catalog).map(p => p.pesticide_name);
+        const stock = computePesticideStock(db, ctx.farmId);
+        const stock_check = pesticides.map(p => {
+          const s = stock.find(x => x.product_name.trim().toLowerCase() === String(p.pesticide_name).trim().toLowerCase());
+          return { product: p.pesticide_name, ...(s ? { balance: s.balance, unit: s.unit, status: s.status } : { status: 'not_tracked' }) };
+        });
         return {
           ...formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'pest_recommendations' AND id = ?").get(id)),
+          stock_check,
           ...(unmatched.length ? { warning: `Not found in the pesticides catalog (saved by name only): ${unmatched.join(', ')}` } : {}),
         };
       }

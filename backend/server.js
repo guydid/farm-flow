@@ -4191,7 +4191,20 @@ app.post('/api/attendance/apikey', authMiddleware, adminMiddleware, (req, res) =
 
 // ─── MCP (external AI agents) ─────────────────────────────────────────────────
 // Must be mounted before the generic /api/:entity routes (it owns /api/mcp/tokens).
-require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates });
+// ─── PESTICIDE STOCK ──────────────────────────────────────────────────────────
+// מלאי מחושב: ספירות/קניות/תיקונים (pesticide_stock) פחות שימוש בהדברות. ראה pesticideStock.js
+const { computePesticideStock } = require('./pesticideStock');
+app.get('/api/pesticide-stock', authMiddleware, (req, res) => {
+  const user = getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const farmId = req.query.farm_id || user.current_farm_id;
+  if (!farmId || !user.farm_ids.includes(farmId)) return res.status(403).json({ error: 'אין גישה למשק' });
+  let products = computePesticideStock(db, farmId, { includeHistory: req.query.history === '1' });
+  if (req.query.key) products = products.filter(p => p.key === req.query.key);
+  res.json({ farm_id: farmId, products });
+});
+
+require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in

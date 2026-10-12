@@ -45,3 +45,4 @@ export const AttendanceRecord = createEntity('attendance_records');
 // Temporary labour booked by the day from a manpower contractor — entered by hand,
 // not synced from the clock (see components/attendance/TempWorkersTab.jsx).
 export const TempWorkerGroup = createEntity('temp_worker_groups');
+export const PesticideStock = createEntity('pesticide_stock');

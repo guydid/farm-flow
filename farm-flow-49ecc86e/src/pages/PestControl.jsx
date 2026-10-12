@@ -8,11 +8,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
-import { Bug, Plus, Loader2, CheckCircle2, XCircle, Pencil, Bot, CalendarClock, MapPin, ExternalLink } from 'lucide-react';
+import { Bug, Package, Plus, Loader2, CheckCircle2, XCircle, Pencil, Bot, CalendarClock, MapPin, ExternalLink } from 'lucide-react';
 import { createPageUrl } from '@/utils';
 import { Plot, Seeding, PlotSeeding, Pesticide, PestRecommendation, Spraying } from '@/entities/all';
 import { getMeCached, primeList } from '@/api/cachedReads';
 import RecommendationForm from '@/components/pest/RecommendationForm';
+import StockTab, { fetchStock } from '@/components/pest/StockTab';
 import SprayingForm from '@/components/seedings/SprayingForm';
 import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES } from '@/components/pest/pestConstants';
 
@@ -27,6 +28,8 @@ export default function PestControl() {
   const [seedings, setSeedings] = useState([]);
   const [plotSeedings, setPlotSeedings] = useState([]);
   const [pesticides, setPesticides] = useState([]);
+  const [stock, setStock] = useState([]);
+  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get('tab') === 'stock' ? 'stock' : 'inspection'));
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('pending');
   const [plotFilter, setPlotFilter] = useState('all');
@@ -42,14 +45,16 @@ export default function PestControl() {
       setMe(user);
       const farm_id = user?.current_farm_id;
       if (!farm_id) return;
-      const [r, pl, sd, ps, pe] = await Promise.all([
+      const [r, pl, sd, ps, pe, st] = await Promise.all([
         PestRecommendation.filter({ farm_id }),
         Plot.filter({ farm_id }),
         Seeding.filter({ farm_id }),
         PlotSeeding.filter({ farm_id }).catch(() => []),
         // תמיד טעינה טרייה (כמו בדף המזרע) — קטלוג מהקאש עלול לפספס תכשירים שנוספו זה עתה
         Pesticide.list().catch((e) => { toast({ title: 'שגיאה בטעינת התכשירים', description: e.message, variant: 'destructive' }); return []; }),
+        fetchStock().catch(() => ({ products: [] })),
       ]);
+      setStock(Array.isArray(st?.products) ? st.products : []);
       setRecs(Array.isArray(r) ? r : []);
       setPlots((Array.isArray(pl) ? pl : []).filter(p => p.activity_status !== 'inactive').sort((a, b) => String(a.name).localeCompare(String(b.name), 'he')));
       setSeedings(Array.isArray(sd) ? sd : []);
@@ -64,6 +69,18 @@ export default function PestControl() {
   }, [toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const reloadStock = useCallback(() => {
+    fetchStock().then(st => setStock(st.products || [])).catch(() => {});
+  }, []);
+
+  const switchTab = (t) => {
+    setTab(t);
+    const params = new URLSearchParams(window.location.search);
+    if (t === 'stock') params.set('tab', 'stock'); else params.delete('tab');
+    const qs = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`);
+  };
 
   // ?create=true (קיצור דרך) / ?plot_id=… — פתיחת טופס חדש ישירות
   useEffect(() => {
@@ -122,14 +139,35 @@ export default function PestControl() {
         <div className="flex items-start justify-between gap-3 mb-5">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2">
-              <Bug className="w-7 h-7 text-emerald-600" /> פיקוח מזיקים
+              <Bug className="w-7 h-7 text-emerald-600" /> הדברה
             </h1>
-            <p className="text-sm text-gray-500 mt-1">המלצות הדברה מהפקח — ממתינות עד לביצוע בשטח</p>
+            <p className="text-sm text-gray-500 mt-1">
+              {tab === 'stock' ? 'מלאי חומרי ההדברה — מתעדכן אוטומטית מכל הדברה שנרשמת' : 'המלצות הדברה מהפקח — ממתינות עד לביצוע בשטח'}
+            </p>
           </div>
-          <Button onClick={() => { setEditing(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700 flex-shrink-0">
-            <Plus className="w-4 h-4 ml-1" /> המלצה חדשה
-          </Button>
+          {tab === 'inspection' && (
+            <Button onClick={() => { setEditing(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700 flex-shrink-0">
+              <Plus className="w-4 h-4 ml-1" /> המלצה חדשה
+            </Button>
+          )}
         </div>
+
+        <div className="flex border-b mb-4">
+          {[
+            { id: 'inspection', label: 'פיקוח', icon: Bug, badge: counts.pending },
+            { id: 'stock', label: 'חומרי הדברה במלאי', icon: Package, badge: stock.filter(p => p.status !== 'ok').length, warn: true },
+          ].map(t => (
+            <button key={t.id} onClick={() => switchTab(t.id)}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${tab === t.id ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-gray-500'}`}>
+              <t.icon className="w-4 h-4" /> {t.label}
+              {t.badge > 0 && <span className={`text-[11px] px-1.5 rounded-full ${t.warn ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'stock' ? (
+          <StockTab stock={stock} loading={loading} pesticides={pesticides} me={me} onChanged={reloadStock} />
+        ) : (<>
 
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="flex gap-1 p-1 bg-gray-100 rounded-xl flex-1 sm:flex-none">
@@ -165,13 +203,14 @@ export default function PestControl() {
             ))}
           </div>
         )}
+        </>)}
       </div>
 
       <Dialog open={formOpen} onOpenChange={(o) => { if (!o) { setFormOpen(false); setEditing(null); } }}>
         <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{editing?.id ? 'עריכת המלצת הדברה' : 'המלצת הדברה חדשה'}</DialogTitle></DialogHeader>
           {formOpen && (
-            <RecommendationForm plots={plots} seedings={seedings} plotSeedings={plotSeedings} pesticides={pesticides}
+            <RecommendationForm plots={plots} seedings={seedings} plotSeedings={plotSeedings} pesticides={pesticides} stock={stock}
                                 recentPests={recentPests} initialData={editing}
                                 onSubmit={saveRecommendation} onCancel={() => { setFormOpen(false); setEditing(null); }} />
           )}

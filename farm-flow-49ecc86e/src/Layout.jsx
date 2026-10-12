@@ -415,7 +415,7 @@ export default function Layout({ children, currentPageName }) {
     { name: "שעון נוכחות", icon: Clock, path: "Attendance" },
     { name: "מזרעים", icon: Sprout, path: "Seedings" },
     { name: "חלקות", icon: Map, path: "Plots" },
-    { name: "פיקוח מזיקים", icon: Bug, path: "PestControl" },
+    { name: "הדברה", icon: Bug, path: "PestControl" },
     { name: "יריעות", icon: Layers, path: "Sheets" },
     { name: "אסמכתאות שקילה", icon: SlidersHorizontal, path: "WeighingCertificates" },
     { name: "רכבים", icon: Truck, path: "Vehicles" },
