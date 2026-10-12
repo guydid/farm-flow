@@ -13,7 +13,7 @@ import {
   Plus, Loader2, Calendar, FileText, Trash2,
   UserCheck, PlaneTakeoff, PlaneLanding, RefreshCw,
   ArrowLeftRight, FileCheck, Heart, UserMinus,
-  Camera, Upload, CheckCircle2, Stethoscope
+  Camera, Upload, CheckCircle2, Stethoscope, ShieldPlus, FolderCheck, Landmark, Megaphone, Receipt, Bot
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { getToken } from '@/api/localClient';
@@ -43,6 +43,11 @@ const EVENT_TYPES = [
   { value: 'visa_renewal',      label: 'חידוש אשרה',           icon: RefreshCw,     color: 'indigo' },
   { value: 'passport_renewal',  label: 'חידוש דרכון',          icon: RefreshCw,     color: 'cyan'   },
   { value: 'medical_exam',      label: 'בדיקה רפואית',         icon: Stethoscope,   color: 'rose'   },
+  { value: 'health_insurance',  label: 'ביטוח רפואי',          icon: ShieldPlus,    color: 'rose'   },
+  { value: 'documents_received',label: 'קבלת מסמכים',          icon: FolderCheck,   color: 'teal'   },
+  { value: 'bank_account',      label: 'חשבון בנק / טלפון',    icon: Landmark,      color: 'indigo' },
+  { value: 'authority_notice',  label: 'הודעת רשות האוכלוסין', icon: Megaphone,     color: 'orange' },
+  { value: 'fee_payment',       label: 'אגרה / תשלום',         icon: Receipt,       color: 'gray'   },
   { value: 'end_employment',    label: 'סיום העסקה',           icon: UserMinus,     color: 'red'    },
   { value: 'other',             label: 'אחר',                  icon: CheckCircle2,  color: 'gray'   },
 ];

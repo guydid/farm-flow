@@ -16,6 +16,13 @@ const TYPES = {
   expenses:              { label: 'הוצאה', icon: 'invoice' },
   vehicle_treatments:    { label: 'טיפול רכב', icon: 'vehicle' },
   employees:             { label: 'עובד', icon: 'employee' },
+  employee_events:       { label: 'אירוע עובד', icon: 'employee' },
+};
+const EMP_EVENT = {
+  start_employment: 'תחילת העסקה', entry_to_country: 'כניסה לארץ', inter_visa_exit: 'יציאה לאינטרוויזה', inter_visa_return: 'חזרה מאינטרוויזה',
+  transfer: 'נייוד', contract_signed: 'חוזה נחתם', visa_renewal: 'חידוש אשרה', passport_renewal: 'חידוש דרכון', medical_exam: 'בדיקה רפואית',
+  health_insurance: 'ביטוח רפואי', documents_received: 'קבלת מסמכים', bank_account: 'חשבון בנק / טלפון', authority_notice: 'הודעת רשות האוכלוסין',
+  fee_payment: 'אגרה / תשלום', end_employment: 'סיום העסקה', other: 'אירוע',
 };
 
 const SEEDING_STATUS = { ordered: 'הוזמן', preparation: 'בהכנה', growing: 'בגידול', harvesting: 'בקטיף', uprooted: 'נעקר', archived: 'בארכיון' };
@@ -55,6 +62,8 @@ function describe(type, d, ctx) {
       return { title: join('הוצאה', d.description || d.category), detail: d.amount != null ? `₪${num(d.amount)}` : '', ...page('Seedings') };
     case 'vehicle_treatments':
       return { title: join('טיפול רכב', d.treatment_type || d.description), detail: d.cost != null ? `₪${num(d.cost)}` : '', ...page(d.vehicle_id ? `VehicleDetail?id=${d.vehicle_id}` : 'Vehicles') };
+    case 'employee_events':
+      return { title: join(EMP_EVENT[d.event_type] || 'אירוע עובד', d.employee_name || ctx.employees.get(d.employee_id)), detail: join(d.event_date, d.notes ? String(d.notes).slice(0, 80) : ''), ...page(d.employee_id ? `EmployeeDetail?id=${d.employee_id}` : 'Employees') };
     case 'employees':
       return { title: join('עובד', d.full_name || d.name), detail: '', ...page(`EmployeeDetail?id=${ctx.id}`) };
     default:
@@ -77,7 +86,7 @@ function getRecentUpdates(db, farmId, { limit = 20, before = null, types = null 
   const nameMap = (type, field = 'name') => new Map(
     db.prepare('SELECT id, data FROM entities WHERE entity_type = ? AND farm_id = ?').all(type, farmId)
       .map(r => { try { return [r.id, JSON.parse(r.data || '{}')[field] || '']; } catch { return [r.id, '']; } }));
-  const lookups = { seedings: nameMap('seedings'), plots: nameMap('plots'), activityTypes: nameMap('activity_types') };
+  const lookups = { seedings: nameMap('seedings'), plots: nameMap('plots'), activityTypes: nameMap('activity_types'), employees: nameMap('employees', 'full_name') };
 
   const items = rows.slice(0, lim).map(r => {
     let d; try { d = JSON.parse(r.data || '{}'); } catch { d = {}; }

@@ -45,7 +45,7 @@ const ENTITIES = {
   expenses:                'הוצאות',
   payments:                'תשלומים',
   employees:               'עובדים',
-  employee_events:         'אירועי עובד',
+  employee_events:         'אירועי עובד (ציר הזמן בכרטיס העובד): employee_id, event_type, event_date, notes, document_url. לרישום — הכלי record_employee_event',
   employee_logs:           'יומני עבודה של עובדים',
   manpower_companies:      'חברות כוח אדם',
   temp_worker_groups:      'קבוצות עובדים זמניים',
@@ -68,6 +68,32 @@ const PEST_SEVERITIES = ['low', 'medium', 'high'];
 const PEST_METHODS = ['chemical', 'biological'];
 const PEST_TREATMENTS = ['mechanized', 'spray_gun', 'backpack', 'drench'];
 const ACTIVE_SEEDING_STATUSES = ['ordered', 'growing', 'harvesting', 'preparation'];
+// סוגי אירועי עובד — זהים ל-EVENT_TYPES ב-src/components/employees/EmployeeTimeline.jsx
+const EMPLOYEE_EVENT_TYPES = {
+  start_employment: 'תחילת העסקה', entry_to_country: 'כניסה לארץ', inter_visa_exit: 'יציאה לאינטרוויזה',
+  inter_visa_return: 'חזרה מאינטרוויזה', transfer: 'נייוד', contract_signed: 'חוזה נחתם', visa_renewal: 'חידוש אשרה',
+  passport_renewal: 'חידוש דרכון', medical_exam: 'בדיקה רפואית', health_insurance: 'ביטוח רפואי',
+  documents_received: 'קבלת מסמכים', bank_account: 'חשבון בנק / טלפון', authority_notice: 'הודעת רשות האוכלוסין',
+  fee_payment: 'אגרה / תשלום', end_employment: 'סיום העסקה', other: 'אחר',
+};
+// סכמה קבועה לישויות שעשויות להיות ריקות (describe_entity מסיק שדות מרשומות קיימות)
+const KNOWN_FIELDS = {
+  employee_events: [
+    { field: 'employee_id', types: ['string'], required: true, description: 'id של העובד (employees)' },
+    { field: 'event_type', types: ['string'], required: true, enum: Object.keys(EMPLOYEE_EVENT_TYPES), description: Object.entries(EMPLOYEE_EVENT_TYPES).map(([k, v]) => `${k}=${v}`).join(', ') },
+    { field: 'event_date', types: ['string'], required: true, description: 'YYYY-MM-DD — תאריך האירוע עצמו (לא תאריך המייל אם ידוע אחר)' },
+    { field: 'notes', types: ['string'], description: 'תיאור / פירוט: מספר פוליסה, תוקף, מה התקבל וכו׳ (אפשר גם description)' },
+    { field: 'document_url', types: ['string'], description: 'קישור למסמך (אופציונלי)' },
+    { field: 'source', types: ['string'], description: 'מקור, למשל email' },
+    { field: 'source_ref', types: ['string'], description: 'מזהה המקור (למשל Gmail message id) — מונע רישום כפול' },
+  ],
+  employees: [
+    { field: 'full_name', types: ['string'] }, { field: 'first_name', types: ['string'] }, { field: 'last_name', types: ['string'] },
+    { field: 'passport_number', types: ['string'], description: 'מספר דרכון — מזהה עיקרי לעובדים זרים' },
+    { field: 'passport_expiry', types: ['string'] }, { field: 'visa_type', types: ['string'] }, { field: 'visa_expiry', types: ['string'] },
+    { field: 'start_date', types: ['string'] }, { field: 'status', types: ['string'] }, { field: 'manpower_company_id', types: ['string'] },
+  ],
+};
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
 module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice }) {
@@ -400,6 +426,30 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         },
       );
     }
+    if (ctx.canWrite) {
+      tools.push({
+        name: 'record_employee_event',
+        title: 'Record employee event',
+        description: 'Adds an event to a specific employee\'s timeline (e.g. health insurance, start of employment, contract signed, documents received, bank account, visa/authority notice). Identify the employee by employee_id, or by passport_number (normalized match), or by name. Idempotent per source_ref: the same source_ref + event_type + employee is not recorded twice.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            employee_id: { type: 'string' },
+            passport_number: { type: 'string', description: 'Used to find the employee when employee_id is not known' },
+            employee_name: { type: 'string', description: 'Fallback when neither id nor passport is known; must match exactly one employee' },
+            event_type: { type: 'string', enum: Object.keys(EMPLOYEE_EVENT_TYPES), description: Object.entries(EMPLOYEE_EVENT_TYPES).map(([k, v]) => `${k}=${v}`).join(', ') },
+            event_date: { type: 'string', description: 'YYYY-MM-DD' },
+            notes: { type: 'string', description: 'Details: policy number, validity, what was received, sender' },
+            description: { type: 'string', description: 'Alias of notes' },
+            document_url: { type: 'string' },
+            source: { type: 'string', description: 'e.g. email', default: 'email' },
+            source_ref: { type: 'string', description: 'e.g. the Gmail message id; prevents duplicates' },
+          },
+          required: ['event_type', 'event_date'],
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      });
+    }
     if (ctx.canWrite || ctx.canWritePest) {
       const writable = ctx.canWrite ? writableEnum : PEST_WRITABLE;
       tools.push(
@@ -439,6 +489,49 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       // Tool-level failures are returned to the model, not as protocol errors.
       return { isError: true, content: [{ type: 'text', text: e.message }] };
     }
+  }
+
+  const normPassport = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  function resolveEmployee(ctx, { employee_id, passport_number, employee_name }) {
+    const all = entityRows('employees', ctx.farmId);
+    const label = (e) => `${e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' ')}${e.passport_number ? ` (${e.passport_number})` : ''} id=${e.id}`;
+    if (employee_id) {
+      const e = all.find(x => x.id === employee_id);
+      if (!e) throw new Error(`Unknown employee_id: ${employee_id}`);
+      return e;
+    }
+    if (passport_number) {
+      const p = normPassport(passport_number);
+      const e = all.find(x => normPassport(x.passport_number) === p);
+      if (e) return e;
+      if (!employee_name) throw new Error(`No employee with passport ${passport_number}. Look the employee up with list_records (entity employees) or pass employee_id.`);
+    }
+    if (employee_name) {
+      const n = String(employee_name).trim().toLowerCase().replace(/\s+/g, ' ');
+      const nameOf = (x) => String(x.full_name || [x.first_name, x.last_name].filter(Boolean).join(' ')).trim().toLowerCase().replace(/\s+/g, ' ');
+      const reversed = n.split(' ').reverse().join(' ');
+      const hits = all.filter(x => nameOf(x) === n || nameOf(x) === reversed);
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) throw new Error(`Name "${employee_name}" matches several employees: ${hits.map(label).join('; ')}. Pass employee_id.`);
+      throw new Error(`No employee named "${employee_name}". Pass employee_id or passport_number.`);
+    }
+    throw new Error('employee_id, passport_number or employee_name is required');
+  }
+
+  function validateEmployeeEvent(ctx, d) {
+    const emp = resolveEmployee(ctx, d);
+    if (!EMPLOYEE_EVENT_TYPES[d.event_type]) throw new Error(`event_type must be one of: ${Object.keys(EMPLOYEE_EVENT_TYPES).join(', ')}`);
+    if (!d.event_date) throw new Error('event_date is required');
+    checkDate('event_date', d.event_date);
+    return {
+      employee_id: emp.id,
+      employee_name: emp.full_name || [emp.first_name, emp.last_name].filter(Boolean).join(' '),
+      event_type: d.event_type, event_date: d.event_date,
+      notes: String(d.notes ?? d.description ?? '').trim(), document_url: String(d.document_url || '').trim(),
+      source: String(d.source || 'email').trim(), ...(d.source_ref ? { source_ref: String(d.source_ref).trim() } : {}),
+      created_by: `סוכן: ${ctx.tokenName}`, _by: `סוכן: ${ctx.tokenName}`,
+    };
   }
 
   function checkWriteAccess(ctx, entity) {
@@ -629,11 +722,13 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
             if (f.example === undefined && v !== null && v !== '') f.example = clip(typeof v === 'string' ? v.slice(0, 80) : v);
           }
         }
+        const inferred = Object.entries(fields).map(([k, f]) => ({ field: k, types: [...f.types], present_in: f.seen, example: f.example }));
+        const known = (KNOWN_FIELDS[args.entity] || []).filter(k => !fields[k.field]);
         return {
           entity: args.entity,
           description: ENTITIES[args.entity],
           sampled_records: r.body.length,
-          fields: Object.entries(fields).map(([k, f]) => ({ field: k, types: [...f.types], present_in: f.seen, example: f.example })),
+          fields: [...inferred.map(f => ({ ...f, ...((KNOWN_FIELDS[args.entity] || []).find(k => k.field === f.field) || {}), types: f.types })), ...known],
         };
       }
 
@@ -683,7 +778,8 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
         if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
         const id = uuidv4();
-        const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data) : args.data), _by: `סוכן: ${ctx.tokenName}` };
+        const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data)
+          : args.entity === 'employee_events' ? validateEmployeeEvent(ctx, args.data) : args.data), _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
         const now = NOW();
         db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -706,6 +802,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         }
         let updated = { ...existing, ...args.data, _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
+        if (args.entity === 'employee_events') updated = { ...validateEmployeeEvent(ctx, updated), created_by: existing.created_by || '' };
         if (args.entity === 'pesticide_stock') updated = { ...validateStockMovement(ctx, updated), created_by: existing.created_by || '', updated_by: `סוכן: ${ctx.tokenName}`, _by: `סוכן: ${ctx.tokenName}` };
         db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = ? AND id = ?')
           .run(JSON.stringify(updated), NOW(), args.entity, row.id);
@@ -798,6 +895,19 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         }))();
         console.log(`[MCP] token ${ctx.tokenId} updated ${results.length} pesticide prices`);
         return { updated: results };
+      }
+
+      case 'record_employee_event': {
+        if (!ctx.canWrite) throw new Error('This token cannot write employee events (requires full write access)');
+        const data = validateEmployeeEvent(ctx, args);
+        const dup = data.source_ref && entityRows('employee_events', ctx.farmId).find(e =>
+          e.employee_id === data.employee_id && e.event_type === data.event_type && e.source_ref === data.source_ref);
+        if (dup) return { ...dup, already_recorded: true };
+        const id = uuidv4(), now = NOW();
+        db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(id, 'employee_events', ctx.farmId, JSON.stringify(data), now, now);
+        console.log(`[MCP] token ${ctx.tokenId} recorded employee_events/${id}`);
+        return { ...formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'employee_events' AND id = ?").get(id)), event_label: EMPLOYEE_EVENT_TYPES[data.event_type] };
       }
 
       case 'propose_pest_action': {
