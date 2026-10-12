@@ -11,6 +11,7 @@ import { Plus, Trash2, Search, Droplets, X } from "lucide-react";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
+import { fetchPesticidePrices, farmPriceFor } from "@/api/pesticidePrices";
 
 export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onCancel, initialData = null }) {
   const { toast } = useToast();
@@ -29,6 +30,9 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  // מחירון הקנייה של המשק — עדיף על מחיר הקטלוג המשותף
+  const [farmPrices, setFarmPrices] = useState([]);
+  useEffect(() => { fetchPesticidePrices().then(p => setFarmPrices(Array.isArray(p) ? p : [])).catch(() => {}); }, []);
   const [showPesticidesList, setShowPesticidesList] = useState(false);
   const searchInputRef = useRef(null);
 
@@ -109,7 +113,7 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
           quantity: totalQuantity, // Calculated total quantity
           unit: unit,
           recommended_dosage: dosagePerDunam, // Store parsed numeric dosage (per dunam) for recalculations
-          cost_per_unit: pesticide.cost_per_unit || 0,
+          cost_per_unit: farmPriceFor(farmPrices, pesticide.product_name, unit) ?? (pesticide.cost_per_unit || 0),
           concentration: pesticide.concentration || '',
           formulation: pesticide.formulation || ''
         }

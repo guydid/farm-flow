@@ -54,11 +54,12 @@ const ENTITIES = {
   vehicles:                'כלי רכב',
   vehicle_treatments:      'טיפולי רכב',
   company_settings:        'פרטי חברה',
+  pesticide_prices:        'מחירון קנייה של המשק לחומרי הדברה (product_name, price, unit)',
   pesticide_stock:         'תנועות מלאי חומרי הדברה (type: count/purchase/adjustment). היתרה עצמה — בכלי pesticide_stock',
   pest_recommendations:    'המלצות הדברה מפיקוח מזיקים (status: pending/done/cancelled) — כתיבה רק דרך propose_pest_action / update_pest_action',
 };
 // המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
-const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations', 'pesticide_stock']);
+const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations', 'pesticide_stock', 'pesticide_prices']);
 // ערכים זהים ל-src/components/pest/pestConstants.js
 const PEST_SEVERITIES = ['low', 'medium', 'high'];
 const PEST_METHODS = ['chemical', 'biological'];
@@ -66,7 +67,7 @@ const PEST_TREATMENTS = ['mechanized', 'spray_gun', 'backpack', 'drench'];
 const ACTIVE_SEEDING_STATUSES = ['ordered', 'growing', 'harvesting', 'preparation'];
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock }) {
+module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mcp_tokens (
       id TEXT PRIMARY KEY,
@@ -300,7 +301,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       {
         name: 'pesticide_stock',
         title: 'Pesticide stock on the farm',
-        description: 'Current stock of pest control products: balance (stock counts + purchases minus quantities used in recorded sprayings), usage in the last 30 days and status ok/low/out. Check before recommending a product. Products never counted or purchased are not tracked.',
+        description: 'Current stock of pest control products with the farm purchase price and stock value: balance (stock counts + purchases minus quantities used in recorded sprayings), usage in the last 30 days and status ok/low/out. Check before recommending a product. Products never counted or purchased are not tracked.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -364,6 +365,33 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
             required: ['id'],
           },
           annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+        {
+          name: 'update_pesticide_prices',
+          title: 'Update pesticide purchase prices',
+          description: 'Sets the farm purchase price of one or more pest control products (₪ per unit). Prices are per farm, not on the shared catalog; the previous price is kept in history. Used for spraying cost and stock value. Pass price null to clear.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              prices: {
+                type: 'array', minItems: 1, maxItems: 100,
+                items: {
+                  type: 'object',
+                  properties: {
+                    product: { type: 'string', description: 'Product name as in the catalog / stock (e.g. אקרובט 69)' },
+                    pesticide_id: { type: 'string', description: 'Optional catalog id; its product name is used' },
+                    price: { type: ['number', 'null'], minimum: 0, description: 'Price in ₪ per unit' },
+                    unit: { type: 'string', description: 'ליטר, מ"ל, ק"ג, גרם or יח\' — default ליטר' },
+                    supplier: { type: 'string' },
+                    date: { type: 'string', description: 'YYYY-MM-DD of the quote/invoice, default today' },
+                  },
+                  required: ['price'],
+                },
+              },
+            },
+            required: ['prices'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
         },
       );
     }
@@ -634,6 +662,37 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         const products = computePesticideStock(db, ctx.farmId, { includeHistory: !!args.history })
           .filter(p => !q || p.product_name.toLowerCase().includes(q));
         return { products, note: products.length ? undefined : 'No tracked stock (nothing counted or purchased yet)' };
+      }
+
+      case 'update_pesticide_prices': {
+        if (!ctx.canWritePest) throw new Error('This token cannot update pesticide prices');
+        if (!Array.isArray(args.prices) || !args.prices.length) throw new Error('prices must be a non-empty array');
+        if (args.prices.length > 100) throw new Error('At most 100 prices per call');
+        // אימות הכול לפני כתיבה — כדי שלא יישמר חצי מהרשימה
+        const items = args.prices.map((it, i) => {
+          let name = String(it.product || '').trim();
+          let catalog = null;
+          if (it.pesticide_id) {
+            catalog = db.prepare("SELECT data FROM entities WHERE entity_type = 'pesticides' AND id = ? AND (farm_id IS NULL OR farm_id = ?)").get(it.pesticide_id, ctx.farmId);
+            if (!catalog) throw new Error(`prices[${i}]: unknown pesticide_id ${it.pesticide_id}`);
+            name = JSON.parse(catalog.data || '{}').product_name || name;
+          }
+          if (!name) throw new Error(`prices[${i}]: product or pesticide_id is required`);
+          if (it.price !== null && (typeof it.price !== 'number' || !Number.isFinite(it.price) || it.price < 0)) throw new Error(`prices[${i}]: price must be a non-negative number or null`);
+          checkDate(`prices[${i}].date`, it.date);
+          if (!catalog) catalog = db.prepare("SELECT id FROM entities WHERE entity_type = 'pesticides' AND (farm_id IS NULL OR farm_id = ?) AND json_extract(data, '$.product_name') = ? LIMIT 1").get(ctx.farmId, name);
+          return { name, pesticide_id: it.pesticide_id || catalog?.id || null, in_catalog: !!catalog, it };
+        });
+        const results = db.transaction(() => items.map(({ name, pesticide_id, in_catalog, it }) => {
+          const saved = upsertPesticidePrice(db, ctx.farmId, {
+            product_name: name, price: it.price, unit: it.unit || 'ליטר', pesticide_id, supplier: it.supplier,
+            source: 'agent', date: it.date, updated_by: `סוכן: ${ctx.tokenName}`,
+          }, { uuidv4, NOW });
+          const prev = (saved.history || []).slice(-1)[0];
+          return { product: saved.product_name, price: saved.price, unit: saved.unit, previous: prev ? { price: prev.price, unit: prev.unit } : null, ...(in_catalog ? {} : { warning: 'not in catalog (saved by name)' }) };
+        }))();
+        console.log(`[MCP] token ${ctx.tokenId} updated ${results.length} pesticide prices`);
+        return { updated: results };
       }
 
       case 'propose_pest_action': {

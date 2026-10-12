@@ -13,6 +13,8 @@ import { createPageUrl } from '@/utils';
 import { apiFetch, BASE_URL } from '@/api/localClient';
 import { PesticideStock } from '@/entities/all';
 import { parseDosage } from './pestConstants';
+import PriceEditor from './PriceEditor';
+import { savePesticidePrice } from '@/api/pesticidePrices';
 
 const fmtDate = (d) => { try { return format(parseISO(d), 'dd/MM/yy'); } catch { return d || ''; } };
 const UNITS = ['ליטר', 'מ"ל', 'ק"ג', 'גרם', "יח'"];
@@ -99,6 +101,12 @@ export default function StockTab({ stock, loading, pesticides, me, onChanged }) 
                     <div>שימוש ב-30 יום: {p.used_last_30d.qty} {p.used_last_30d.unit}</div>
                     {p.last_count && <div>ספירה אחרונה: {fmtDate(p.last_count.date)} ({p.last_count.qty} {p.last_count.unit})</div>}
                     {p.last_purchase && <div>קנייה אחרונה: {fmtDate(p.last_purchase.date)}{p.last_purchase.supplier ? ` · ${p.last_purchase.supplier}` : ''}</div>}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      מחיר קנייה:
+                      <PriceEditor productName={p.product_name} pesticideId={p.pesticide_id} price={p.purchase_price}
+                                   defaultUnit={p.base_unit === 'g' ? 'ק"ג' : 'ליטר'} compact onSaved={onChanged} />
+                      {p.stock_value != null && <span className="text-gray-400">· שווי מלאי ₪{Math.round(p.stock_value).toLocaleString('he-IL')}</span>}
+                    </div>
                     {p.warnings.map(w => <div key={w} className="text-amber-700">⚠ {w}</div>)}
                   </div>
                   <div className="flex gap-1.5">
@@ -186,6 +194,11 @@ function MovementDialog({ init, pesticides, stock, me, onClose, onSaved }) {
         ...(type === 'purchase' ? { supplier: supplier.trim(), cost_per_unit: cost === '' ? null : parseFloat(cost) } : {}),
         notes: notes.trim(), created_by: me.full_name || me.email,
       });
+      // קנייה עם מחיר מעדכנת את מחירון המשק
+      if (type === 'purchase' && cost !== '' && Number.isFinite(parseFloat(cost))) {
+        await savePesticidePrice({ product_name: product.name, pesticide_id: product.pesticide_id || null, price: parseFloat(cost), unit,
+                                   supplier: supplier.trim(), source: 'purchase', date }).catch(() => {});
+      }
       toast({ title: `${MOVE_TYPES[type].label} נשמרה`, description: `${product.name} · ${qty} ${unit}` });
       onSaved();
     } catch (e) {

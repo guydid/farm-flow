@@ -13,6 +13,8 @@ import { Plus, Edit, Trash2, Loader2, Download, Search, Upload, FileText, Chevro
 import { useToast } from "@/components/ui/use-toast";
 import { getToken } from "@/api/localClient";
 import { primeList } from "@/api/cachedReads";
+import PriceEditor from "@/components/pest/PriceEditor";
+import { fetchPesticidePrices, productKey } from "@/api/pesticidePrices";
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -55,6 +57,14 @@ export default function PesticidesManager() {
     dosage: "", volume: "", control_type: "chemical"
   };
   const [formData, setFormData] = useState(initialFormData);
+
+  // מחירון הקנייה של המשק (הקטלוג משותף — המחיר נשמר למשק)
+  const [farmPrices, setFarmPrices] = useState([]);
+  const loadPrices = useCallback(() => {
+    fetchPesticidePrices({ fresh: true }).then(p => setFarmPrices(Array.isArray(p) ? p : [])).catch(() => {});
+  }, []);
+  useEffect(() => { loadPrices(); }, [loadPrices]);
+  const priceByKey = useMemo(() => new Map(farmPrices.map(p => [p.key, p])), [farmPrices]);
 
   const loadData = useCallback(async () => {
     try {
@@ -335,7 +345,7 @@ export default function PesticidesManager() {
                   <TableHead>יצרן</TableHead>
                   <TableHead>ריכוז</TableHead>
                   <TableHead>גידולים/נגעים</TableHead>
-                  <TableHead>מחיר/יח'</TableHead>
+                  <TableHead>מחיר קנייה</TableHead>
                   <TableHead>פעולות</TableHead>
                 </TableRow>
               </TableHeader>
@@ -384,7 +394,10 @@ export default function PesticidesManager() {
                           )}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {product.cost_per_unit ? <span className="text-blue-600 font-medium">₪{product.cost_per_unit}/{product.unit || 'יח׳'}</span> : <span className="text-gray-400">-</span>}
+                          <PriceEditor productName={product.product_name} pesticideId={product.id}
+                                       price={priceByKey.get(productKey(product.product_name))}
+                                       fallback={product.cost_per_unit ? { price: product.cost_per_unit, unit: product.unit } : null}
+                                       defaultUnit={product.unit || 'ליטר'} onSaved={loadPrices} />
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">

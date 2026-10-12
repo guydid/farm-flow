@@ -4193,7 +4193,7 @@ app.post('/api/attendance/apikey', authMiddleware, adminMiddleware, (req, res) =
 // Must be mounted before the generic /api/:entity routes (it owns /api/mcp/tokens).
 // ─── PESTICIDE STOCK ──────────────────────────────────────────────────────────
 // מלאי מחושב: ספירות/קניות/תיקונים (pesticide_stock) פחות שימוש בהדברות. ראה pesticideStock.js
-const { computePesticideStock } = require('./pesticideStock');
+const { computePesticideStock, getPesticidePrices, upsertPesticidePrice } = require('./pesticideStock');
 app.get('/api/pesticide-stock', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
@@ -4204,7 +4204,30 @@ app.get('/api/pesticide-stock', authMiddleware, (req, res) => {
   res.json({ farm_id: farmId, products });
 });
 
-require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock });
+// מחירון קנייה של המשק (לא על הקטלוג המשותף)
+function pesticidePriceFarm(req, res) {
+  const user = getUser(req.user.id);
+  if (!user) { res.status(401).json({ error: 'Unauthorized' }); return null; }
+  const farmId = req.query.farm_id || req.body?.farm_id || user.current_farm_id;
+  if (!farmId || !user.farm_ids.includes(farmId)) { res.status(403).json({ error: 'אין גישה למשק' }); return null; }
+  return { user, farmId };
+}
+app.get('/api/pesticide-prices', authMiddleware, (req, res) => {
+  const c = pesticidePriceFarm(req, res); if (!c) return;
+  res.json(getPesticidePrices(db, c.farmId));
+});
+app.put('/api/pesticide-prices', authMiddleware, (req, res) => {
+  const c = pesticidePriceFarm(req, res); if (!c) return;
+  if (getFarmMember(c.farmId, c.user.id)?.role === 'viewer') return res.status(403).json({ error: 'משתמש בתפקיד צופה — אין הרשאת עדכון' });
+  try {
+    const { product_name, price, unit, pesticide_id, supplier, source, date } = req.body || {};
+    res.json(upsertPesticidePrice(db, c.farmId, { product_name, price, unit, pesticide_id, supplier, source, date, updated_by: c.user.full_name || c.user.email }, { uuidv4, NOW }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in

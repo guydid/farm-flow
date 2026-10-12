@@ -30,7 +30,47 @@ const round = (n) => Math.round(n * 100) / 100;
 const productKey = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const ORDER = { count: 0, purchase: 1, adjustment: 1, usage: 2 };
 
+// מחיר ליחידה אחת → מחיר ליחידה אחרת (₪/ליטר → ₪/מ"ל וכו'); null אם היחידות לא תואמות
+function convertPrice(price, fromUnit, toUnit) {
+  if (price == null || !Number.isFinite(Number(price))) return null;
+  const a = normUnit(fromUnit), b = normUnit(toUnit);
+  if (a.base !== b.base) return null;
+  return (Number(price) / a.factor) * b.factor;
+}
+
+// מחירון קנייה למשק — רשומה אחת לכל תכשיר (entity: pesticide_prices). הקטלוג משותף לכל
+// המשקים, ולכן מחיר קנייה נשמר כאן ולא על התכשיר עצמו.
+function getPesticidePrices(db, farmId) {
+  return db.prepare("SELECT id, data, updated_at FROM entities WHERE entity_type = 'pesticide_prices' AND farm_id = ?").all(farmId)
+    .map(r => { let d; try { d = JSON.parse(r.data || '{}'); } catch { d = {}; } return { ...d, id: r.id, key: productKey(d.product_name), updated_at: r.updated_at }; })
+    .filter(p => p.product_name);
+}
+
+function upsertPesticidePrice(db, farmId, { product_name, price, unit, pesticide_id, supplier, source, updated_by, date }, { uuidv4, NOW }) {
+  const name = String(product_name || '').trim().replace(/\s+/g, ' ');
+  if (!name) throw new Error('product_name נדרש');
+  const value = price === null || price === '' ? null : Number(price);
+  if (value !== null && (!Number.isFinite(value) || value < 0)) throw new Error('מחיר לא תקין');
+  const existing = getPesticidePrices(db, farmId).find(p => p.key === productKey(name));
+  const prev = existing ? (({ id, key, updated_at, ...d }) => d)(existing) : {};
+  const data = {
+    ...prev, product_name: existing?.product_name || name, price: value, unit: unit || prev.unit || 'ליטר',
+    pesticide_id: pesticide_id || prev.pesticide_id || null, supplier: supplier ?? prev.supplier ?? '',
+    source: source || 'manual', updated_by: updated_by || '', date: date || NOW().slice(0, 10),
+    history: [...(prev.history || []), ...(prev.price != null && prev.price !== value ? [{ price: prev.price, unit: prev.unit, date: prev.date, source: prev.source }] : [])].slice(-20),
+  };
+  const now = NOW();
+  if (existing) {
+    db.prepare("UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = 'pesticide_prices' AND id = ?").run(JSON.stringify(data), now, existing.id);
+    return { ...data, id: existing.id };
+  }
+  const id = uuidv4();
+  db.prepare("INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'pesticide_prices', ?, ?, ?, ?)").run(id, farmId, JSON.stringify(data), now, now);
+  return { ...data, id };
+}
+
 function computePesticideStock(db, farmId, { includeHistory = false } = {}) {
+  const prices = new Map(getPesticidePrices(db, farmId).map(p => [p.key, p]));
   const rows = (type) => db.prepare('SELECT id, data, created_at FROM entities WHERE entity_type = ? AND farm_id = ?').all(type, farmId)
     .map(r => { let d; try { d = JSON.parse(r.data || '{}'); } catch { d = {}; } return { ...d, id: r.id, created_at: r.created_at }; });
 
@@ -86,6 +126,8 @@ function computePesticideStock(db, farmId, { includeHistory = false } = {}) {
     }
     const lastOf = (kind) => [...events].reverse().find(e => e.kind === kind) || null;
     const bal = display(balance, base);
+    const pr = prices.get(p.key);
+    const pricePerDisplay = pr && pr.price != null ? convertPrice(pr.price, pr.unit, bal.unit) : null;
     out.push({
       key: p.key, product_name: p.product_name, pesticide_id: p.pesticide_id,
       balance: bal.qty, unit: bal.unit, base_unit: base, balance_base: round(balance),
@@ -97,6 +139,8 @@ function computePesticideStock(db, farmId, { includeHistory = false } = {}) {
       last_purchase: lastOf('purchase') && { date: lastOf('purchase').date, supplier: lastOf('purchase').supplier },
       last_usage: lastOf('usage')?.date || null,
       future_dated: events.some(e => e.date > today),
+      purchase_price: pr && pr.price != null ? { price: pr.price, unit: pr.unit, date: pr.date, supplier: pr.supplier || '' } : null,
+      stock_value: pricePerDisplay != null && balance > 0 ? round(pricePerDisplay * bal.qty) : null,
       warnings: [...warnings],
       ...(includeHistory ? { history: history.reverse() } : {}),
     });
@@ -104,4 +148,4 @@ function computePesticideStock(db, farmId, { includeHistory = false } = {}) {
   return out.sort((a, b) => a.product_name.localeCompare(b.product_name, 'he'));
 }
 
-module.exports = { computePesticideStock, productKey, normUnit };
+module.exports = { computePesticideStock, getPesticidePrices, upsertPesticidePrice, convertPrice, productKey, normUnit };

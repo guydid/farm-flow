@@ -14,6 +14,7 @@ import { Plot, Seeding, PlotSeeding, Pesticide, PestRecommendation, Spraying } f
 import { getMeCached, primeList } from '@/api/cachedReads';
 import RecommendationForm from '@/components/pest/RecommendationForm';
 import StockTab, { fetchStock } from '@/components/pest/StockTab';
+import { fetchPesticidePrices, farmPriceFor } from '@/api/pesticidePrices';
 import SprayingForm from '@/components/seedings/SprayingForm';
 import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES } from '@/components/pest/pestConstants';
 
@@ -29,6 +30,7 @@ export default function PestControl() {
   const [plotSeedings, setPlotSeedings] = useState([]);
   const [pesticides, setPesticides] = useState([]);
   const [stock, setStock] = useState([]);
+  const [prices, setPrices] = useState([]);
   const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get('tab') === 'stock' ? 'stock' : 'inspection'));
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('pending');
@@ -45,7 +47,7 @@ export default function PestControl() {
       setMe(user);
       const farm_id = user?.current_farm_id;
       if (!farm_id) return;
-      const [r, pl, sd, ps, pe, st] = await Promise.all([
+      const [r, pl, sd, ps, pe, st, pr] = await Promise.all([
         PestRecommendation.filter({ farm_id }),
         Plot.filter({ farm_id }),
         Seeding.filter({ farm_id }),
@@ -53,7 +55,9 @@ export default function PestControl() {
         // תמיד טעינה טרייה (כמו בדף המזרע) — קטלוג מהקאש עלול לפספס תכשירים שנוספו זה עתה
         Pesticide.list().catch((e) => { toast({ title: 'שגיאה בטעינת התכשירים', description: e.message, variant: 'destructive' }); return []; }),
         fetchStock().catch(() => ({ products: [] })),
+        fetchPesticidePrices({ fresh: true }).catch(() => []),
       ]);
+      setPrices(Array.isArray(pr) ? pr : []);
       setStock(Array.isArray(st?.products) ? st.products : []);
       setRecs(Array.isArray(r) ? r : []);
       setPlots((Array.isArray(pl) ? pl : []).filter(p => p.activity_status !== 'inactive').sort((a, b) => String(a.name).localeCompare(String(b.name), 'he')));
@@ -72,6 +76,7 @@ export default function PestControl() {
 
   const reloadStock = useCallback(() => {
     fetchStock().then(st => setStock(st.products || [])).catch(() => {});
+    fetchPesticidePrices({ fresh: true }).then(pr => setPrices(Array.isArray(pr) ? pr : [])).catch(() => {});
   }, []);
 
   const switchTab = (t) => {
@@ -218,7 +223,7 @@ export default function PestControl() {
       </Dialog>
 
       {executing && (
-        <ExecuteDialog rec={executing} me={me} plots={plots} seedings={seedings} plotSeedings={plotSeedings} pesticides={pesticides}
+        <ExecuteDialog rec={executing} me={me} prices={prices} plots={plots} seedings={seedings} plotSeedings={plotSeedings} pesticides={pesticides}
                        onClose={() => setExecuting(null)}
                        onDone={() => { setExecuting(null); load(); }} />
       )}
@@ -295,7 +300,7 @@ function RecommendationCard({ rec, plotName, onExecute, onEdit, onCancel }) {
 }
 
 // ביצוע בשטח: טופס ההדברה הרגיל, ממולא מההמלצה. בשמירה נוצרת הדברה (Spraying) וההמלצה נסגרת.
-function ExecuteDialog({ rec, me, plots, seedings, plotSeedings, pesticides, onClose, onDone }) {
+function ExecuteDialog({ rec, me, prices = [], plots, seedings, plotSeedings, pesticides, onClose, onDone }) {
   const { toast } = useToast();
   const plot = plots.find(p => p.id === rec.plot_id) || { id: rec.plot_id, name: rec.plot_name };
   const plotSeedingList = useMemo(() => {
@@ -316,13 +321,14 @@ function ExecuteDialog({ rec, me, plots, seedings, plotSeedings, pesticides, onC
     notes: `לפי המלצת פיקוח: ${rec.pest}${rec.notes ? ` — ${rec.notes}` : ''}`,
     applied_pesticides: (rec.recommended_pesticides || []).map(p => {
       const cat = pesticides.find(x => x.id === p.pesticide_id) || {};
+      const unit = p.unit || cat.unit || 'מ"ל';
       return {
         pesticide_id: p.pesticide_id || null, pesticide_name: p.pesticide_name, active_ingredient: p.active_ingredient || cat.active_ingredients || '',
-        quantity: '', unit: p.unit || cat.unit || 'מ"ל', recommended_dosage: p.dosage_per_dunam || 0,
-        cost_per_unit: cat.cost_per_unit || 0, concentration: cat.concentration || '', formulation: cat.formulation || '',
+        quantity: '', unit, recommended_dosage: p.dosage_per_dunam || 0,
+        cost_per_unit: farmPriceFor(prices, p.pesticide_name, unit) ?? (cat.cost_per_unit || 0), concentration: cat.concentration || '', formulation: cat.formulation || '',
       };
     }),
-  }), [rec, seeding, plot.size, me, pesticides]);
+  }), [rec, seeding, plot.size, me, pesticides, prices]);
 
   const submit = async (sprayingData) => {
     try {
