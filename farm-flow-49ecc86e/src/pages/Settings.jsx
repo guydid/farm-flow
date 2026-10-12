@@ -30,7 +30,8 @@ import {
   Send,
   Mail,
   Clock,
-  Receipt
+  Receipt,
+  Plug
 } from "lucide-react";
 
 import CompanySettingsManager from "../components/settings/CompanySettingsManager";
@@ -55,6 +56,7 @@ import BookkeeperSettingsManager from '../components/settings/BookkeeperSettings
 import AttendanceSettingsManager from '../components/settings/AttendanceSettingsManager';
 import SensorManager from '../components/settings/SensorManager';
 import TelegramSettings from '../components/settings/TelegramSettings';
+import McpSettingsManager from '../components/settings/McpSettingsManager';
 import { User, Farm } from '@/entities/all';
 
 export default function Settings() {
@@ -233,6 +235,10 @@ export default function Settings() {
                   <Receipt className="w-3.5 h-3.5" />
                   <span>חשבוניות</span>
                 </TabsTrigger>
+                <TabsTrigger value="mcp" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
+                  <Plug className="w-3.5 h-3.5" />
+                  <span>סוכן חיצוני (MCP)</span>
+                </TabsTrigger>
               </TabsList>
             </div>
           </div>
@@ -299,6 +305,9 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="bookkeeper">
             <BookkeeperSettingsManager />
+          </TabsContent>
+          <TabsContent value="mcp">
+            <McpSettingsManager />
           </TabsContent>
         </Tabs>
       </div>

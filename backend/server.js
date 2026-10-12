@@ -4126,6 +4126,10 @@ app.post('/api/attendance/apikey', authMiddleware, adminMiddleware, (req, res) =
   res.json({ api_key: key });
 });
 
+// ─── MCP (external AI agents) ─────────────────────────────────────────────────
+// Must be mounted before the generic /api/:entity routes (it owns /api/mcp/tokens).
+require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates });
+
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in
 // today and pushes an in-app notification and/or Telegram message to managers.
