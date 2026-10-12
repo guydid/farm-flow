@@ -40,16 +40,42 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
     return seedings.filter(s => (ids.has(s.id) || s.plot_id === data.plot_id) && ACTIVE_SEEDING_STATUSES.includes(s.status));
   }, [plotSeedings, seedings, data.plot_id]);
 
-  const methodPesticides = pesticides.filter(p =>
-    data.control_method === 'biological' ? p.control_type === 'biological' : p.control_type !== 'biological');
+  // הקטלוג (מהמאגר הממשלתי) מכיל שורה לכל צירוף תכשיר×גידול×נגע — מקבצים לפי תכשיר,
+  // אחרת אותו מוצר ממלא את כל הרשימה ותכשירים אחרים "נעלמים"
+  const products = useMemo(() => {
+    const groups = new Map();
+    for (const p of pesticides) {
+      if (!p?.product_name) continue;
+      if ((data.control_method === 'biological') !== (p.control_type === 'biological')) continue;
+      const key = (p.registration_number || p.product_name).toString().trim();
+      if (!groups.has(key)) groups.set(key, { key, name: p.product_name, own: !!p.farm_id, rows: [] });
+      const g = groups.get(key);
+      g.rows.push(p);
+      if (p.farm_id) g.own = true;
+    }
+    return [...groups.values()].sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name, 'he'));
+  }, [pesticides, data.control_method]);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
   const q = search.trim().toLowerCase();
-  const matches = q
-    ? methodPesticides.filter(p => [p.product_name, p.active_ingredients, p.pest, p.crop]
-        .some(v => String(v || '').toLowerCase().includes(q))).slice(0, 8)
-    : [];
+  const has = (v, t) => String(v || '').toLowerCase().includes(t);
+  const matches = useMemo(() => {
+    const list = q
+      ? products.filter(g => g.rows.some(r => [r.product_name, r.active_ingredients, r.manufacturer, r.pest, r.crop].some(v => has(v, q))))
+      : products;
+    return list.slice(0, 60);
+  }, [products, q]);
+
+  // השורה המתאימה ביותר לתכשיר: לפי המזיק שבחיפוש/בהמלצה (מינון שונה לכל נגע), אחרת הראשונה עם מינון
+  const bestRow = (g) => {
+    const pest = data.pest.trim().toLowerCase();
+    return (q && g.rows.find(r => has(r.pest, q) || has(r.crop, q)))
+      || (pest && g.rows.find(r => has(r.pest, pest) || (r.pest && pest.includes(String(r.pest).toLowerCase()))))
+      || g.rows.find(r => r.dosage) || g.rows[0];
+  };
 
   const addPesticide = (p) => {
-    if (data.recommended_pesticides.some(x => x.pesticide_id === p.id)) { setSearch(''); return; }
+    if (data.recommended_pesticides.some(x => x.pesticide_id === p.id || x.pesticide_name === p.product_name)) { setSearch(''); setPickerOpen(false); return; }
     const { dose, unit } = parseDosage(p);
     set({
       recommended_pesticides: [...data.recommended_pesticides, {
@@ -58,6 +84,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
       }],
     });
     setSearch('');
+    setPickerOpen(false);
   };
   const updatePesticide = (i, patch) => set({
     recommended_pesticides: data.recommended_pesticides.map((x, j) => (j === i ? { ...x, ...patch } : x)),
@@ -151,17 +178,37 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
         <Label>תכשירים מומלצים *</Label>
         <div className="relative">
           <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} className="pr-9"
-                 placeholder="חיפוש לפי שם תכשיר, חומר פעיל או מזיק" />
-          {matches.length > 0 && (
-            <div className="absolute z-10 mt-1 w-full bg-white border rounded-xl shadow-lg max-h-64 overflow-y-auto">
-              {matches.map(p => (
-                <button key={p.id} type="button" onClick={() => addPesticide(p)}
-                        className="w-full text-right px-3 py-2 hover:bg-emerald-50 border-b last:border-0">
-                  <div className="text-sm font-medium">{p.product_name}</div>
-                  <div className="text-xs text-gray-500">{[p.active_ingredients, p.dosage, p.pest].filter(Boolean).join(' · ')}</div>
-                </button>
-              ))}
+          <Input value={search} onChange={e => { setSearch(e.target.value); setPickerOpen(true); }} className="pr-9"
+                 onFocus={() => setPickerOpen(true)} onBlur={() => setTimeout(() => setPickerOpen(false), 200)}
+                 placeholder="חיפוש לפי שם תכשיר, חומר פעיל, יצרן או מזיק" />
+          {pickerOpen && (
+            <div className="absolute z-10 mt-1 w-full bg-white border rounded-xl shadow-lg max-h-72 overflow-y-auto">
+              {matches.map(g => {
+                const r = bestRow(g);
+                return (
+                  <button key={g.key} type="button" onMouseDown={e => e.preventDefault()} onClick={() => addPesticide(r)}
+                          className="w-full text-right px-3 py-2 hover:bg-emerald-50 border-b last:border-0">
+                    <div className="text-sm font-medium flex items-center gap-1.5">
+                      {g.name}
+                      {g.own && <span className="text-[10px] px-1.5 rounded bg-blue-100 text-blue-700">של המשק</span>}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {[r.active_ingredients, r.dosage, r.pest].filter(Boolean).join(' · ')}
+                      {g.rows.length > 1 && <span className="text-gray-400"> · {g.rows.length} רישומים</span>}
+                    </div>
+                  </button>
+                );
+              })}
+              {!matches.length && (
+                <div className="px-3 py-3 text-sm text-gray-500">
+                  {products.length
+                    ? 'לא נמצא תכשיר מתאים'
+                    : data.control_method === 'biological'
+                      ? 'אין תכשירים ביולוגיים בקטלוג — אפשר להוסיף בהגדרות ← חומרי הדברה'
+                      : 'קטלוג חומרי ההדברה ריק — אפשר לייבא מהמאגר הממשלתי בהגדרות ← חומרי הדברה'}
+                </div>
+              )}
+              {matches.length === 60 && <div className="px-3 py-2 text-xs text-gray-400">מוצגים 60 ראשונים — חדד את החיפוש</div>}
             </div>
           )}
         </div>

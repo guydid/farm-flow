@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Edit, Trash2, Loader2, Download, Search, Upload, FileText, ChevronDown, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { getToken } from "@/api/localClient";
+import { primeList } from "@/api/cachedReads";
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -62,6 +63,8 @@ export default function PesticidesManager() {
         Crop.list().catch(() => [])
       ]);
       setItems(Array.isArray(pesticidesData) ? pesticidesData : []);
+      // מרענן את הקאש המשותף — עמודי ריסוס/פיקוח מזיקים יראו מיד תכשירים שנוספו/עודכנו
+      primeList('pesticides', pesticidesData);
       setCrops(Array.isArray(cropsData) ? cropsData : []);
     } catch (error) {
       toast({ title: "שגיאה בטעינת נתונים", variant: "destructive" });

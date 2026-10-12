@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Bug, Plus, Loader2, CheckCircle2, XCircle, Pencil, Bot, CalendarClock, MapPin, ExternalLink } from 'lucide-react';
 import { createPageUrl } from '@/utils';
 import { Plot, Seeding, PlotSeeding, Pesticide, PestRecommendation, Spraying } from '@/entities/all';
-import { getMeCached, getListCached } from '@/api/cachedReads';
+import { getMeCached, primeList } from '@/api/cachedReads';
 import RecommendationForm from '@/components/pest/RecommendationForm';
 import SprayingForm from '@/components/seedings/SprayingForm';
 import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES } from '@/components/pest/pestConstants';
@@ -47,13 +47,15 @@ export default function PestControl() {
         Plot.filter({ farm_id }),
         Seeding.filter({ farm_id }),
         PlotSeeding.filter({ farm_id }).catch(() => []),
-        getListCached('pesticides', () => Pesticide.list()).catch(() => []),
+        // תמיד טעינה טרייה (כמו בדף המזרע) — קטלוג מהקאש עלול לפספס תכשירים שנוספו זה עתה
+        Pesticide.list().catch((e) => { toast({ title: 'שגיאה בטעינת התכשירים', description: e.message, variant: 'destructive' }); return []; }),
       ]);
       setRecs(Array.isArray(r) ? r : []);
       setPlots((Array.isArray(pl) ? pl : []).filter(p => p.activity_status !== 'inactive').sort((a, b) => String(a.name).localeCompare(String(b.name), 'he')));
       setSeedings(Array.isArray(sd) ? sd : []);
       setPlotSeedings(Array.isArray(ps) ? ps : []);
       setPesticides(Array.isArray(pe) ? pe : []);
+      primeList('pesticides', pe);
     } catch (e) {
       toast({ title: 'שגיאה בטעינה', description: e.message, variant: 'destructive' });
     } finally {
