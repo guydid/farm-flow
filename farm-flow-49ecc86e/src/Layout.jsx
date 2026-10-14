@@ -16,6 +16,7 @@ import BottomNav from "./components/layout/BottomNav";
 import WelcomeScreen from './components/onboarding/WelcomeScreen';
 import FarmSelector from './components/layout/FarmSelector';
 import ErrorBoundary from './components/ErrorBoundary';
+import { refreshBrand, BrandMark, useBrand } from "@/lib/branding";
 import { addDays, differenceInDays, parseISO, startOfTomorrow, format } from 'date-fns';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
@@ -33,6 +34,14 @@ export default function Layout({ children, currentPageName }) {
     return saved ? JSON.parse(saved) : {};
   });
   const location = useLocation();
+  const brand = useBrand();
+  // לוגו החברה של המשק הפעיל → פינה עליונה, אייקון טאב ומסך בית
+  useEffect(() => { if (currentFarm) refreshBrand(currentFarm); }, [currentFarm?.id]);
+  useEffect(() => {
+    const on = () => currentFarm && refreshBrand(currentFarm);
+    window.addEventListener('company-settings-saved', on);
+    return () => window.removeEventListener('company-settings-saved', on);
+  }, [currentFarm?.id]);
   // גרסת build נוכחית + זיהוי גרסה חדשה בשרת (טאב ישן ממשיך להריץ קוד ישן עד רענון)
   const { updateAvailable, latest } = useVersionCheck(location.pathname);
 
@@ -444,9 +453,9 @@ export default function Layout({ children, currentPageName }) {
           <div className="flex h-full flex-col justify-between bg-white border-l shadow-sm">
             <div>
               <div className="flex h-16 items-center justify-center group-hover:justify-start group-hover:px-6 border-b">
-                <Sprout className="h-8 w-8 text-indigo-600" />
-                <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-xl font-semibold mr-3 whitespace-nowrap">
-                  מנהל
+                <BrandMark className="h-9 w-9" />
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-lg font-semibold mr-3 whitespace-nowrap overflow-hidden text-ellipsis max-w-[150px]">
+                  {brand?.name || currentFarm?.name || 'Farm Flow'}
                 </span>
               </div>
               <nav className="flex-1 space-y-1 p-2">

@@ -104,6 +104,8 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
         await CompanySettings.create({ ...formData, farm_id: currentFarm.id });
       }
       toast({ title: "הצלחה", description: "הגדרות החברה עודכנו." });
+      // הלוגו/השם משמשים כמיתוג המערכת (פינה עליונה, אייקון טאב ומסך בית)
+      window.dispatchEvent(new Event('company-settings-saved'));
       // Reload settings for the current farm after submission
       loadSettings(currentFarm.id);
     } catch (error) {

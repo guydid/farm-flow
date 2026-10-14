@@ -141,23 +141,27 @@ const migrateColumns = [
   // Field-worker accounts are locked to the reduced (Thai) data-entry UI.
   "ALTER TABLE users ADD COLUMN field_worker INTEGER DEFAULT 0",
   "ALTER TABLE users ADD COLUMN language TEXT",
+  // ביטול טוקנים: מועלה בשינוי/איפוס סיסמה, השבתה ומחיקה — JWT עם tv ישן נדחה
+  "ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0",
+  // משתמשים קיימים נחשבים מאומתים (DEFAULT 1); הרשמה עצמית חדשה נוצרת עם 0
+  "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 1",
 ];
 for (const sql of migrateColumns) {
   try { db.exec(sql); } catch (_) {}
 }
 
-// Migrate existing farm ownerships → farm_members table
-try {
-  const existingUsers = db.prepare('SELECT id, farm_ids FROM users').all();
-  for (const u of existingUsers) {
-    const farmIds = JSON.parse(u.farm_ids || '[]');
-    for (const fid of farmIds) {
-      try {
-        db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), fid, u.id, 'owner', NOW());
-      } catch (_) {}
-    }
-  }
-} catch (_) {}
+// טבלת farm_members היא מקור האמת לגישה למשקים. (בעבר כל farm_id ב-users.farm_ids הפך
+// כאן ל-owner בכל עליית שרת — וכיוון ש-farm_ids היה ניתן לעריכה ע"י המשתמש, זה איפשר
+// השתלטות על משק זר. ההעברה כבר רצה בעבר; היא הוסרה.)
+db.exec(`CREATE TABLE IF NOT EXISTS auth_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at INTEGER NOT NULL,
+  used_at TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 
 // דחיסת תשובות: ה-JSON עובר במנהרת Cloudflare עד הקצה, דחיסה מקצרת את הדרך
 app.use(compression({ threshold: 1024 }));
@@ -200,8 +204,13 @@ app.use('/uploads', (req, res, next) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') ||
     (req.query.token || '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  try { jwt.verify(token, JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'Invalid token' }); }
+  if (!verifySessionToken(token)) return res.status(401).json({ error: 'Invalid token' });
+  // רק סוגי קבצים מוכרים מוגשים; כל השאר כהורדה (הגנה מ-XSS בקבצים ישנים)
+  const ext = path.extname(req.path).toLowerCase();
+  if (!UPLOAD_EXTS.has(ext)) res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  next();
 }, express.static(UPLOADS_DIR));
 
 // ─── תמונות ממוזערות למסמכים (גלריה) ─────────────────────────────────────────
@@ -236,7 +245,7 @@ async function generateThumbnail(srcPath, outPath, width) {
 
 app.get('/api/files/thumb/:filename', async (req, res) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') || (req.query.token || '');
-  try { jwt.verify(token, JWT_SECRET); } catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  if (!verifySessionToken(token)) return res.status(401).json({ error: 'Unauthorized' });
 
   const name = String(req.params.filename || '');
   if (!/^[A-Za-z0-9._-]+$/.test(name) || name.includes('..')) return res.status(400).json({ error: 'Bad filename' });
@@ -258,32 +267,59 @@ app.get('/api/files/thumb/:filename', async (req, res) => {
   }
 });
 
+const UPLOAD_EXT_BY_MIME = {
+  'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+  'image/heic': '.heic', 'image/heif': '.heif', 'application/pdf': '.pdf',
+};
+const UPLOAD_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.pdf']);
+function safeUploadExt(file) {
+  const ext = path.extname(String(file.originalname || '')).toLowerCase();
+  if (UPLOAD_EXTS.has(ext)) return ext;
+  return UPLOAD_EXT_BY_MIME[String(file.mimetype).toLowerCase()] || '.bin';
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.jpg';
-      cb(null, `${uuidv4()}${ext}`);
+      cb(null, `${uuidv4()}${safeUploadExt(file)}`);
     }
   }),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf/i;
-    cb(null, allowed.test(file.mimetype) || allowed.test(path.extname(file.originalname)));
+    // הסיומת נקבעת מרשימה סגורה (לא מהשם שהלקוח שלח) — קובץ ‎.html‎ לא יכול להישמר ולהיות מוגש
+    cb(null, !!UPLOAD_EXT_BY_MIME[String(file.mimetype).toLowerCase()] || UPLOAD_EXTS.has(path.extname(file.originalname).toLowerCase()));
   }
 });
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
+// טוקן התחברות: תקף רק אם המשתמש קיים, פעיל, וגרסת הטוקן (tv) תואמת — כך שינוי/איפוס
+// סיסמה, השבתה או מחיקה מנתקים מיד את כל המכשירים.
+function signSessionToken(user) {
+  return jwt.sign({ id: user.id, email: user.email, tv: user.token_version || 0 }, JWT_SECRET, { expiresIn: '30d' });
+}
+function verifySessionToken(token) {
+  if (!token) return null;
+  let payload;
+  try { payload = jwt.verify(token, JWT_SECRET); } catch { return null; }
+  if (!payload?.id || payload.kind) return null; // state של OAuth וכד' אינו טוקן כניסה
+  const u = db.prepare('SELECT is_active, token_version FROM users WHERE id = ?').get(payload.id);
+  if (!u || u.is_active === 0) return null;
+  if ((payload.tv || 0) !== (u.token_version || 0)) return null;
+  return payload;
+}
+function bumpTokenVersion(userId) {
+  db.prepare('UPDATE users SET token_version = COALESCE(token_version, 0) + 1, updated_at = ? WHERE id = ?').run(NOW(), userId);
+}
+
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Unauthorized', type: 'auth_required' });
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch {
-    res.status(401).json({ error: 'Invalid token', type: 'auth_required' });
-  }
+  const payload = verifySessionToken(token);
+  if (!payload) return res.status(401).json({ error: 'Invalid token', type: 'auth_required' });
+  req.user = payload;
+  next();
 }
 
 function adminMiddleware(req, res, next) {
@@ -292,10 +328,24 @@ function adminMiddleware(req, res, next) {
   next();
 }
 
+// המשקים של משתמש נגזרים מ-farm_members בלבד. users.farm_ids נשמר רק לסדר התצוגה.
+function memberFarmIds(userId, storedOrder = []) {
+  const ids = db.prepare('SELECT farm_id FROM farm_members WHERE user_id = ?').all(userId).map(r => r.farm_id);
+  const set = new Set(ids);
+  const ordered = storedOrder.filter(f => set.has(f));
+  for (const f of ids) if (!ordered.includes(f)) ordered.push(f);
+  return ordered;
+}
+
 function getUser(id) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return null;
-  return { ...user, farm_ids: JSON.parse(user.farm_ids || '[]') };
+  let stored = [];
+  try { stored = JSON.parse(user.farm_ids || '[]'); } catch { stored = []; }
+  const farm_ids = memberFarmIds(user.id, Array.isArray(stored) ? stored : []);
+  // משק פעיל שהמשתמש כבר לא חבר בו (הוסר/נמחק) — לא נגיש; עוברים למשק הראשון שלו
+  const current_farm_id = farm_ids.includes(user.current_farm_id) ? user.current_farm_id : (farm_ids[0] || null);
+  return { ...user, farm_ids, current_farm_id };
 }
 
 function formatUser(user) {
@@ -1735,8 +1785,9 @@ app.post('/api/invoices/:id/send', authMiddleware, aiLimiter, async (req, res) =
 
   // אתר את קובץ החשבונית
   if (!inv.file_name && !inv.file_url) return res.status(400).json({ error: 'לחשבונית אין קובץ מצורף' });
-  const filename = inv.file_name || path.basename(String(inv.file_url).split('?')[0]);
+  const filename = path.basename(String(inv.file_name || String(inv.file_url).split('?')[0]));
   const filePath = path.join(UPLOADS_DIR, filename);
+  if (!/^[A-Za-z0-9._-]+$/.test(filename) || path.dirname(filePath) !== UPLOADS_DIR) return res.status(400).json({ error: 'שם קובץ לא תקין' });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'קובץ החשבונית לא נמצא בשרת' });
 
   try {
@@ -2853,77 +2904,223 @@ app.post('/api/admin/setup', async (req, res) => {
 });
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
-app.post('/api/auth/register', registerLimiter, async (req, res) => {
-  if (!ALLOW_REGISTRATION) {
-    // Still allow first-ever user (system bootstrap)
-    const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get();
-    if (userCount.cnt > 0) {
-      return res.status(403).json({ error: 'Registration is disabled. Contact the administrator.' });
+const mailer = require('./mailer');
+const EMAIL_RE = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/;
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+const strongPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 200 && /[A-Za-z\u0590-\u05FF]/.test(p) && /\d/.test(p);
+const sha256 = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
+
+// שולח מיילי מערכת דרך חיבור ה-Gmail של מנהל המערכת, כשאין SMTP מוגדר
+mailer.setFallbackSender({
+  conn() {
+    const admins = db.prepare('SELECT id, current_farm_id FROM users WHERE is_admin = 1 AND is_active = 1').all();
+    for (const a of admins) {
+      if (!a.current_farm_id) continue;
+      const c = getGmailConnectionForUser(a.current_farm_id, a.id);
+      if (c) return { farmId: a.current_farm_id, conn: c };
     }
-  }
-  const { email, password, full_name } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    return null;
+  },
+  available() { try { return !!this.conn(); } catch { return false; } },
+  async send({ to, subject, text }) {
+    const x = this.conn();
+    if (!x) throw Object.assign(new Error('Email service not configured'), { code: 'email_unavailable' });
+    await sendGmailMessage(x.farmId, x.conn, buildPlainRawEmail({ to, subject, text }));
+  },
+});
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase());
-  if (existing) return res.status(400).json({ error: 'User with this email already exists' });
+// טוקן חד-פעמי למייל (אימות/איפוס) — נשמר רק ה-hash
+function issueAuthToken(userId, kind, ttlMs) {
+  db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND kind = ?').run(userId, kind);
+  const raw = crypto.randomBytes(32).toString('base64url');
+  db.prepare('INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(uuidv4(), userId, kind, sha256(raw), Date.now() + ttlMs);
+  return raw;
+}
+function consumeAuthToken(raw, kind) {
+  if (!raw || typeof raw !== 'string' || raw.length > 200) return null;
+  const row = db.prepare('SELECT * FROM auth_tokens WHERE token_hash = ? AND kind = ?').get(sha256(raw), kind);
+  if (!row || row.used_at || row.expires_at < Date.now()) return null;
+  db.prepare('UPDATE auth_tokens SET used_at = ? WHERE id = ?').run(NOW(), row.id);
+  return row;
+}
 
-  const password_hash = await bcrypt.hash(password, 10);
-  const userId = uuidv4();
+async function sendVerificationEmail(user) {
+  const raw = issueAuthToken(user.id, 'verify', 48 * 3600 * 1000);
+  const url = `${APP_BASE_URL}/login?verify=${encodeURIComponent(raw)}`;
+  const { html, text } = mailer.renderEmail({
+    title: 'אימות כתובת המייל',
+    intro: `שלום ${user.full_name || ''}, תודה שנרשמת ל-Farm Flow. כדי להפעיל את החשבון, אשר את כתובת המייל.`.replace('שלום ,', 'שלום,'),
+    buttonText: 'אימות החשבון', url,
+    outro: 'הקישור תקף ל-48 שעות. אם לא נרשמת, אפשר להתעלם מהמייל.',
+  });
+  await mailer.sendMail({ to: user.email, subject: 'אימות החשבון ב-Farm Flow', html, text });
+}
+
+async function sendPasswordResetEmail(user) {
+  const raw = issueAuthToken(user.id, 'reset', 3600 * 1000);
+  const url = `${APP_BASE_URL}/login?reset=${encodeURIComponent(raw)}`;
+  const { html, text } = mailer.renderEmail({
+    title: 'איפוס סיסמה',
+    intro: 'קיבלנו בקשה לאיפוס הסיסמה לחשבון שלך ב-Farm Flow.',
+    buttonText: 'בחירת סיסמה חדשה', url,
+    outro: 'הקישור תקף לשעה ולשימוש אחד. אם לא ביקשת איפוס, אפשר להתעלם — הסיסמה לא תשתנה.',
+  });
+  await mailer.sendMail({ to: user.email, subject: 'איפוס סיסמה ב-Farm Flow', html, text });
+}
+
+function loginPayload(user) {
+  const u = getUser(user.id);
+  return {
+    token: signSessionToken(u),
+    user: {
+      id: u.id, email: u.email, full_name: u.full_name, avatar_url: u.avatar_url,
+      farm_ids: u.farm_ids, current_farm_id: u.current_farm_id,
+      is_admin: !!u.is_admin, is_active: u.is_active !== 0,
+    },
+  };
+}
+
+// משק חדש + בעלות — משמש בהרשמה (סיסמה/Google)
+function createFarmForUser(userId, farmName) {
   const farmId = uuidv4();
-  const farmName = full_name ? `${full_name}'s Farm` : 'My Farm';
   const now = NOW();
-
-  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get();
-  const isFirstUser = userCount.cnt === 0 ? 1 : 0;
-
   db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
     farmId, 'farms', null, JSON.stringify({ name: farmName, owner_id: userId }), now, now
   );
+  db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), farmId, userId, 'owner', now);
+  db.prepare('UPDATE users SET farm_ids = ?, current_farm_id = ?, updated_at = ? WHERE id = ?').run(JSON.stringify([farmId]), farmId, now, userId);
   ensureDefaultActivityTypes();
+  return farmId;
+}
 
-  db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)').run(
-    userId, email.toLowerCase(), password_hash, full_name || '', JSON.stringify([farmId]), farmId, isFirstUser, now, now
-  );
+const registrationOpen = () => ALLOW_REGISTRATION;
+const authEmailLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: { error: 'Too many requests', code: 'rate_limited' } });
+// הגבלה לפי חשבון (בנוסף ל-IP): 10 כישלונות ב-15 דק' נועלים את המייל הזה זמנית
+const loginFailures = new Map();
+function loginLocked(email) {
+  const f = loginFailures.get(email);
+  return f && f.count >= 10 && Date.now() - f.first < 15 * 60 * 1000;
+}
+function noteLoginFailure(email) {
+  const f = loginFailures.get(email);
+  if (!f || Date.now() - f.first > 15 * 60 * 1000) loginFailures.set(email, { count: 1, first: Date.now() });
+  else f.count++;
+  if (loginFailures.size > 5000) loginFailures.clear();
+}
 
-  // Add as owner in farm_members
-  db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(
-    uuidv4(), farmId, userId, 'owner', now
-  );
-
-  const token = jwt.sign({ id: userId, email: email.toLowerCase() }, JWT_SECRET, { expiresIn: '30d' });
+// הגדרות מסך הכניסה (ציבורי)
+app.get('/api/auth/config', (_req, res) => {
   res.json({
-    token,
-    user: {
-      id: userId, email: email.toLowerCase(), full_name: full_name || '',
-      farm_ids: [farmId], current_farm_id: farmId,
-      is_admin: !!isFirstUser, is_active: true
-    }
+    registration: registrationOpen() && mailer.mailAvailable(),
+    google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+    email: mailer.mailAvailable(),
   });
 });
 
+app.post('/api/auth/register', registerLimiter, async (req, res) => {
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  const isFirstUser = userCount === 0;
+  if (!isFirstUser && !registrationOpen()) {
+    return res.status(403).json({ error: 'Registration is disabled. Contact the administrator.', code: 'registration_disabled' });
+  }
+  const email = normEmail(req.body?.email);
+  const password = req.body?.password;
+  const full_name = String(req.body?.full_name || '').trim().slice(0, 80);
+  const farm_name = String(req.body?.farm_name || '').trim().slice(0, 80);
+  if (!EMAIL_RE.test(email) || email.length > 200) return res.status(400).json({ error: 'Invalid email', code: 'invalid_email' });
+  if (!strongPassword(password)) return res.status(400).json({ error: 'Password must be at least 8 characters with a letter and a digit', code: 'weak_password' });
+  // אימות מייל חובה (חוץ מהמשתמש הראשון — אתחול המערכת)
+  const needVerify = !isFirstUser;
+  if (needVerify && !mailer.mailAvailable()) return res.status(503).json({ error: 'Email service not configured', code: 'email_unavailable' });
+
+  const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (existing) {
+    // לא חושפים אם המייל רשום: חשבון שלא אומת מקבל שוב מייל אימות, ובחשבון קיים — כלום
+    if (!existing.email_verified) await sendVerificationEmail(existing).catch(e => console.error('[auth] verify mail:', e.message));
+    return res.json({ verify_required: true });
+  }
+
+  const password_hash = await bcrypt.hash(password, 12);
+  const userId = uuidv4();
+  const now = NOW();
+  db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(
+    userId, email, password_hash, full_name, '[]', null, isFirstUser ? 1 : 0, needVerify ? 0 : 1, now, now
+  );
+  createFarmForUser(userId, farm_name || (full_name ? `המשק של ${full_name}` : 'המשק שלי'));
+
+  if (!needVerify) return res.json(loginPayload({ id: userId }));
+  try {
+    await sendVerificationEmail({ id: userId, email, full_name });
+  } catch (e) {
+    console.error('[auth] verification email failed:', e.message);
+    return res.status(503).json({ error: 'Could not send verification email', code: 'email_unavailable' });
+  }
+  res.json({ verify_required: true });
+});
+
+app.post('/api/auth/verify-email', authEmailLimiter, (req, res) => {
+  const row = consumeAuthToken(req.body?.token, 'verify');
+  if (!row) return res.status(400).json({ error: 'Invalid or expired link', code: 'invalid_token' });
+  db.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?').run(NOW(), row.user_id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  if (!user || user.is_active === 0) return res.json({ success: true });
+  res.json({ success: true, ...loginPayload(user) });
+});
+
+app.post('/api/auth/resend-verification', authEmailLimiter, async (req, res) => {
+  const email = normEmail(req.body?.email);
+  const user = EMAIL_RE.test(email) ? db.prepare('SELECT * FROM users WHERE email = ?').get(email) : null;
+  if (user && !user.email_verified && user.is_active !== 0) {
+    try { await sendVerificationEmail(user); }
+    catch (e) { return res.status(503).json({ error: 'Email service not configured', code: 'email_unavailable' }); }
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/auth/forgot-password', authEmailLimiter, async (req, res) => {
+  const email = normEmail(req.body?.email);
+  if (!mailer.mailAvailable()) return res.status(503).json({ error: 'Email service not configured', code: 'email_unavailable' });
+  const user = EMAIL_RE.test(email) ? db.prepare('SELECT * FROM users WHERE email = ?').get(email) : null;
+  // תמיד אותה תשובה — לא חושפים אילו מיילים רשומים
+  if (user && user.is_active !== 0) {
+    await sendPasswordResetEmail(user).catch(e => console.error('[auth] reset mail:', e.message));
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/auth/reset-password', authEmailLimiter, async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!strongPassword(password)) return res.status(400).json({ error: 'Weak password', code: 'weak_password' });
+  const row = consumeAuthToken(token, 'reset');
+  if (!row) return res.status(400).json({ error: 'Invalid or expired link', code: 'invalid_token' });
+  const hash = await bcrypt.hash(password, 12);
+  // איפוס דרך המייל מוכיח גם בעלות על הכתובת
+  db.prepare('UPDATE users SET password_hash = ?, email_verified = 1, updated_at = ? WHERE id = ?').run(hash, NOW(), row.user_id);
+  bumpTokenVersion(row.user_id);
+  loginFailures.delete(normEmail(db.prepare('SELECT email FROM users WHERE id = ?').get(row.user_id)?.email));
+  res.json({ success: true });
+});
+
+// hash קבוע להשוואת זמן כשהמשתמש לא קיים (מונע זיהוי מיילים רשומים לפי זמן תגובה)
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
+
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+  const email = normEmail(req.body?.email);
+  const password = req.body?.password;
+  if (!email || !password || typeof password !== 'string') return res.status(400).json({ error: 'Email and password are required' });
+  if (loginLocked(email)) return res.status(429).json({ error: 'Too many login attempts, try again later', code: 'rate_limited' });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-  if (!user) return res.status(401).json({ error: 'Invalid email or password' });
-
-  if (user.is_active === 0) return res.status(403).json({ error: 'Account is disabled. Contact administrator.' });
-
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
-
-  const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-  res.json({
-    token,
-    user: {
-      id: user.id, email: user.email, full_name: user.full_name,
-      avatar_url: user.avatar_url, farm_ids: JSON.parse(user.farm_ids || '[]'),
-      current_farm_id: user.current_farm_id,
-      is_admin: !!user.is_admin, is_active: user.is_active !== 0
-    }
-  });
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const valid = await bcrypt.compare(password, user?.password_hash || DUMMY_HASH);
+  if (!user || !user.password_hash || !valid) {
+    noteLoginFailure(email);
+    return res.status(401).json({ error: 'Invalid email or password', code: 'invalid_credentials' });
+  }
+  if (user.is_active === 0) return res.status(403).json({ error: 'Account is disabled. Contact administrator.', code: 'account_disabled' });
+  if (!user.email_verified) return res.status(403).json({ error: 'Email not verified', code: 'email_not_verified' });
+  loginFailures.delete(email);
+  res.json(loginPayload(user));
 });
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
@@ -2942,13 +3139,20 @@ app.put('/api/auth/me', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const { full_name, avatar_url, current_farm_id, farm_ids, language } = req.body;
+  // farm_ids לא ניתן לעריכה כאן — הגישה למשקים נקבעת רק ע"י farm_members.
+  // farm_ids שנשלח משמש רק לסדר התצוגה של משקים שהמשתמש כבר חבר בהם.
+  const { full_name, avatar_url, current_farm_id, farm_ids, language } = req.body || {};
+  if (current_farm_id !== undefined && current_farm_id !== null && !user.farm_ids.includes(current_farm_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const order = Array.isArray(farm_ids) ? farm_ids.filter(f => user.farm_ids.includes(f)) : user.farm_ids;
+  for (const f of user.farm_ids) if (!order.includes(f)) order.push(f);
   const updated = {
-    full_name: full_name !== undefined ? full_name : user.full_name,
-    avatar_url: avatar_url !== undefined ? avatar_url : user.avatar_url,
+    full_name: full_name !== undefined ? String(full_name).slice(0, 80) : user.full_name,
+    avatar_url: avatar_url !== undefined ? String(avatar_url || '').slice(0, 500) : user.avatar_url,
     current_farm_id: current_farm_id !== undefined ? current_farm_id : user.current_farm_id,
-    farm_ids_str: farm_ids !== undefined ? JSON.stringify(farm_ids) : JSON.stringify(user.farm_ids),
-    language: language !== undefined ? language : user.language,
+    farm_ids_str: JSON.stringify(order),
+    language: language !== undefined ? (language ? String(language).slice(0, 8) : null) : user.language,
   };
 
   db.prepare('UPDATE users SET full_name=?, avatar_url=?, current_farm_id=?, farm_ids=?, language=?, updated_at=? WHERE id=?').run(
@@ -2959,19 +3163,21 @@ app.put('/api/auth/me', authMiddleware, (req, res) => {
 });
 
 app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
-  const { current_password, new_password } = req.body;
+  const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) return res.status(400).json({ error: 'Both passwords required' });
-  if (new_password.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  if (!strongPassword(new_password)) return res.status(400).json({ error: 'Weak password', code: 'weak_password' });
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const valid = await bcrypt.compare(current_password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+  const valid = await bcrypt.compare(current_password, user.password_hash || DUMMY_HASH);
+  if (!user.password_hash || !valid) return res.status(401).json({ error: 'Current password is incorrect' });
 
-  const hash = await bcrypt.hash(new_password, 10);
+  const hash = await bcrypt.hash(new_password, 12);
   db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hash, NOW(), user.id);
-  res.json({ success: true });
+  bumpTokenVersion(user.id);
+  // המכשיר הנוכחי ממשיך מחובר עם טוקן חדש; כל השאר מנותקים
+  res.json({ success: true, token: signSessionToken(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)) });
 });
 
 // ─── GOOGLE OAUTH ─────────────────────────────────────────────────────────────
@@ -2983,7 +3189,12 @@ app.get('/api/auth/google/config', (_req, res) => {
 app.get('/api/auth/google', (_req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET)
     return res.redirect(`${APP_BASE_URL}/login?error=google_not_configured`);
+  // state חתום + nonce בעוגייה — מונע login CSRF (הפניית callback עם code של התוקף)
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const state = jwt.sign({ kind: 'google_login', n: nonce }, JWT_SECRET, { expiresIn: '10m' });
+  res.cookie('g_oauth', nonce, { httpOnly: true, secure: APP_BASE_URL.startsWith('https'), sameSite: 'lax', maxAge: 10 * 60 * 1000, path: '/api/auth/google' });
   const params = new URLSearchParams({
+    state,
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: `${APP_BASE_URL}/api/auth/google/callback`,
     response_type: 'code',
@@ -2995,8 +3206,16 @@ app.get('/api/auth/google', (_req, res) => {
 });
 
 app.get('/api/auth/google/callback', async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
   if (error || !code) return res.redirect(`${APP_BASE_URL}/login?error=google_cancelled`);
+  try {
+    const st = jwt.verify(String(state || ''), JWT_SECRET);
+    const cookieNonce = (String(req.headers.cookie || '').match(/(?:^|;\s*)g_oauth=([a-f0-9]+)/) || [])[1];
+    if (st.kind !== 'google_login' || !cookieNonce || cookieNonce !== st.n) throw new Error('state');
+  } catch {
+    return res.redirect(`${APP_BASE_URL}/login?error=google_state`);
+  }
+  res.clearCookie('g_oauth', { path: '/api/auth/google' });
   try {
     // Exchange code for tokens using native https (avoids fetch/undici timeout issues)
     const tokenBody = new URLSearchParams({
@@ -3025,13 +3244,15 @@ app.get('/api/auth/google/callback', async (req, res) => {
     });
     const gu = JSON.parse(infoResult.body);
     if (!gu.email) return res.redirect(`${APP_BASE_URL}/login?error=google_no_email`);
+    // קישור לחשבון קיים לפי מייל רק כש-Google מאשר שהמייל מאומת
+    if (gu.verified_email === false) return res.redirect(`${APP_BASE_URL}/login?error=google_no_email`);
 
     // Find by google_id → then by email → else create
     let user = db.prepare('SELECT * FROM users WHERE google_id = ?').get(gu.id);
     if (!user) {
       user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(gu.email);
       if (user) {
-        db.prepare("UPDATE users SET google_id = ?, avatar_url = COALESCE(NULLIF(avatar_url,''),?), updated_at = ? WHERE id = ?")
+        db.prepare("UPDATE users SET google_id = ?, password_hash = CASE WHEN COALESCE(email_verified, 1) = 1 THEN password_hash ELSE '' END, email_verified = 1, avatar_url = COALESCE(NULLIF(avatar_url,''),?), updated_at = ? WHERE id = ?")
           .run(gu.id, gu.picture || '', NOW(), user.id);
         user = getUser(user.id);
       } else {
@@ -3040,14 +3261,16 @@ app.get('/api/auth/google/callback', async (req, res) => {
           return res.redirect(`${APP_BASE_URL}/login?error=registration_disabled`);
         const newId = uuidv4();
         const isFirst = cnt === 0 ? 1 : 0;
-        db.prepare('INSERT INTO users (id,email,password_hash,full_name,avatar_url,google_id,is_admin,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?)')
-          .run(newId, gu.email, '', gu.name || '', gu.picture || '', gu.id, isFirst, NOW(), NOW());
+        db.prepare('INSERT INTO users (id,email,password_hash,full_name,avatar_url,google_id,is_admin,is_active,email_verified,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,1,?,?)')
+          .run(newId, normEmail(gu.email), '', gu.name || '', gu.picture || '', gu.id, isFirst, NOW(), NOW());
+        createFarmForUser(newId, gu.name ? `המשק של ${gu.name}` : 'המשק שלי');
         user = getUser(newId);
       }
     }
     if (!user || !user.is_active) return res.redirect(`${APP_BASE_URL}/login?error=account_disabled`);
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
-    res.redirect(`${APP_BASE_URL}/auth/google/success?token=${encodeURIComponent(token)}`);
+    const token = signSessionToken(user);
+    // הטוקן ב-fragment (#) — לא נשלח לשרת, לא נרשם בלוגים ולא דולף ב-Referer
+    res.redirect(`${APP_BASE_URL}/auth/google/success#token=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error('Google OAuth error:', err);
     res.redirect(`${APP_BASE_URL}/login?error=google_error`);
@@ -3176,7 +3399,9 @@ app.delete('/api/admin/users/:id', authMiddleware, adminMiddleware, (req, res) =
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const farmIds = JSON.parse(user.farm_ids || '[]');
+  // נמחקים רק משקים שהמשתמש בעלים בהם ואין בהם בעלים נוסף; ממשקים אחרים הוא רק מוסר
+  const farmIds = db.prepare("SELECT farm_id FROM farm_members WHERE user_id = ? AND role = 'owner'").all(id).map(r => r.farm_id)
+    .filter(fid => db.prepare("SELECT COUNT(*) c FROM farm_members WHERE farm_id = ? AND role = 'owner' AND user_id != ?").get(fid, id).c === 0);
   if (farmIds.length > 0) {
     const ph = farmIds.map(() => '?').join(',');
     db.prepare(`DELETE FROM entities WHERE farm_id IN (${ph})`).run(...farmIds);
@@ -3219,6 +3444,7 @@ app.get('/api/admin/notifications', authMiddleware, adminMiddleware, (req, res) 
 app.post('/api/functions/importPesticides', authMiddleware, async (req, res) => {
   const user = getUser(req.user.id);
   if (!user) return res.json({ data: { success: false, error: 'נדרשת הזדהות' } });
+  if (!user.is_admin) return res.status(403).json({ data: { success: false, error: 'ייבוא הקטלוג המשותף — למנהל המערכת בלבד' } });
 
   const { cropGroups, records: clientRecords } = req.body;
 
@@ -3399,8 +3625,17 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
 
   // Field workers are always role 'worker' and default to the Thai reduced UI.
   const isFieldWorker = !!field_worker;
-  const validRoles = ['owner', 'manager', 'worker', 'viewer'];
+  const callerRole = user.is_admin ? 'owner' : getFarmMember(farm_id, req.user.id)?.role;
+  // מנהל יכול להזמין עד דרגת מנהל; בעלים — רק הבעלים
+  const validRoles = callerRole === 'owner' ? ['owner', 'manager', 'worker', 'viewer'] : ['manager', 'worker', 'viewer'];
   const assignedRole = isFieldWorker ? 'worker' : (validRoles.includes(role) ? role : 'worker');
+  // משתמש "מקומי" למשק — חבר רק במשק הזה ואינו מנהל מערכת/בעלים. רק עבורו המשק רשאי
+  // לאפס סיסמה או לשנות מצב עובד שטח (הגדרות גלובליות של החשבון).
+  const isFarmLocalUser = (u) => {
+    if (!u || u.is_admin) return false;
+    const ms = db.prepare('SELECT farm_id, role FROM farm_members WHERE user_id = ?').all(u.id);
+    return ms.every(m => m.farm_id === farm_id && m.role !== 'owner');
+  };
 
   // Find or create target user
   let targetUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
@@ -3411,7 +3646,7 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const newId = uuidv4();
     const now = NOW();
-    db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, field_worker, language, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, email_verified, field_worker, language, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, ?, ?)').run(
       newId, email.toLowerCase(), hash, full_name || '', JSON.stringify([farm_id]), farm_id, isFieldWorker ? 1 : 0, isFieldWorker ? 'th' : null, now, now
     );
     targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(newId);
@@ -3423,7 +3658,9 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
       existingFarmIds.push(farm_id);
       db.prepare('UPDATE users SET farm_ids = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(existingFarmIds), NOW(), targetUser.id);
     }
-    if (isFieldWorker) {
+    // מצב עובד שטח נועל את כל החשבון — מותר רק למשתמש שאין לו משקים אחרים
+    const othersMs = db.prepare('SELECT COUNT(*) c FROM farm_members WHERE user_id = ? AND farm_id != ?').get(targetUser.id, farm_id).c;
+    if (isFieldWorker && othersMs === 0 && !targetUser.is_admin) {
       db.prepare('UPDATE users SET field_worker = 1, language = COALESCE(language, ?), updated_at = ? WHERE id = ?').run('th', NOW(), targetUser.id);
     }
   }
@@ -3472,8 +3709,13 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
   if (existing) {
     let passwordReset = false;
     if (password && password.length >= 6) {
+      // איפוס סיסמה ע"י המשק — רק לעובד שכל החשבון שלו שייך למשק הזה (לא בעלים, לא חבר במשק אחר)
+      if (!isFarmLocalUser(targetUser)) {
+        return res.status(403).json({ error: 'לא ניתן לאפס סיסמה למשתמש שחבר גם במשק אחר או בעלים. המשתמש יכול לאפס בעצמו דרך "שכחתי סיסמה".' });
+      }
       const hash = await bcrypt.hash(password, 10);
       db.prepare('UPDATE users SET password_hash=?, updated_at=? WHERE id=?').run(hash, NOW(), targetUser.id);
+      bumpTokenVersion(targetUser.id);
       passwordReset = true;
     }
     const mail = await maybeSendInviteEmail();
@@ -3515,6 +3757,7 @@ app.put('/api/farm-members/:id', authMiddleware, (req, res) => {
   if (!membership) return res.status(404).json({ error: 'Membership not found' });
 
   const myMembership = getFarmMember(membership.farm_id, req.user.id);
+  if (!user.is_admin && !myMembership) return res.status(404).json({ error: 'Membership not found' });
   const isOwnerOrAdmin = user.is_admin || myMembership?.role === 'owner';
   const isManagerPlus = user.is_admin || ['owner', 'manager'].includes(myMembership?.role);
 
@@ -3528,6 +3771,11 @@ app.put('/api/farm-members/:id', authMiddleware, (req, res) => {
 
   if (field_worker !== undefined) {
     if (!isManagerPlus) return res.status(403).json({ error: 'Forbidden' });
+    const others = db.prepare('SELECT COUNT(*) c FROM farm_members WHERE user_id = ? AND farm_id != ?').get(membership.user_id, membership.farm_id).c;
+    const target = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(membership.user_id);
+    if (field_worker && (others > 0 || target?.is_admin) && !user.is_admin) {
+      return res.status(403).json({ error: 'משתמש שחבר במשקים נוספים לא יכול לעבור למצב עובד שטח' });
+    }
     if (field_worker) {
       // Enabling field-worker mode also forces the worker role and defaults language to Thai.
       db.prepare('UPDATE users SET field_worker = 1, language = COALESCE(language, ?), updated_at = ? WHERE id = ?').run('th', NOW(), membership.user_id);
@@ -3638,6 +3886,9 @@ app.post('/api/notifications', authMiddleware, async (req, res) => {
     }
   }
 
+  if (!user.is_admin && recipient_id && !getFarmMember(farm_id, recipient_id)) {
+    return res.status(403).json({ error: 'Recipient is not a member of this farm' });
+  }
   const id = uuidv4();
   const validTypes = ['info', 'success', 'warning', 'error'];
   const notifType = validTypes.includes(type) ? type : 'info';
@@ -3706,6 +3957,7 @@ app.post('/api/telegram/config', authMiddleware, async (req, res) => {
   if (!token?.trim()) return res.status(400).json({ error: 'token חסר' });
   const user = getUser(req.user.id);
   if (!user?.current_farm_id) return res.status(400).json({ error: 'אין משק פעיל' });
+  if (!['owner', 'manager'].includes(getFarmMember(user.current_farm_id, user.id)?.role)) return res.status(403).json({ error: 'בעלים/מנהל בלבד' });
 
   // Validate token
   const meRes = await tgApi(token, 'getMe');
@@ -3735,6 +3987,7 @@ app.post('/api/telegram/config', authMiddleware, async (req, res) => {
 app.delete('/api/telegram/config', authMiddleware, async (req, res) => {
   const user = getUser(req.user.id);
   if (!user?.current_farm_id) return res.status(400).json({ error: 'אין משק פעיל' });
+  if (!['owner', 'manager'].includes(getFarmMember(user.current_farm_id, user.id)?.role)) return res.status(403).json({ error: 'בעלים/מנהל בלבד' });
   const cfg = tgGetConfig(user.current_farm_id);
   if (cfg) {
     await tgApi(cfg.token, 'deleteWebhook').catch(() => {});
@@ -3745,7 +3998,7 @@ app.delete('/api/telegram/config', authMiddleware, async (req, res) => {
 
 // POST /api/telegram/generate-link-code — user generates a code to link their TG
 app.post('/api/telegram/generate-link-code', authMiddleware, (req, res) => {
-  const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const code = crypto.randomBytes(5).toString('hex').slice(0, 8).toUpperCase();
   _tgLinkCodes.set(code, { user_id: req.user.id, expires: Date.now() + 10 * 60 * 1000 });
   for (const [k, v] of _tgLinkCodes) if (v.expires < Date.now()) _tgLinkCodes.delete(k);
   res.json({ code, expires_in: 600 });
@@ -3809,6 +4062,11 @@ async function tgHandleMessage(cfg, farmId, msg) {
 
   if (!linked) {
     await tgSend(cfg.token, chatId, '⚠️ חשבון לא מחובר. שלח /start להוראות.');
+    return;
+  }
+  // הבוט של משק עונה רק לחברי אותו משק (ומשתמש פעיל)
+  if (linked.is_active === 0 || !getFarmMember(farmId, linked.id)) {
+    await tgSend(cfg.token, chatId, '⛔ אין לך גישה למשק הזה.');
     return;
   }
 
@@ -4066,7 +4324,7 @@ function scanModbus(host, port, startAddr, endAddr, timeoutMs = 400) {
 }
 
 // POST /api/sensors/scan
-app.post('/api/sensors/scan', authMiddleware, async (req, res) => {
+app.post('/api/sensors/scan', authMiddleware, adminMiddleware, async (req, res) => {
   const { host, port = 8899, start_addr = 1, end_addr = 16 } = req.body;
   if (!host) return res.status(400).json({ error: 'host חסר' });
   const p = parseInt(port), sa = parseInt(start_addr), ea = parseInt(end_addr);
@@ -4086,13 +4344,13 @@ app.post('/api/sensors/scan', authMiddleware, async (req, res) => {
 });
 
 // GET /api/sensors/config
-app.get('/api/sensors/config', authMiddleware, (req, res) => {
+app.get('/api/sensors/config', authMiddleware, adminMiddleware, (req, res) => {
   const row = db.prepare("SELECT data FROM entities WHERE entity_type = 'pusr_config' LIMIT 1").get();
   res.json(row ? JSON.parse(row.data) : { host: '', port: 8899, start_addr: 1, end_addr: 16, sensors: [] });
 });
 
 // POST /api/sensors/config
-app.post('/api/sensors/config', authMiddleware, (req, res) => {
+app.post('/api/sensors/config', authMiddleware, adminMiddleware, (req, res) => {
   const { host = '', port = 8899, start_addr = 1, end_addr = 16, sensors = [] } = req.body;
   const cfg = { host, port: parseInt(port) || 8899, start_addr: parseInt(start_addr) || 1, end_addr: parseInt(end_addr) || 16, sensors };
   const existing = db.prepare("SELECT id FROM entities WHERE entity_type = 'pusr_config' LIMIT 1").get();
@@ -4669,8 +4927,19 @@ app.post('/api/i18n/backfill-names', authMiddleware, (req, res) => {
 // ─── ENTITIES ─────────────────────────────────────────────────────────────────
 
 // רשימת ישויות עם סינון/מיון/עימוד — משותף ל-GET /api/:entity ול-POST /api/batch
+// סוגים פנימיים — סודות/הגדרות שמנוהלים רק דרך נתיבים ייעודיים (טוקן בוט, חיבורי Gmail וכו').
+// אסור לקרוא/לכתוב אותם דרך ה-API הגנרי.
+const INTERNAL_ENTITIES = new Set([
+  'admin', 'farm-members', 'notifications', 'sensors', 'telegram', 'users',
+  'telegram_config', 'gmail_connections', 'gmail_ignore_rules', 'gmail_dismissed',
+  'bookkeeper_settings', 'attendance_alert_config', 'pusr_config', 'mcp_tokens', 'auth_tokens',
+]);
+const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role : null) || null;
+const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);
+const canDeleteRole = (role) => ['owner', 'manager'].includes(role);
+
 function listEntities(user, entity, query) {
-  if (['admin', 'farm-members', 'notifications', 'sensors', 'telegram'].includes(entity)) return { status: 404, body: { error: 'Not found' } };
+  if (INTERNAL_ENTITIES.has(entity)) return { status: 404, body: { error: 'Not found' } };
   if (!/^[a-z_]+$/.test(String(entity))) return { status: 400, body: { error: 'Bad entity' } };
   // Reserved query params are handled after loading, not as field filters
   const RESERVED = new Set(['sort', 'limit', 'offset']);
@@ -4786,11 +5055,9 @@ app.post('/api/batch', authMiddleware, (req, res) => {
     try {
       const entity = String(q?.entity || '');
       if (q?.id) {
-        if (!/^[a-z_]+$/.test(entity)) return { ok: false, error: 'Bad entity' };
+        if (!/^[a-z_]+$/.test(entity) || INTERNAL_ENTITIES.has(entity)) return { ok: false, error: 'Bad entity' };
         const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, String(q.id));
-        if (!row) return { ok: false, error: 'Not found', status: 404 };
-        if (entity === 'farms' && !user.farm_ids.includes(row.id)) return { ok: false, error: 'Forbidden', status: 403 };
-        if (entity !== 'farms' && row.farm_id && !user.farm_ids.includes(row.farm_id)) return { ok: false, error: 'Forbidden', status: 403 };
+        if (!row || !canReadRow(user, entity, row)) return { ok: false, error: 'Not found', status: 404 };
         return { ok: true, data: formatEntity(row) };
       }
       const params = {};
@@ -4804,25 +5071,34 @@ app.post('/api/batch', authMiddleware, (req, res) => {
   res.json({ results });
 });
 
+// הרשאת קריאה לרשומה: משק — חבר בו; קטלוג חומרי הדברה המשותף (farm_id NULL) — כולם;
+// כל רשומה אחרת — רק אם היא שייכת למשק שהמשתמש חבר בו (רשומה ללא משק אינה נגישה)
+function canReadRow(user, entity, row) {
+  if (entity === 'farms') return user.farm_ids.includes(row.id);
+  if (!row.farm_id) return entity === 'pesticides';
+  return user.farm_ids.includes(row.farm_id);
+}
+
 app.get('/api/:entity/:id', authMiddleware, (req, res) => {
   const { entity, id } = req.params;
+  if (INTERNAL_ENTITIES.has(entity)) return res.status(404).json({ error: 'Not found' });
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
   const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
-  if (!row) return res.status(404).json({ error: 'Not found' });
-
-  if (entity === 'farms' && !user.farm_ids.includes(id)) return res.status(403).json({ error: 'Forbidden' });
-  if (entity !== 'farms' && row.farm_id && !user.farm_ids.includes(row.farm_id)) return res.status(403).json({ error: 'Forbidden' });
+  if (!row || !canReadRow(user, entity, row)) return res.status(404).json({ error: 'Not found' });
 
   res.json(formatEntity(row));
 });
 
 app.post('/api/:entity', authMiddleware, (req, res) => {
   const { entity } = req.params;
-  if (['admin', 'farm-members', 'notifications'].includes(entity)) return res.status(404).json({ error: 'Not found' });
+  if (INTERNAL_ENTITIES.has(entity) || !/^[a-z_]+$/.test(entity)) return res.status(404).json({ error: 'Not found' });
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  // מזהה שנשלח מהלקוח מותר רק לרשומה חדשה — לעולם לא דורס רשומה קיימת (גם לא של משק אחר)
+  const idTaken = (id) => !!db.prepare('SELECT 1 FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
+  const cleanId = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null);
 
   // יצירה מרוכזת: גוף הבקשה הוא מערך → כל הרשומות נוצרות בטרנזקציה אחת (סבב רשת אחד)
   if (Array.isArray(req.body)) {
@@ -4832,64 +5108,75 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
     const farmIds = new Set(req.body.map(it => (it && it.farm_id) || user.current_farm_id));
     for (const fid of farmIds) {
       if (!fid || !user.farm_ids.includes(fid)) return res.status(403).json({ error: 'Forbidden' });
-      const member = getFarmMember(fid, req.user.id);
-      if (member && member.role === 'viewer') return res.status(403).json({ error: 'Viewers cannot create records' });
+      if (!canWriteRole(roleOf(fid, req.user.id))) return res.status(403).json({ error: 'Viewers cannot create records' });
+    }
+    for (const item of req.body) {
+      if (item && item.id != null && (!cleanId(item.id) || idTaken(item.id))) return res.status(409).json({ error: 'Record id already exists' });
     }
     const now = NOW();
-    const ins = db.prepare('INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    const ins = db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
     const ids = [];
-    db.transaction(() => {
-      for (const item of req.body) {
-        if (!item || typeof item !== 'object') continue;
-        const id = item.id || uuidv4();
-        const farm_id = item.farm_id || user.current_farm_id;
-        const data = { ...item, _by: user.full_name || user.email };
-        ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
-        ins.run(id, entity, farm_id, JSON.stringify(data), now, now);
-        ids.push(id);
-        if (entity === 'activities' || entity === 'harvests') syncSeedingDates(data.seeding_id);
-      }
-    })();
+    try {
+      db.transaction(() => {
+        for (const item of req.body) {
+          if (!item || typeof item !== 'object') continue;
+          const id = cleanId(item.id) || uuidv4();
+          const farm_id = item.farm_id || user.current_farm_id;
+          const data = { ...item, _by: user.full_name || user.email };
+          ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
+          ins.run(id, entity, farm_id, JSON.stringify(data), now, now);
+          ids.push(id);
+          if (entity === 'activities' || entity === 'harvests') syncSeedingDates(data.seeding_id);
+        }
+      })();
+    } catch (e) {
+      if (/UNIQUE|PRIMARY KEY/i.test(e.message)) return res.status(409).json({ error: 'Record id already exists' });
+      throw e;
+    }
     const ph = ids.map(() => '?').join(',');
     const rows = ids.length ? db.prepare(`SELECT * FROM entities WHERE entity_type = ? AND id IN (${ph})`).all(entity, ...ids) : [];
     const byId = new Map(rows.map(r => [r.id, formatEntity(r)]));
     return res.status(201).json(ids.map(id => byId.get(id)).filter(Boolean));
   }
 
-  // Role-based write check for non-farm entities
-  if (entity !== 'farms') {
-    // Pesticides are always shared catalog — any authenticated user may add
-    if (entity !== 'pesticides') {
-      const farmId = req.body.farm_id || user.current_farm_id;
-      const member = getFarmMember(farmId, req.user.id);
-      if (member && member.role === 'viewer') return res.status(403).json({ error: 'Viewers cannot create records' });
-    }
-  }
-
-  const id = req.body.id || uuidv4();
-  // Pesticides always go to the shared catalog (farm_id = NULL)
-  let farm_id = entity === 'pesticides' ? null : (req.body.farm_id || user.current_farm_id);
+  if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Object body required' });
+  if (req.body.id != null && (!cleanId(req.body.id) || idTaken(req.body.id))) return res.status(409).json({ error: 'Record id already exists' });
+  const id = cleanId(req.body.id) || uuidv4();
   const now = NOW();
+  let farm_id;
 
   if (entity === 'farms') {
     farm_id = null;
-    const newFarmIds = [...user.farm_ids, id];
-    db.prepare('UPDATE users SET farm_ids=?, current_farm_id=?, updated_at=? WHERE id=?').run(
-      JSON.stringify(newFarmIds), id, now, user.id
-    );
-    // Add creator as owner
-    db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(
-      uuidv4(), id, user.id, 'owner', now
-    );
+  } else if (entity === 'pesticides') {
+    // קטלוג משותף (farm_id NULL) — מנהל מערכת בלבד; משתמש רגיל מוסיף חומר פרטי למשק שלו
+    farm_id = user.is_admin && !req.body.farm_id ? null : (req.body.farm_id || user.current_farm_id);
+    if (farm_id && (!user.farm_ids.includes(farm_id) || !canWriteRole(roleOf(farm_id, req.user.id)))) return res.status(403).json({ error: 'Forbidden' });
+    if (!farm_id && !user.is_admin) return res.status(403).json({ error: 'Forbidden' });
+  } else {
+    farm_id = req.body.farm_id || user.current_farm_id;
+    if (!farm_id || !user.farm_ids.includes(farm_id)) return res.status(403).json({ error: 'Forbidden' });
+    if (!canWriteRole(roleOf(farm_id, req.user.id))) return res.status(403).json({ error: 'Viewers cannot create records' });
   }
 
   // _by — מי יצר/עדכן אחרון (מוצג ב"עדכונים אחרונים")
   const data = { ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
+  if (entity === 'farms') data.owner_id = user.id;
 
-  db.prepare('INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id, entity, farm_id, JSON.stringify(data), now, now
-  );
+  db.transaction(() => {
+    db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+      id, entity, farm_id, JSON.stringify(data), now, now
+    );
+    if (entity === 'farms') {
+      // היוצר הופך לבעלים של המשק החדש
+      db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(
+        uuidv4(), id, user.id, 'owner', now
+      );
+      db.prepare('UPDATE users SET farm_ids=?, current_farm_id=?, updated_at=? WHERE id=?').run(
+        JSON.stringify([...user.farm_ids, id]), id, now, user.id
+      );
+    }
+  })();
   if (entity === 'activities' || entity === 'harvests') syncSeedingDates(data.seeding_id);
   if (entity === 'farms') ensureDefaultActivityTypes();
 
@@ -4900,7 +5187,7 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
 // עדכון מרוכז: גוף הבקשה הוא מערך [{ id, ...שדות }] — כל רשומה ממוזגת עם הקיים, בטרנזקציה אחת
 app.patch('/api/:entity', authMiddleware, (req, res) => {
   const { entity } = req.params;
-  if (['admin', 'farm-members', 'notifications', 'farms', 'pesticides'].includes(entity)) return res.status(404).json({ error: 'Not found' });
+  if (INTERNAL_ENTITIES.has(entity) || ['farms', 'pesticides'].includes(entity)) return res.status(404).json({ error: 'Not found' });
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
   const items = Array.isArray(req.body) ? req.body : null;
@@ -4915,10 +5202,8 @@ app.patch('/api/:entity', authMiddleware, (req, res) => {
   const byId = new Map(rows.map(r => [r.id, r]));
   for (const id of ids) {
     const row = byId.get(id);
-    if (!row) return res.status(404).json({ error: `Not found: ${id}` });
-    if (row.farm_id && !user.farm_ids.includes(row.farm_id)) return res.status(403).json({ error: 'Forbidden' });
-    const member = getFarmMember(row.farm_id, req.user.id);
-    if (member && member.role === 'viewer') return res.status(403).json({ error: 'Viewers cannot edit records' });
+    if (!row || !row.farm_id || !user.farm_ids.includes(row.farm_id)) return res.status(404).json({ error: `Not found: ${id}` });
+    if (!canWriteRole(roleOf(row.farm_id, req.user.id))) return res.status(403).json({ error: 'Viewers cannot edit records' });
   }
 
   const now = NOW();
@@ -4942,23 +5227,28 @@ app.put('/api/:entity/:id', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+  if (INTERNAL_ENTITIES.has(entity)) return res.status(404).json({ error: 'Not found' });
   const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
-  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (!row || !canReadRow(user, entity, row)) return res.status(404).json({ error: 'Not found' });
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Object body required' });
 
-  // Pesticides are shared catalog — any authenticated user may edit
-  if (entity !== 'pesticides') {
-    if (entity !== 'farms' && row.farm_id && !user.farm_ids.includes(row.farm_id)) return res.status(403).json({ error: 'Forbidden' });
-    // Role check for viewers
-    const member = getFarmMember(row.farm_id || id, req.user.id);
-    if (member && member.role === 'viewer') return res.status(403).json({ error: 'Viewers cannot edit records' });
+  if (entity === 'farms') {
+    // פרטי משק — בעלים/מנהל בלבד
+    if (!canDeleteRole(roleOf(id, req.user.id))) return res.status(403).json({ error: 'Only farm owners/managers can edit the farm' });
+  } else if (!row.farm_id) {
+    // קטלוג חומרי ההדברה המשותף — מנהל מערכת בלבד
+    if (!user.is_admin) return res.status(403).json({ error: 'Shared catalog is read-only' });
+  } else if (!canWriteRole(roleOf(row.farm_id, req.user.id))) {
+    return res.status(403).json({ error: 'Viewers cannot edit records' });
   }
 
   const existing = JSON.parse(row.data || '{}');
   const updated = { ...existing, ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
+  if (entity === 'farms') updated.owner_id = existing.owner_id; // הבעלות לא משתנה דרך עריכה
 
-  // Pesticides always remain in shared catalog (farm_id = NULL)
-  const farm_id = entity === 'pesticides' ? null : (req.body.farm_id || row.farm_id);
+  // רשומה לא עוברת בין משקים
+  const farm_id = row.farm_id;
   db.prepare('UPDATE entities SET data=?, farm_id=?, updated_at=? WHERE entity_type=? AND id=?').run(
     JSON.stringify(updated), farm_id, NOW(), entity, id
   );
@@ -4976,15 +5266,16 @@ app.delete('/api/:entity/:id', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+  if (INTERNAL_ENTITIES.has(entity)) return res.status(404).json({ error: 'Not found' });
   const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
-  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (!row || !canReadRow(user, entity, row)) return res.status(404).json({ error: 'Not found' });
 
-  // Pesticides are shared catalog — any authenticated user (not viewer) may delete
-  if (entity !== 'pesticides') {
-    if (entity !== 'farms' && row.farm_id && !user.farm_ids.includes(row.farm_id)) return res.status(403).json({ error: 'Forbidden' });
-    // Only owner/manager can delete farm-specific records
-    const member = getFarmMember(row.farm_id || id, req.user.id);
-    if (member && ['viewer', 'worker'].includes(member.role)) return res.status(403).json({ error: 'Insufficient permissions to delete' });
+  if (entity === 'farms') {
+    if (roleOf(id, req.user.id) !== 'owner' && !user.is_admin) return res.status(403).json({ error: 'Only the farm owner can delete the farm' });
+  } else if (!row.farm_id) {
+    if (!user.is_admin) return res.status(403).json({ error: 'Shared catalog is read-only' });
+  } else if (!canDeleteRole(roleOf(row.farm_id, req.user.id))) {
+    return res.status(403).json({ error: 'Insufficient permissions to delete' });
   }
 
   // מחיקת חשבונית שיובאה מ-Gmail רושמת tombstone, כדי שסנכרון עתידי לא יחזיר אותה
@@ -5002,6 +5293,18 @@ app.delete('/api/:entity/:id', authMiddleware, (req, res) => {
     try { syncSeedingDates(JSON.parse(row.data || '{}').seeding_id); } catch { /* רשומה פגומה */ }
   }
   res.json({ success: true });
+});
+
+// ─── ERROR HANDLER ────────────────────────────────────────────────────────────
+// שגיאה לא מטופלת (כולל JSON פגום) — לוג בשרת, הודעה כללית ללקוח בלי stack trace
+// eslint-disable-next-line no-unused-vars
+app.use('/api', (err, req, res, next) => {
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON' });
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large' });
+  if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File too large' });
+  if (/^CORS:/.test(String(err?.message))) return res.status(403).json({ error: 'Origin not allowed' });
+  console.error('[api error]', req.method, req.path, err?.stack || err);
+  res.status(500).json({ error: 'Server error' });
 });
 
 // ─── SERVE FRONTEND (SPA) ─────────────────────────────────────────────────────

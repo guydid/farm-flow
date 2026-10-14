@@ -11,7 +11,14 @@ if sys.platform == 'win32':
 
 HOST = '192.168.1.231'
 USER = 'nitur'
-PASS = '76453'
+# סיסמת SSH: ממשתנה סביבה או מקובץ מקומי שאינו ב-git (.deploy_pass) — לא בקוד
+PASS = os.environ.get('FARMFLOW_SSH_PASS', '')
+if not PASS:
+    _pf = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.deploy_pass')
+    if os.path.exists(_pf):
+        PASS = open(_pf, encoding='utf-8').read().strip()
+if not PASS:
+    sys.exit('Missing SSH password: set FARMFLOW_SSH_PASS or create .deploy_pass next to deploy.py')
 REMOTE_DIR = '/home/nitur/farm-flow'
 
 # Optional: set ANTHROPIC_API_KEY env var before running to enable AI extraction
@@ -26,7 +33,7 @@ HF_MODEL = os.environ.get('HF_MODEL', '')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 # Registration: set ALLOW_REGISTRATION=true env var to enable public sign-up
-ALLOW_REGISTRATION = os.environ.get('ALLOW_REGISTRATION', 'false')
+ALLOW_REGISTRATION = os.environ.get('ALLOW_REGISTRATION', '')
 
 # Cloudflare tunnel public domain (used for CORS whitelist)
 PUBLIC_DOMAIN = os.environ.get('PUBLIC_DOMAIN', 'https://farm.nitur-ai.com')
@@ -113,6 +120,16 @@ HF_MODEL,            _src = prefer_local_or_existing('HF_MODEL',            HF_M
 GROQ_API_KEY,        _src = prefer_local_or_existing('GROQ_API_KEY',        GROQ_API_KEY)
 GOOGLE_CLIENT_ID,     gid_src  = prefer_local_or_existing('GOOGLE_CLIENT_ID',     GOOGLE_CLIENT_ID)
 GOOGLE_CLIENT_SECRET, gsec_src = prefer_local_or_existing('GOOGLE_CLIENT_SECRET', GOOGLE_CLIENT_SECRET)
+# הרשמה עצמית: פתוחה כברירת מחדל (דורשת אימות מייל — בלי שירות מייל ההרשמה נחסמת אוטומטית)
+ALLOW_REGISTRATION, _src = prefer_local_or_existing('ALLOW_REGISTRATION', ALLOW_REGISTRATION)
+ALLOW_REGISTRATION = ALLOW_REGISTRATION or 'true'
+# שליחת מיילי מערכת (אימות/איפוס סיסמה). למשל Gmail: SMTP_HOST=smtp.gmail.com SMTP_PORT=465
+# SMTP_USER=<כתובת> SMTP_PASS=<App Password>. נשמר בשרת בין פריסות.
+SMTP_HOST, _src = prefer_local_or_existing('SMTP_HOST', os.environ.get('SMTP_HOST', ''))
+SMTP_PORT, _src = prefer_local_or_existing('SMTP_PORT', os.environ.get('SMTP_PORT', ''))
+SMTP_USER, _src = prefer_local_or_existing('SMTP_USER', os.environ.get('SMTP_USER', ''))
+SMTP_PASS, _src = prefer_local_or_existing('SMTP_PASS', os.environ.get('SMTP_PASS', ''))
+MAIL_FROM, _src = prefer_local_or_existing('MAIL_FROM', os.environ.get('MAIL_FROM', ''))
 
 # Print presence only — never the values themselves
 def shown(val): return 'set' if val else 'NOT SET'
@@ -120,6 +137,8 @@ print(f"  ANTHROPIC_API_KEY: {shown(ANTHROPIC_API_KEY)}")
 print(f"  GROQ_API_KEY:      {shown(GROQ_API_KEY)}")
 print(f"  GOOGLE_CLIENT_ID:  {shown(GOOGLE_CLIENT_ID)} ({gid_src})")
 print(f"  GOOGLE_CLIENT_SECRET: {shown(GOOGLE_CLIENT_SECRET)} ({gsec_src})")
+print(f"  ALLOW_REGISTRATION: {ALLOW_REGISTRATION}")
+print(f"  SMTP: {shown(SMTP_HOST and SMTP_USER and SMTP_PASS)}")
 
 # Generate/preserve TOKEN_ENC_KEY for encrypting Gmail refresh tokens (server-side AES-GCM)
 def get_or_create_token_enc_key(ssh_conn):
@@ -150,7 +169,7 @@ print("\n[2] Uploading backend...")
 backend_local = 'C:/GUYAPP/farm-flow/backend'
 backend_remote = f'{REMOTE_DIR}/backend'
 
-for f in ['server.js', 'mcp.js', 'pesticideStock.js', 'recentUpdates.js', 'package.json']:
+for f in ['server.js', 'mcp.js', 'pesticideStock.js', 'recentUpdates.js', 'mailer.js', 'package.json']:
     local_path = os.path.join(backend_local, f)
     if os.path.exists(local_path):
         sftp.put(local_path, f'{backend_remote}/{f}')
@@ -225,6 +244,7 @@ Type=simple
 User=nitur
 WorkingDirectory={REMOTE_DIR}/backend
 Environment=PORT=3002
+Environment=NODE_ENV=production
 Environment=DB_PATH={REMOTE_DIR}/backend/data/farmflow.db
 Environment=JWT_SECRET={JWT_SECRET}
 Environment=ANTHROPIC_API_KEY={ANTHROPIC_API_KEY}
@@ -238,6 +258,11 @@ Environment=GOOGLE_CLIENT_SECRET={GOOGLE_CLIENT_SECRET}
 Environment=APP_BASE_URL={APP_BASE_URL}
 Environment=TOKEN_ENC_KEY={TOKEN_ENC_KEY}
 Environment=PUBLIC_FILE_URL_BASE={APP_BASE_URL}
+Environment=SMTP_HOST={SMTP_HOST}
+Environment=SMTP_PORT={SMTP_PORT}
+Environment=SMTP_USER={SMTP_USER}
+Environment=SMTP_PASS={SMTP_PASS}
+Environment=MAIL_FROM={MAIL_FROM}
 ExecStart=/usr/bin/node --dns-result-order=ipv4first server.js
 Restart=always
 RestartSec=5

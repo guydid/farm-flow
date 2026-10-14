@@ -39,7 +39,7 @@ export async function apiFetch(url, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw Object.assign(new Error(err.error || res.statusText), { status: res.status });
+    throw Object.assign(new Error(err.error || res.statusText), { status: res.status, code: err.code });
   }
 
   return res.json();
@@ -99,14 +99,28 @@ export const localAuth = {
     setToken(res.token);
     return res.user;
   },
-  register: async (email, password, full_name) => {
+  // ההרשמה מחזירה טוקן רק כשאין צורך באימות מייל; אחרת { verify_required: true }
+  register: async (email, password, full_name, farm_name) => {
     const res = await apiFetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
-      body: JSON.stringify({ email, password, full_name }),
+      body: JSON.stringify({ email, password, full_name, farm_name }),
     });
-    setToken(res.token);
-    return res.user;
+    if (res.token) setToken(res.token);
+    return res;
   },
+  verifyEmail: async (token) => {
+    const res = await apiFetch(`${BASE_URL}/auth/verify-email`, { method: 'POST', body: JSON.stringify({ token }) });
+    if (res.token) setToken(res.token);
+    return res;
+  },
+  resendVerification: (email) =>
+    apiFetch(`${BASE_URL}/auth/resend-verification`, { method: 'POST', body: JSON.stringify({ email }) }),
+  forgotPassword: (email) =>
+    apiFetch(`${BASE_URL}/auth/forgot-password`, { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token, password) =>
+    apiFetch(`${BASE_URL}/auth/reset-password`, { method: 'POST', body: JSON.stringify({ token, password }) }),
+  authConfig: () =>
+    apiFetch(`${BASE_URL}/auth/config`).catch(() => ({ registration: true, google: false, email: false })),
   logout: () => {
     clearToken();
     window.location.href = '/login';

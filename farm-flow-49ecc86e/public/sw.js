@@ -1,4 +1,4 @@
-const CACHE_NAME = 'farm-flow-v1';
+const CACHE_NAME = 'farm-flow-v2'; // v2: אייקונים חדשים
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -47,6 +47,9 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
+
+  // מסמכים מועלים (דרכונים, חשבוניות) — לא נשמרים במטמון המכשיר; תמיד מהרשת עם הרשאה
+  if (url.pathname.startsWith('/uploads/')) return;
 
   // Navigation requests (HTML): network first → cached index
   if (request.mode === 'navigate') {

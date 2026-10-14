@@ -55,3 +55,6 @@ import_workers.py
 client_secret/
 # Claude Code local settings
 .claude/settings.local.json*
+
+# deploy SSH password (local only)
+.deploy_pass

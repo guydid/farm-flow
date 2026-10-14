@@ -3,9 +3,11 @@ import { setToken } from '@/api/localClient';
 
 export default function GoogleAuthSuccess() {
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token  = params.get('token');
+    // הטוקן מגיע ב-fragment (#token=) כדי שלא יישלח לשרת/ללוגים; ?token= נתמך לתאימות
+    const hash   = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const token  = hash.get('token') || new URLSearchParams(window.location.search).get('token');
     if (token) {
+      window.history.replaceState(null, '', '/auth/google/success');
       setToken(token);
       window.location.replace('/');
     } else {

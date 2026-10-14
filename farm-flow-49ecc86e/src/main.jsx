@@ -2,6 +2,10 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from '@/App.jsx'
 import '@/index.css'
+import { applyBrandIcons } from '@/lib/branding'
+
+// לוגו החברה השמור (אם הועלה) כאייקון הטאב ומסך הבית — עוד לפני ההתחברות
+try { applyBrandIcons() } catch { /* ignore */ }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   // <React.StrictMode>

@@ -26,12 +26,10 @@ import {
   CreditCard,
   Loader2,
   Brain,
-  Cpu,
   Send,
   Mail,
   Clock,
   Receipt,
-  Plug
 } from "lucide-react";
 
 import CompanySettingsManager from "../components/settings/CompanySettingsManager";
@@ -54,7 +52,6 @@ import AISettingsManager from '../components/settings/AISettingsManager';
 import GmailSettingsManager from '../components/settings/GmailSettingsManager';
 import BookkeeperSettingsManager from '../components/settings/BookkeeperSettingsManager';
 import AttendanceSettingsManager from '../components/settings/AttendanceSettingsManager';
-import SensorManager from '../components/settings/SensorManager';
 import TelegramSettings from '../components/settings/TelegramSettings';
 import McpSettingsManager from '../components/settings/McpSettingsManager';
 import { User, Farm } from '@/entities/all';
@@ -65,7 +62,11 @@ export default function Settings() {
 
   const getTabFromQuery = useCallback(() => {
     const params = new URLSearchParams(location.search);
-    return params.get('tab') || 'company';
+    const tab = params.get('tab') || 'company';
+    // טאב MCP אוחד לטאב AI; טאב החיישנים הוסר
+    if (tab === 'mcp') return 'ai';
+    if (tab === 'sensors') return 'company';
+    return tab;
   }, [location.search]);
 
   const [activeTab, setActiveTab] = useState(getTabFromQuery());
@@ -217,11 +218,7 @@ export default function Settings() {
                 </TabsTrigger>
                 <TabsTrigger value="ai" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Brain className="w-3.5 h-3.5" />
-                  <span>AI</span>
-                </TabsTrigger>
-                <TabsTrigger value="sensors" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
-                  <Cpu className="w-3.5 h-3.5" />
-                  <span>חיישנים</span>
+                  <span>AI וסוכנים</span>
                 </TabsTrigger>
                 <TabsTrigger value="telegram" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Send className="w-3.5 h-3.5" />
@@ -234,10 +231,6 @@ export default function Settings() {
                 <TabsTrigger value="bookkeeper" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Receipt className="w-3.5 h-3.5" />
                   <span>חשבוניות</span>
-                </TabsTrigger>
-                <TabsTrigger value="mcp" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
-                  <Plug className="w-3.5 h-3.5" />
-                  <span>סוכן חיצוני (MCP)</span>
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -292,10 +285,10 @@ export default function Settings() {
             <AttendanceSettingsManager currentFarm={currentFarm} />
           </TabsContent>
           <TabsContent value="ai">
-            <AISettingsManager />
-          </TabsContent>
-          <TabsContent value="sensors">
-            <SensorManager />
+            <div className="space-y-6">
+              <AISettingsManager />
+              <McpSettingsManager />
+            </div>
           </TabsContent>
           <TabsContent value="telegram">
             <TelegramSettings />
@@ -305,9 +298,6 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="bookkeeper">
             <BookkeeperSettingsManager />
-          </TabsContent>
-          <TabsContent value="mcp">
-            <McpSettingsManager />
           </TabsContent>
         </Tabs>
       </div>

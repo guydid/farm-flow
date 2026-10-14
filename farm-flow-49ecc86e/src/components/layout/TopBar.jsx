@@ -14,6 +14,7 @@ import { User } from "@/entities/all";
 import NotificationPanel from "./NotificationPanel";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { BrandMark } from "@/lib/branding";
 
 export default function TopBar({ 
   onMenuClick, 
@@ -51,14 +52,10 @@ export default function TopBar({
           <Menu className="h-6 w-6" />
         </Button>
 
-        {/* App icon on mobile */}
-        <div className="flex items-center gap-2 lg:hidden">
-          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <svg viewBox="0 0 24 24" className="w-4 h-4 text-white fill-current">
-              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z"/>
-            </svg>
-          </div>
-        </div>
+        {/* לוגו החברה בפינה העליונה (נייד ודסקטופ) — לחיצה חוזרת ללוח הבקרה */}
+        <button type="button" onClick={() => navigate(createPageUrl('Dashboard'))} className="flex items-center flex-shrink-0" aria-label="לוח בקרה">
+          <BrandMark wide className="w-8 h-8" wideClassName="h-8 lg:h-10 max-w-[110px] lg:max-w-[180px]" />
+        </button>
 
         <h1 className="text-sm lg:text-lg font-semibold text-gray-800 hidden lg:block whitespace-nowrap">
           מערכת ניהול המשק
