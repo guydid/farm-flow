@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Sprout, Map, MoreHorizontal, Plus, Users2,
   SlidersHorizontal, Layers, Truck, Settings, X, ChevronRight,
   Scissors, ClipboardList, Leaf, Activity, Scale, FileText, Building2, Camera, Clock, HardHat,
-  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug
+  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug, KeyRound
 } from "lucide-react";
 
 // ─── Navigation items ───────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ const moreNav = [
   { name: "רכבים",            icon: Truck,             path: "Vehicles" },
   { name: "חשבוניות",         icon: FileText,          path: "Invoices" },
   { name: "ספקים",             icon: Building2,         path: "Suppliers" },
+  { name: "שכירויות",          icon: KeyRound,          path: "Leases" },
   { name: "הגדרות",           icon: Settings,          path: "Settings" },
 ];
 

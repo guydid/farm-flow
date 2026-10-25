@@ -12,6 +12,8 @@ const TYPES = {
   pesticide_prices:      { label: 'מחיר חומר', icon: 'price' },
   invoices:              { label: 'חשבונית', icon: 'invoice' },
   weighing_certificates: { label: 'תעודת שקילה', icon: 'scale' },
+  leases:                { label: 'הסכם שכירות', icon: 'key' },
+  lease_payments:        { label: 'תשלום שכירות', icon: 'key' },
   plots:                 { label: 'חלקה', icon: 'plot' },
   expenses:              { label: 'הוצאה', icon: 'invoice' },
   vehicle_treatments:    { label: 'טיפול רכב', icon: 'vehicle' },

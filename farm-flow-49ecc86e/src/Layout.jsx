@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { LayoutDashboard, Users, Menu, X, Sprout, Settings, Map, SlidersHorizontal, Layers, Users2, Building, Truck, ShieldCheck, Clock, FileText, Bug } from "lucide-react";
+import { LayoutDashboard, Users, Menu, X, Sprout, Settings, Map, SlidersHorizontal, Layers, Users2, Building, Truck, ShieldCheck, Clock, FileText, Bug, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Subscription, Vehicle } from "@/entities/all";
@@ -431,6 +431,7 @@ export default function Layout({ children, currentPageName }) {
     { name: "רכבים", icon: Truck, path: "Vehicles" },
     { name: "חשבוניות", icon: FileText, path: "Invoices" },
     { name: "ספקים", icon: Building, path: "Suppliers" },
+    { name: "שכירויות", icon: KeyRound, path: "Leases" },
     { name: "חברי משק", icon: Users, path: "FarmMembers" },
     { name: "הגדרות", icon: Settings, path: "Settings" },
     ...(currentUser?.is_admin ? [{ name: "ניהול מערכת", icon: ShieldCheck, path: "AdminPanel", adminOnly: true }] : []),

@@ -17,6 +17,7 @@ const Subscription = lazy(() => import('./pages/Subscription'));
 const AddEmployee = lazy(() => import('./pages/AddEmployee'));
 const EditEmployee = lazy(() => import('./pages/EditEmployee'));
 const Vehicles = lazy(() => import('./pages/Vehicles'));
+const Leases = lazy(() => import('./pages/Leases'));
 const AddVehicle = lazy(() => import('./pages/AddVehicle'));
 const VehicleDetail = lazy(() => import('./pages/VehicleDetail'));
 const EditVehicle = lazy(() => import('./pages/EditVehicle'));
@@ -56,6 +57,7 @@ export const PAGES = {
     "PestControl": PestControl,
     "InvoiceDetail": InvoiceDetail,
     "Attendance": Attendance,
+    "Leases": Leases,
 }
 
 export const pagesConfig = {

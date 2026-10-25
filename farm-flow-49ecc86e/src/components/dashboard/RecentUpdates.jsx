@@ -26,7 +26,7 @@ const FILTERS = [
   { id: 'all', label: 'הכל', types: null },
   { id: 'field', label: 'שטח', types: 'seedings,harvests,activities,plots' },
   { id: 'pest', label: 'הדברה', types: 'sprayings,pest_recommendations,pesticide_stock,pesticide_prices' },
-  { id: 'money', label: 'כספים', types: 'invoices,expenses,weighing_certificates' },
+  { id: 'money', label: 'כספים', types: 'invoices,expenses,weighing_certificates,lease_payments,leases' },
 ];
 
 // updated_at מגיע כ-ISO (Z) או כ-"YYYY-MM-DD HH:MM:SS" (UTC, מברירת המחדל של SQLite)
