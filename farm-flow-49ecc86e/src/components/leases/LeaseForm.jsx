@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Save, Upload, FileText, Plus, Trash2, X } from "lucide-react";
 import { UploadFile } from "@/api/integrations";
-import { DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES } from "./leaseUtils";
+import { DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, BILLING_MODES } from "./leaseUtils";
 
 const EMPTY = {
   direction: "pay", title: "", asset_type: "land", asset_description: "",
@@ -16,6 +16,7 @@ const EMPTY = {
   start_date: "", end_date: "", amount: "", frequency: "monthly", due_day: "1", payment_method: "transfer",
   status: "active", contract_url: "", contract_name: "", notes: "",
   reminders_enabled: true, reminder_days_before: 7, reminder_telegram: false, meters: [],
+  billing_mode: "", vat_exempt: false,
 };
 
 export default function LeaseForm({ open, onClose, onSave, lease, defaultDirection = "pay", saving }) {
@@ -115,6 +116,31 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
                 <SelectContent>{Object.entries(METHODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
             </div>
           </div>
+
+          {form.direction === "receive" && (
+            <div className="rounded-lg border p-3 space-y-3">
+              <Label className="font-medium">חשבוניות לשוכר</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {Object.entries(BILLING_MODES).map(([k, v]) => {
+                  const effective = form.billing_mode || (form.frequency === "monthly" ? "monthly_all" : "split");
+                  return (
+                    <button type="button" key={k} onClick={() => set({ billing_mode: k })}
+                      className={`rounded-lg border px-3 py-2 text-right ${effective === k ? "border-indigo-500 bg-indigo-50" : "border-gray-200"}`}>
+                      <div className="text-sm font-medium">{v.label}</div>
+                      <div className="text-[11px] text-gray-500">{v.hint}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {(form.billing_mode || (form.frequency === "monthly" ? "monthly_all" : "split")) === "monthly_all" && form.frequency !== "monthly" && (
+                <p className="text-xs text-amber-700">במצב "חשבונית חודשית אחת" כדאי שתדירות השכירות תהיה חודשית.</p>
+              )}
+              <div className="flex items-center justify-between">
+                <div><Label className="text-sm">השכירות פטורה ממע"מ</Label><p className="text-[11px] text-gray-400">למשל השכרת דירה למגורים. שורות החשבונית יופקו ללא מע"מ.</p></div>
+                <Switch checked={!!form.vat_exempt} onCheckedChange={(v) => set({ vat_exempt: v })} />
+              </div>
+            </div>
+          )}
 
           <div className="rounded-lg border p-3 space-y-2">
             <div className="flex items-center justify-between">

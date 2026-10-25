@@ -15,7 +15,12 @@ export async function apiFetch(path, options = {}) {
 
 export const DIRECTIONS = { pay: "אנחנו שוכרים (משלמים)", receive: "אנחנו משכירים (מקבלים)" };
 export const ASSET_TYPES = { land: "קרקע / חלקה", building: "מבנה / מחסן", housing: "דיור", equipment: "ציוד / כלי", vehicle: "רכב", other: "אחר" };
-export const FREQUENCIES = { monthly: "חודשי", quarterly: "רבעוני", yearly: "שנתי", once: "חד-פעמי" };
+export const FREQUENCIES = { monthly: "חודשי", quarterly: "רבעוני", half_yearly: "חצי שנתי", yearly: "שנתי", once: "חד-פעמי" };
+export const BILLING_MODES = {
+  monthly_all: { label: "חשבונית חודשית אחת", hint: "שכירות + מונים + חיובים נוספים בחשבונית אחת והעברה חודשית" },
+  split: { label: "שכירות בנפרד", hint: "חשבונית לשכירות לפי התדירות (שנתי / חצי שנתי / רבעוני), וחשבונית חודשית למונים ולחיובים" },
+};
+export const INVOICE_STATUS = { issued: { label: "הופקה", cls: "bg-blue-100 text-blue-800" }, paid: { label: "שולמה", cls: "bg-green-100 text-green-800" }, cancelled: { label: "בוטלה", cls: "bg-gray-100 text-gray-600" } };
 export const STATUSES = { active: "פעיל", draft: "טיוטה", ended: "הסתיים" };
 export const METHODS = { transfer: "העברה בנקאית", cheque: "צ'ק", cash: "מזומן", credit: "אשראי", standing_order: "הוראת קבע", other: "אחר" };
 export const METER_TYPES = { electricity: { label: "חשמל", unit: "קוט\"ש" }, water: { label: "מים", unit: "מ\"ק" }, gas: { label: "גז", unit: "מ\"ק" }, other: { label: "אחר", unit: "יח'" } };

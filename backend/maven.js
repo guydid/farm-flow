@@ -9,31 +9,9 @@ const MAVEN_HOST = 'app.invoice-maven.co.il';
 const DOC_TYPES = { 200: 'תעודת משלוח', 305: 'חשבונית מס', 320: 'חשבונית מס/קבלה', 10: 'הצעת מחיר', 100: 'הזמנה' };
 const ALLOWED_DOC_TYPES = new Set([200, 305, 320, 10, 100]);
 
-function registerMavenRoutes(app, deps) {
-  const { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 } = deps;
-
-  const canManage = (user, farmId) => {
-    if (!user) return false;
-    if (user.is_admin) return true;
-    const m = getFarmMember(farmId, user.id);
-    return !!(m && ['owner', 'manager'].includes(m.role));
-  };
-  const canWrite = (user, farmId) => {
-    if (!user) return false;
-    if (user.is_admin) return true;
-    const m = getFarmMember(farmId, user.id);
-    return !!(m && ['owner', 'manager', 'worker'].includes(m.role));
-  };
-  const farmOf = (req, res, { manage = false, write = false } = {}) => {
-    const user = getUser(req.user.id);
-    const farmId = req.query.farm_id || req.body?.farm_id || user?.current_farm_id;
-    if (!user || !farmId) { res.status(400).json({ error: 'No farm selected' }); return null; }
-    if (!user.is_admin && !user.farm_ids.includes(farmId)) { res.status(403).json({ error: 'Forbidden' }); return null; }
-    if (manage && !canManage(user, farmId)) { res.status(403).json({ error: 'בעלים / מנהל משק בלבד' }); return null; }
-    if (write && !canWrite(user, farmId)) { res.status(403).json({ error: 'אין הרשאת כתיבה במשק' }); return null; }
-    return { user, farmId };
-  };
-
+// Config + API call, shared with other modules (leases invoicing)
+function makeMavenCore(deps) {
+  const { db, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 } = deps;
   // ── config storage (internal entity maven_config, one per farm) ──
   function loadConfig(farmId) {
     const row = db.prepare("SELECT data FROM entities WHERE entity_type = 'maven_config' AND farm_id = ?").get(farmId);
@@ -87,6 +65,36 @@ function registerMavenRoutes(app, deps) {
     }
     return data;
   }
+
+  return { loadConfig, saveConfig, publicConfig, mavenCall };
+}
+
+function registerMavenRoutes(app, deps) {
+  const { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 } = deps;
+
+  const canManage = (user, farmId) => {
+    if (!user) return false;
+    if (user.is_admin) return true;
+    const m = getFarmMember(farmId, user.id);
+    return !!(m && ['owner', 'manager'].includes(m.role));
+  };
+  const canWrite = (user, farmId) => {
+    if (!user) return false;
+    if (user.is_admin) return true;
+    const m = getFarmMember(farmId, user.id);
+    return !!(m && ['owner', 'manager', 'worker'].includes(m.role));
+  };
+  const farmOf = (req, res, { manage = false, write = false } = {}) => {
+    const user = getUser(req.user.id);
+    const farmId = req.query.farm_id || req.body?.farm_id || user?.current_farm_id;
+    if (!user || !farmId) { res.status(400).json({ error: 'No farm selected' }); return null; }
+    if (!user.is_admin && !user.farm_ids.includes(farmId)) { res.status(403).json({ error: 'Forbidden' }); return null; }
+    if (manage && !canManage(user, farmId)) { res.status(403).json({ error: 'בעלים / מנהל משק בלבד' }); return null; }
+    if (write && !canWrite(user, farmId)) { res.status(403).json({ error: 'אין הרשאת כתיבה במשק' }); return null; }
+    return { user, farmId };
+  };
+
+  const { loadConfig, saveConfig, publicConfig, mavenCall } = makeMavenCore(deps);
 
   // ── helpers ──
   const normName = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
@@ -347,4 +355,4 @@ function registerMavenRoutes(app, deps) {
   });
 }
 
-module.exports = { registerMavenRoutes, DOC_TYPES };
+module.exports = { registerMavenRoutes, makeMavenCore, DOC_TYPES };

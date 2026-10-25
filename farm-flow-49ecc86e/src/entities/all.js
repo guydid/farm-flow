@@ -8,6 +8,7 @@ export const Farm = createEntity('farms');
 export const Lease = createEntity('leases');
 export const LeasePayment = createEntity('lease_payments');
 export const MeterReading = createEntity('meter_readings');
+export const LeaseInvoice = createEntity('lease_invoices');
 export const Plot = createEntity('plots');
 export const Seeding = createEntity('seedings');
 export const Harvest = createEntity('harvests');

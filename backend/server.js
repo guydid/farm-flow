@@ -4687,7 +4687,7 @@ require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, 
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
-require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, tgGetConfig, tgSend, attnNow });
+require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, tgGetConfig, tgSend, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in

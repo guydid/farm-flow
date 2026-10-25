@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, FileText, ExternalLink, CalendarPlus, Gauge, Check, Undo2, Plus, Pencil, Trash2, Phone } from "lucide-react";
-import { LeasePayment, MeterReading } from "@/entities/all";
+import { LeasePayment, MeterReading, LeaseInvoice } from "@/entities/all";
+import LeaseInvoices from "./LeaseInvoices";
 import { getToken } from "@/api/localClient";
 import { apiFetch, DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, KINDS, CREDIT_KINDS, PAYMENT_STATUS, money, fmtDate, todayIso, daysUntil } from "./leaseUtils";
 
@@ -15,6 +16,7 @@ const contractHref = (url) => (url ? `${url}${url.includes("?") ? "&" : "?"}toke
 export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDelete, onChanged, canWrite }) {
   const [payments, setPayments] = useState([]);
   const [readings, setReadings] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -29,10 +31,12 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
     if (!lease?.id) return;
     setLoading(true);
     try {
-      const [p, r] = await Promise.all([
+      const [p, r, inv] = await Promise.all([
         LeasePayment.filter({ farm_id: farmId, lease_id: lease.id }).catch(() => []),
         MeterReading.filter({ farm_id: farmId, lease_id: lease.id }).catch(() => []),
+        lease.direction === "receive" ? LeaseInvoice.filter({ farm_id: farmId, lease_id: lease.id }).catch(() => []) : Promise.resolve([]),
       ]);
+      setInvoices((Array.isArray(inv) ? inv : []).sort((a, b) => (b.issued_at || "").localeCompare(a.issued_at || "")));
       setPayments((Array.isArray(p) ? p : []).sort((a, b) => (a.due_date || "").localeCompare(b.due_date || "")));
       setReadings((Array.isArray(r) ? r : []).sort((a, b) => (b.reading_date || "").localeCompare(a.reading_date || "")));
     } finally { setLoading(false); }
@@ -145,6 +149,10 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
 
         {error && <div className="p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">{error}</div>}
 
+        {lease.direction === "receive" && (
+          <LeaseInvoices lease={lease} farmId={farmId} invoices={invoices} payments={payments} canWrite={canWrite} onChanged={async () => { await load(); onChanged?.(); }} />
+        )}
+
         <div>
           <div className="text-sm font-medium mb-2">תשלומים ({payments.length})</div>
           {loading ? <div className="text-sm text-gray-400 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> טוען…</div>
@@ -160,6 +168,7 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
                         ? <Badge className={p.status === "paid" ? "bg-green-100 text-green-800" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}>{p.status === "paid" ? "זיכוי קוזז" : "זיכוי"}</Badge>
                         : <Badge className={PAYMENT_STATUS[st]?.cls}>{PAYMENT_STATUS[st]?.label}</Badge>}
                       <span className="tabular-nums text-gray-600">{fmtDate(p.due_date)}</span>
+                      {p.invoice_no && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">חשבונית {p.invoice_no}</span>}
                       <span className="flex-1 min-w-[140px]">{p.description || KINDS[p.kind]}{st !== "paid" && d >= 0 && d <= 7 ? <span className="text-amber-600 text-xs"> · בעוד {d} ימים</span> : null}{st === "overdue" ? <span className="text-red-600 text-xs"> · איחור {-d} ימים</span> : null}</span>
                       <span className={`font-semibold tabular-nums ${Number(p.amount) < 0 ? "text-emerald-700" : ""}`}>{money(p.amount)}</span>
                       {p.status === "paid" && <span className="text-xs text-gray-500">{fmtDate(p.paid_date)} · {METHODS[p.method] || ""}{p.reference ? ` · ${p.reference}` : ""}</span>}
