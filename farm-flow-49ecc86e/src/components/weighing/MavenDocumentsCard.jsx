@@ -29,6 +29,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
   const [open, setOpen] = useState(false);
   const [docType, setDocType] = useState("200");
   const [sendEmail, setSendEmail] = useState(false);
+  const [noVat, setNoVat] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [preview, setPreview] = useState(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -46,11 +47,11 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
   useEffect(() => {
     if (!open || !certificate?.id) return;
     setLoadingPreview(true); setError(null); setExisting(null);
-    apiFetch(`/integrations/maven/document-preview${farmQs}&certificate_id=${encodeURIComponent(certificate.id)}&doc_type=${docType}`)
+    apiFetch(`/integrations/maven/document-preview${farmQs}&certificate_id=${encodeURIComponent(certificate.id)}&doc_type=${docType}&no_vat=${noVat ? 1 : 0}`)
       .then(setPreview)
       .catch((e) => setError(e.data?.error || e.message))
       .finally(() => setLoadingPreview(false));
-  }, [open, docType, certificate?.id]);
+  }, [open, docType, noVat, certificate?.id]);
 
   if (!cfg?.enabled) return null;
 
@@ -62,7 +63,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
     try {
       const d = await apiFetch(`/integrations/maven/document${farmQs}`, {
         method: "POST",
-        body: JSON.stringify({ certificate_id: certificate.id, doc_type: Number(docType), send_to_customer: sendEmail, remarks, force }),
+        body: JSON.stringify({ certificate_id: certificate.id, doc_type: Number(docType), send_to_customer: sendEmail, remarks, no_vat: noVat, force }),
       });
       setOpen(false); setRemarks(""); setExisting(null);
       onIssued?.(d.document, d.warnings || []);
@@ -144,7 +145,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
                   <tbody>
                     {preview.items.map((l, i) => (
                       <tr key={i} className="border-t border-gray-200">
-                        <td className="py-1">{l.description}{l.item_number ? <span className="text-gray-400"> ({l.item_number})</span> : null}</td>
+                        <td className="py-1">{l.description}{l.item_number ? <span className="text-gray-400"> ({l.item_number})</span> : null}{l.no_vat ? <span className="text-green-700 text-[10px] mr-1">פטור ממע"מ</span> : null}</td>
                         <td className="text-left tabular-nums">{l.quantity}</td>
                         <td className="text-left tabular-nums">{money(l.price)}</td>
                         <td className="text-left tabular-nums">{money(l.price * l.quantity)}</td>
@@ -157,6 +158,10 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
               </div>
             )}
 
+            <div className="flex items-center gap-2">
+              <Checkbox id="mv-novat" checked={noVat} onCheckedChange={(v) => setNoVat(!!v)} />
+              <Label htmlFor="mv-novat" className="text-sm font-normal cursor-pointer">מסמך ללא מע"מ (כל השורות פטורות){preview?.exempt_lines ? ` · ${preview.exempt_lines} שורות כבר פטורות לפי הגדרת המוצר` : ""}</Label>
+            </div>
             <div className="flex items-center gap-2">
               <Checkbox id="mv-send" checked={sendEmail} onCheckedChange={(v) => setSendEmail(!!v)} />
               <Label htmlFor="mv-send" className="text-sm font-normal cursor-pointer">שלח את המסמך ללקוח במייל דרך Maven{preview?.customer?.email ? ` (${preview.customer.email})` : " (אין מייל ללקוח)"}</Label>

@@ -24,7 +24,8 @@ export default function ProductsManager({ currentFarm }) {
     name: "",
     crop_type: "",
     default_pricing_method: "per_kg",
-    weighable: true
+    weighable: true,
+    vat_exempt: false
   };
   const [formData, setFormData] = useState(initialFormData);
 
@@ -68,7 +69,8 @@ export default function ProductsManager({ currentFarm }) {
       name: product.name || "",
       crop_type: product.crop_type || "",
       default_pricing_method: product.default_pricing_method || "per_kg",
-      weighable: product.weighable !== false
+      weighable: product.weighable !== false,
+      vat_exempt: !!product.vat_exempt
     });
     setIsDialogOpen(true);
   };
@@ -152,6 +154,7 @@ export default function ProductsManager({ currentFarm }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>פעולות</TableHead>
+                  <TableHead>מע"מ</TableHead>
                   <TableHead>ניתן לשקילה</TableHead>
                   <TableHead>שיטת תמחור</TableHead>
                   <TableHead>סוג גידול</TableHead>
@@ -178,6 +181,7 @@ export default function ProductsManager({ currentFarm }) {
                           </Button>
                         </div>
                       </TableCell>
+                      <TableCell>{product.vat_exempt ? "פטור" : "חייב"}</TableCell>
                       <TableCell>{product.weighable !== false ? "כן" : "לא"}</TableCell>
                       <TableCell>{product.default_pricing_method === "per_kg" ? "לפי ק\"ג" : "לפי יחידה"}</TableCell>
                       <TableCell>{product.crop_type || "-"}</TableCell>
@@ -238,6 +242,15 @@ export default function ProductsManager({ currentFarm }) {
                   onCheckedChange={(checked) => setFormData({ ...formData, weighable: checked })}
                 />
                 <Label htmlFor="weighable">ניתן לשקילה</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="vat_exempt"
+                  checked={!!formData.vat_exempt}
+                  onCheckedChange={(checked) => setFormData({ ...formData, vat_exempt: checked })}
+                />
+                <Label htmlFor="vat_exempt">פטור ממע"מ (פירות וירקות)</Label>
+                <span className="text-xs text-gray-400">שורות של מוצר זה יופקו ב-Maven ללא מע"מ</span>
               </div>
             </div>
             <DialogFooter>

@@ -191,7 +191,7 @@ function registerMavenRoutes(app, deps) {
       try {
         const res = await mavenCall(cfg, '/api/items/addOrUpdateItem', {
           name: String(p.name).trim(), amount: Number(p.maven_price) || 0, item_no, external_item_id: p.id,
-          description: String(p.name).trim(), currency_id: 1, vat_included_yn: !!cfg.vat_included, archive_yn: false,
+          description: String(p.name).trim(), currency_id: 1, vat_included_yn: !!cfg.vat_included, no_vat_yn: !!p.vat_exempt, archive_yn: false,
         });
         updateRow(p.id, { maven_item_no: item_no, maven_item_id: res.id || p.maven_item_id || null });
         pushed++;
@@ -213,6 +213,8 @@ function registerMavenRoutes(app, deps) {
       const desc = [it.product_name || product?.name || 'פריט', it.quality ? `איכות ${it.quality}` : null, perKg ? 'לפי ק"ג' : 'לפי יחידה'].filter(Boolean).join(' · ');
       const line = { description: desc, price, quantity: qty > 0 ? qty : 1 };
       if (product?.maven_item_no) line.item_number = product.maven_item_no;
+      // פירות וירקות פטורים ממע"מ — לפי דגל המוצר, או מסמך שלם ללא מע"מ
+      if (product?.vat_exempt || opts.no_vat) line.no_vat = true;
       return line;
     });
     const certNo = cert.certificate_number || cert.barcode || String(cert.id).slice(0, 8);
@@ -230,6 +232,7 @@ function registerMavenRoutes(app, deps) {
       document_date: ddmmyyyy(opts.document_date || new Date().toISOString().slice(0, 10)),
       description: `תעודת שקילה ${certNo} מתאריך ${ddmmyyyy(cert.date)}`,
       vat_included: opts.vat_included !== undefined ? !!opts.vat_included : !!cfg.vat_included,
+      ...(opts.no_vat ? { no_vat: true } : {}),
       send_to_customer: !!opts.send_to_customer,
       doc_id: `ff-${cert.id}-${opts.doc_type}${opts.force ? '-' + Date.now() : ''}`,
     };
@@ -306,16 +309,16 @@ function registerMavenRoutes(app, deps) {
     if (!cert) return res.status(404).json({ error: 'תעודה לא נמצאה' });
     const items = rowsOf('weighing_items', ctx.farmId).filter(i => i.certificate_id === certId);
     const docType = Number(req.query.doc_type) || 200;
-    const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType });
+    const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType, no_vat: req.query.no_vat === '1' });
     const total = body.items.reduce((s, l) => s + l.price * l.quantity, 0);
-    res.json({ customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, vat_included: body.vat_included, test_mode: cfg.test_mode !== false, issued: cert.maven_documents || [] });
+    res.json({ customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, vat_included: body.vat_included, no_vat: !!body.no_vat, exempt_lines: body.items.filter(l => l.no_vat).length, test_mode: cfg.test_mode !== false, issued: cert.maven_documents || [] });
   });
 
   app.post('/api/integrations/maven/document', authMiddleware, async (req, res) => {
     const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
     const cfg = loadConfig(ctx.farmId);
     if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה עם Maven אינה מופעלת במשק זה' });
-    const { certificate_id, doc_type, send_to_customer, remarks, vat_included, force } = req.body || {};
+    const { certificate_id, doc_type, send_to_customer, remarks, vat_included, force, no_vat } = req.body || {};
     const docType = Number(doc_type);
     if (!ALLOWED_DOC_TYPES.has(docType)) return res.status(400).json({ error: 'סוג מסמך לא נתמך' });
     const cert = rowsOf('weighing_certificates', ctx.farmId).find(c => c.id === String(certificate_id || ''));
@@ -324,7 +327,7 @@ function registerMavenRoutes(app, deps) {
     if (!items.length) return res.status(400).json({ error: 'אין פריטים בתעודה' });
     const already = (cert.maven_documents || []).find(d => Number(d.doc_type) === docType && !d.test);
     if (already && !force) return res.status(409).json({ error: `כבר הופק ${DOC_TYPES[docType]} מס' ${already.doc_no} לתעודה זו`, code: 'already_issued', existing: already });
-    const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType, send_to_customer, remarks, vat_included, force: !!force || !!already });
+    const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType, send_to_customer, remarks, vat_included, no_vat: !!no_vat, force: !!force || !!already });
     try {
       const r = await mavenCall(cfg, '/api/documents/addDocument', body);
       const entry = {
