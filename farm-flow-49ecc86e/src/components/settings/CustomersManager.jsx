@@ -19,6 +19,7 @@ export default function CustomersManager({ currentFarm }) {
 
   const initialFormData = {
     name: "",
+    identification: "",
     contact_person: "",
     phone: "",
     email: "",
@@ -60,6 +61,7 @@ export default function CustomersManager({ currentFarm }) {
     setEditingCustomer(item);
     setFormData({
       name: item.name || "",
+      identification: item.identification || "",
       contact_person: item.contact_person || "",
       phone: item.phone || "",
       email: item.email || "",
@@ -201,6 +203,10 @@ export default function CustomersManager({ currentFarm }) {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="identification">ח.פ / ת.ז (לחשבוניות)</Label>
+                <Input id="identification" dir="ltr" value={formData.identification} onChange={(e) => setFormData({ ...formData, identification: e.target.value })} placeholder="אופציונלי" />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="contact_person">איש קשר</Label>
                 <Input

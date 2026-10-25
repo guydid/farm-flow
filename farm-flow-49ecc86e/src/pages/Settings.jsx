@@ -30,6 +30,7 @@ import {
   Mail,
   Clock,
   Receipt,
+  Plug,
 } from "lucide-react";
 
 import CompanySettingsManager from "../components/settings/CompanySettingsManager";
@@ -54,6 +55,7 @@ import BookkeeperSettingsManager from '../components/settings/BookkeeperSettings
 import AttendanceSettingsManager from '../components/settings/AttendanceSettingsManager';
 import TelegramSettings from '../components/settings/TelegramSettings';
 import McpSettingsManager from '../components/settings/McpSettingsManager';
+import IntegrationsManager from '../components/settings/IntegrationsManager';
 import { User, Farm } from '@/entities/all';
 
 export default function Settings() {
@@ -232,6 +234,10 @@ export default function Settings() {
                   <Receipt className="w-3.5 h-3.5" />
                   <span>חשבוניות</span>
                 </TabsTrigger>
+                <TabsTrigger value="integrations" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
+                  <Plug className="w-3.5 h-3.5" />
+                  <span>אינטגרציות</span>
+                </TabsTrigger>
               </TabsList>
             </div>
           </div>
@@ -295,6 +301,9 @@ export default function Settings() {
           </TabsContent>
           <TabsContent value="gmail">
             <GmailSettingsManager />
+          </TabsContent>
+          <TabsContent value="integrations">
+            <IntegrationsManager currentFarm={currentFarm} />
           </TabsContent>
           <TabsContent value="bookkeeper">
             <BookkeeperSettingsManager />

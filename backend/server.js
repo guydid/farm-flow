@@ -4684,6 +4684,8 @@ app.put('/api/pesticide-prices', authMiddleware, (req, res) => {
 });
 
 require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice });
+// Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
+require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in
@@ -5110,7 +5112,7 @@ const INTERNAL_ENTITIES = new Set([
   'admin', 'farm-members', 'notifications', 'sensors', 'telegram', 'users',
   'telegram_config', 'gmail_connections', 'gmail_ignore_rules', 'gmail_dismissed',
   'bookkeeper_settings', 'attendance_alert_config', 'pusr_config', 'mcp_tokens', 'auth_tokens',
-  'uploads', 'attendance_api_keys',
+  'uploads', 'attendance_api_keys', 'maven_config',
 ]);
 const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role : null) || null;
 const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);

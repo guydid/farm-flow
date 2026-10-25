@@ -22,6 +22,7 @@ import WeighingItemForm from '../components/weighing/WeighingItemForm';
 import PalletSticker, { generateZPL } from "../components/weighing/PalletSticker"; // Added generateZPL import
 import CertificatePrintLayout from "../components/weighing/CertificatePrintLayout";
 import useCertificateShare from "../components/weighing/useCertificateShare";
+import MavenDocumentsCard from "../components/weighing/MavenDocumentsCard";
 import { getMeCached, getFarmCached, getListCached } from "@/api/cachedReads";
 
 // Helper functions
@@ -752,6 +753,16 @@ export default function WeighingDetail() {
           )}
 
           {/* פרטי משטחים */}
+          <MavenDocumentsCard
+            certificate={safeCertificate}
+            farmId={currentFarm?.id}
+            itemCount={safeItems.length}
+            onIssued={(doc, warnings) => {
+              setCertificate(c => ({ ...(c || {}), maven_documents: [...((c && c.maven_documents) || []), doc], ...(doc.doc_type === 200 && !doc.test ? { delivery_note_issued: true } : {}) }));
+              toast({ title: doc.test ? "מסמך בדיקה הופק (לא נשמר ב-Maven)" : `${doc.doc_type_name} מס' ${doc.doc_no} הופק`, description: warnings.length ? warnings.join(" · ") : undefined });
+            }}
+          />
+
           <Card>
             <CardHeader>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">

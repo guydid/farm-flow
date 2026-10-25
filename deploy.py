@@ -177,7 +177,7 @@ print("\n[2] Uploading backend...")
 backend_local = 'C:/GUYAPP/farm-flow/backend'
 backend_remote = f'{REMOTE_DIR}/backend'
 
-for f in ['server.js', 'mcp.js', 'pesticideStock.js', 'recentUpdates.js', 'mailer.js', 'package.json']:
+for f in ['server.js', 'mcp.js', 'maven.js', 'pesticideStock.js', 'recentUpdates.js', 'mailer.js', 'package.json']:
     local_path = os.path.join(backend_local, f)
     if os.path.exists(local_path):
         sftp.put(local_path, f'{backend_remote}/{f}')
