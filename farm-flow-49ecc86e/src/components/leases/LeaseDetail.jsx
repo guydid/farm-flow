@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, FileText, ExternalLink, CalendarPlus, Gauge, Check, Undo2, Plus, Pencil, Trash2, Phone } from "lucide-react";
 import { LeasePayment, MeterReading } from "@/entities/all";
 import { getToken } from "@/api/localClient";
-import { apiFetch, DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, KINDS, PAYMENT_STATUS, money, fmtDate, todayIso, daysUntil } from "./leaseUtils";
+import { apiFetch, DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, KINDS, CREDIT_KINDS, PAYMENT_STATUS, money, fmtDate, todayIso, daysUntil } from "./leaseUtils";
 
 const contractHref = (url) => (url ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(getToken() || "")}` : null);
 
@@ -60,7 +60,10 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
   const removePayment = (p) => { if (!confirm("למחוק את התשלום הזה?")) return; run("del", async () => { await LeasePayment.delete(p.id); }); };
   const addCharge = () => run("charge", async () => {
     if (!(Number(charge.amount) > 0)) throw new Error("סכום לא תקין");
-    await LeasePayment.create({ farm_id: farmId, lease_id: lease.id, lease_title: lease.title, direction: lease.direction, kind: charge.kind, description: charge.description || KINDS[charge.kind], due_date: charge.due_date, amount: Number(charge.amount), status: charge.due_date < todayIso() ? "overdue" : "due", reminders_sent: [] });
+    // זיכוי נשמר כסכום שלילי — מקזז את החוב הפתוח ומופיע לצד החיובים
+    const isCredit = CREDIT_KINDS.has(charge.kind);
+    const amount = isCredit ? -Math.abs(Number(charge.amount)) : Number(charge.amount);
+    await LeasePayment.create({ farm_id: farmId, lease_id: lease.id, lease_title: lease.title, direction: lease.direction, kind: charge.kind, description: charge.description || KINDS[charge.kind], due_date: charge.due_date, amount, status: charge.due_date < todayIso() && !isCredit ? "overdue" : "due", reminders_sent: [] });
     setChargeOpen(false); setCharge({ kind: "other", description: "", amount: "", due_date: todayIso() });
   });
   const submitMeter = () => run("meter", async () => {
@@ -110,7 +113,7 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
         {canWrite && (
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={generateSchedule} disabled={!!busy}>{busy === "schedule" ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <CalendarPlus className="w-4 h-4 ml-1" />} צור לוח תשלומים (12 חודשים)</Button>
-            <Button size="sm" variant="outline" onClick={() => setChargeOpen((v) => !v)}><Plus className="w-4 h-4 ml-1" /> חיוב חד-פעמי</Button>
+            <Button size="sm" variant="outline" onClick={() => { setChargeOpen((v) => !v); setCharge((c) => ({ ...c, kind: "housing" })); }}><Plus className="w-4 h-4 ml-1" /> חיוב / זיכוי חד-פעמי</Button>
             {meters.length > 0 && <Button size="sm" variant="outline" onClick={() => { setMeterOpen((v) => !v); setMeterForm((f) => ({ ...f, meter_type: f.meter_type || meters[0].type })); }}><Gauge className="w-4 h-4 ml-1" /> קריאת מונה</Button>}
             <div className="flex-1" />
             <Button size="sm" variant="ghost" onClick={() => onEdit(lease)}><Pencil className="w-4 h-4 ml-1" /> ערוך</Button>
@@ -121,8 +124,8 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
         {chargeOpen && (
           <div className="rounded-lg border bg-gray-50 p-3 grid gap-2 sm:grid-cols-5 items-end">
             <div className="space-y-1"><Label className="text-xs">סוג</Label><Select value={charge.kind} onValueChange={(v) => setCharge({ ...charge, kind: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(KINDS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
-            <div className="space-y-1 sm:col-span-2"><Label className="text-xs">תיאור</Label><Input value={charge.description} onChange={(e) => setCharge({ ...charge, description: e.target.value })} placeholder="למשל: ארנונה, תיקון גדר" /></div>
-            <div className="space-y-1"><Label className="text-xs">סכום</Label><Input type="number" dir="ltr" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} /></div>
+            <div className="space-y-1 sm:col-span-2"><Label className="text-xs">תיאור</Label><Input value={charge.description} onChange={(e) => setCharge({ ...charge, description: e.target.value })} placeholder={CREDIT_KINDS.has(charge.kind) ? "למשל: החזר על ימים שלא גרו, פיצוי על תקלה" : "למשל: מגורים אוקטובר · 4 עובדים, ארנונה, תיקון גדר"} /></div>
+            <div className="space-y-1"><Label className="text-xs">{CREDIT_KINDS.has(charge.kind) ? "סכום הזיכוי" : "סכום"}</Label><Input type="number" min="0" dir="ltr" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} className={CREDIT_KINDS.has(charge.kind) ? "border-green-400" : ""} /></div>
             <div className="space-y-1"><Label className="text-xs">מועד</Label><div className="flex gap-1"><Input type="date" value={charge.due_date} onChange={(e) => setCharge({ ...charge, due_date: e.target.value })} /><Button size="sm" onClick={addCharge} disabled={busy === "charge"}>הוסף</Button></div></div>
           </div>
         )}
@@ -153,14 +156,16 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
                   const d = daysUntil(p.due_date);
                   return (
                     <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2 text-sm">
-                      <Badge className={PAYMENT_STATUS[st]?.cls}>{PAYMENT_STATUS[st]?.label}</Badge>
+                      {Number(p.amount) < 0
+                        ? <Badge className={p.status === "paid" ? "bg-green-100 text-green-800" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}>{p.status === "paid" ? "זיכוי קוזז" : "זיכוי"}</Badge>
+                        : <Badge className={PAYMENT_STATUS[st]?.cls}>{PAYMENT_STATUS[st]?.label}</Badge>}
                       <span className="tabular-nums text-gray-600">{fmtDate(p.due_date)}</span>
                       <span className="flex-1 min-w-[140px]">{p.description || KINDS[p.kind]}{st !== "paid" && d >= 0 && d <= 7 ? <span className="text-amber-600 text-xs"> · בעוד {d} ימים</span> : null}{st === "overdue" ? <span className="text-red-600 text-xs"> · איחור {-d} ימים</span> : null}</span>
-                      <span className="font-semibold tabular-nums">{money(p.amount)}</span>
+                      <span className={`font-semibold tabular-nums ${Number(p.amount) < 0 ? "text-emerald-700" : ""}`}>{money(p.amount)}</span>
                       {p.status === "paid" && <span className="text-xs text-gray-500">{fmtDate(p.paid_date)} · {METHODS[p.method] || ""}{p.reference ? ` · ${p.reference}` : ""}</span>}
                       {canWrite && (p.status === "paid"
                         ? <Button size="sm" variant="ghost" onClick={() => unpay(p)} disabled={!!busy} title="בטל סימון שולם"><Undo2 className="w-4 h-4" /></Button>
-                        : <><Button size="sm" variant="outline" className="text-green-700 border-green-300" onClick={() => markPaid(p)} disabled={!!busy}><Check className="w-4 h-4 ml-1" />{isPay ? "שולם" : "התקבל"}</Button>
+                        : <><Button size="sm" variant="outline" className="text-green-700 border-green-300" onClick={() => markPaid(p)} disabled={!!busy}><Check className="w-4 h-4 ml-1" />{Number(p.amount) < 0 ? "קוזז" : isPay ? "שולם" : "התקבל"}</Button>
                           <Button size="sm" variant="ghost" className="text-gray-400" onClick={() => removePayment(p)} disabled={!!busy}><Trash2 className="w-4 h-4" /></Button></>)}
                     </div>
                   );

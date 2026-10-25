@@ -3,7 +3,7 @@
 // (המשק משכיר ומקבל). ה-CRUD עצמו עובר דרך הראוטים הגנריים (entities: leases,
 // lease_payments, meter_readings). כאן: יצירת לוח תשלומים, קריאת מונים → חיוב,
 // סימון תשלום, סיכום, ותזכורות יומיות (התראה באפליקציה + טלגרם לבעלים/מנהלים).
-const KINDS = { rent: 'שכירות', electricity: 'חשמל', water: 'מים', gas: 'גז', other: 'חיוב' };
+const KINDS = { rent: 'שכירות', housing: 'מגורי עובדים', electricity: 'חשמל', water: 'מים', gas: 'גז', other: 'חיוב', credit: 'זיכוי' };
 
 function registerLeaseRoutes(app, deps) {
   const { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, tgGetConfig, tgSend, attnNow } = deps;
@@ -134,7 +134,7 @@ function registerLeaseRoutes(app, deps) {
     const leases = rowsOf('leases', ctx.farmId);
     const payments = rowsOf('lease_payments', ctx.farmId);
     // refresh overdue flags on the fly
-    for (const p of payments) if (p.status === 'due' && p.due_date < t) { p.status = 'overdue'; updateRow(p.id, { status: 'overdue' }); }
+    for (const p of payments) if (p.status === 'due' && p.due_date < t && Number(p.amount) > 0) { p.status = 'overdue'; updateRow(p.id, { status: 'overdue' }); }
     const sum = (arr) => round2(arr.reduce((s, p) => s + (Number(p.amount) || 0), 0));
     const open = payments.filter(p => ['due', 'overdue'].includes(p.status));
     const out = {
@@ -171,6 +171,7 @@ function registerLeaseRoutes(app, deps) {
         const payments = rowsOf('lease_payments', farmId).filter(p => ['due', 'overdue'].includes(p.status));
         const lines = { soon: [], today: [], overdue: [] }; let telegram = false;
         for (const p of payments) {
+          if (p.kind === 'credit' || Number(p.amount) < 0) continue; // זיכויים לא מזכירים
           const lease = leases[p.lease_id]; if (!lease || lease.reminders_enabled === false) continue;
           const days = Math.round((Date.parse(p.due_date) - Date.parse(t)) / 86400000);
           const before = Number(lease.reminder_days_before ?? 7);

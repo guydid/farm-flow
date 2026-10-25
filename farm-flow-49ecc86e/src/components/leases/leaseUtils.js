@@ -19,7 +19,9 @@ export const FREQUENCIES = { monthly: "חודשי", quarterly: "רבעוני", y
 export const STATUSES = { active: "פעיל", draft: "טיוטה", ended: "הסתיים" };
 export const METHODS = { transfer: "העברה בנקאית", cheque: "צ'ק", cash: "מזומן", credit: "אשראי", standing_order: "הוראת קבע", other: "אחר" };
 export const METER_TYPES = { electricity: { label: "חשמל", unit: "קוט\"ש" }, water: { label: "מים", unit: "מ\"ק" }, gas: { label: "גז", unit: "מ\"ק" }, other: { label: "אחר", unit: "יח'" } };
-export const KINDS = { rent: "שכירות", electricity: "חשמל", water: "מים", gas: "גז", other: "חיוב" };
+export const KINDS = { rent: "שכירות", housing: "מגורי עובדים", electricity: "חשמל", water: "מים", gas: "גז", other: "חיוב", credit: "זיכוי" };
+// סוגים שמוזנים כסכום חיובי אך נשמרים כסכום שלילי (מקזזים את החוב)
+export const CREDIT_KINDS = new Set(["credit"]);
 export const PAYMENT_STATUS = {
   due: { label: "ממתין", cls: "bg-blue-100 text-blue-800" },
   overdue: { label: "באיחור", cls: "bg-red-100 text-red-800" },
@@ -27,7 +29,7 @@ export const PAYMENT_STATUS = {
   cancelled: { label: "בוטל", cls: "bg-gray-100 text-gray-600" },
 };
 
-export const money = (n) => `₪${(Number(n) || 0).toLocaleString("he-IL", { maximumFractionDigits: 0 })}`;
+export const money = (n) => { const v = Number(n) || 0; const s = `₪${Math.abs(v).toLocaleString("he-IL", { maximumFractionDigits: 0 })}`; return v < 0 ? `−${s}` : s; };
 export const fmtDate = (iso) => { if (!iso) return ""; const [y, m, d] = String(iso).slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
 export const todayIso = () => new Date().toISOString().slice(0, 10);
 export const daysUntil = (iso) => Math.round((Date.parse(String(iso).slice(0, 10)) - Date.parse(todayIso())) / 86400000);
