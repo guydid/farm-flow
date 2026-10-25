@@ -64,7 +64,9 @@ function registerMavenRoutes(app, deps) {
   async function mavenCall(cfg, path, body, { requireKey = true } = {}) {
     const key = cfg.api_key_enc ? decryptSecret(cfg.api_key_enc) : null;
     if (requireKey && !key) { const e = new Error('לא הוגדר מפתח API של Maven'); e.code = 'not_configured'; throw e; }
+    // המפתח גם בגוף: חלק מה-endpoints (addDocument) מתעלמים מהכותרת ודורשים אותו ב-JSON
     const payload = JSON.stringify({
+      api_key: key,
       test: cfg.test_mode !== false ? 1 : 0,
       contact_email: cfg.contact_email || 'support@farm-flow.local',
       contact_phone: cfg.contact_phone || '000',
@@ -224,7 +226,8 @@ function registerMavenRoutes(app, deps) {
         ...(customer?.address ? { address: customer.address } : {}),
       },
       items: lines,
-      document_date: ddmmyyyy(cert.date),
+      // Maven דורש רצף כרונולוגי של תאריכים לכל סוג מסמך → תאריך המסמך = היום; תאריך השקילה בתיאור
+      document_date: ddmmyyyy(opts.document_date || new Date().toISOString().slice(0, 10)),
       description: `תעודת שקילה ${certNo} מתאריך ${ddmmyyyy(cert.date)}`,
       vat_included: opts.vat_included !== undefined ? !!opts.vat_included : !!cfg.vat_included,
       send_to_customer: !!opts.send_to_customer,
@@ -269,7 +272,7 @@ function registerMavenRoutes(app, deps) {
     try {
       const r = await mavenCall(cfg, '/api/customers/searchCustomers', { page: 1, page_size: 1 });
       res.json({ ok: true, customers_total: r.total ?? null, test_mode: cfg.test_mode !== false });
-    } catch (e) { res.status(502).json({ ok: false, error: e.message, code: e.code || null }); }
+    } catch (e) { res.status(422).json({ ok: false, error: e.message, code: e.code || null }); }
   });
 
   app.post('/api/integrations/maven/sync', authMiddleware, async (req, res) => {
@@ -290,7 +293,7 @@ function registerMavenRoutes(app, deps) {
       res.json({ ok: true, what, ...result, test_mode: cfg.test_mode !== false });
     } catch (e) {
       console.error(`[maven] sync ${what} failed:`, e.message);
-      res.status(502).json({ ok: false, error: e.message, code: e.code || null });
+      res.status(422).json({ ok: false, error: e.message, code: e.code || null });
     }
   });
 
@@ -336,7 +339,7 @@ function registerMavenRoutes(app, deps) {
       res.json({ ok: true, document: entry, warnings: [r.allocation_warning, r.payment_link_warning].filter(Boolean) });
     } catch (e) {
       console.error('[maven] addDocument failed:', e.message);
-      res.status(502).json({ ok: false, error: e.message, code: e.code || null });
+      res.status(422).json({ ok: false, error: e.message, code: e.code || null });
     }
   });
 }
