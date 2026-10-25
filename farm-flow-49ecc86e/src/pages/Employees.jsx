@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { listFarmUsers } from '@/api/farmUsers';
 import { Employee, ManpowerCompany, User, Farm } from '@/entities/all';
 import { getMeCached, getFarmCached } from '@/api/cachedReads';
 import { Link } from 'react-router-dom';
@@ -53,7 +54,7 @@ export default function Employees() {
             const [employeesData, companiesData, usersData] = await Promise.all([
                 Employee.filter(farmFilter, 'start_date').catch(() => []),
                 ManpowerCompany.filter(farmFilter).catch(() => []),
-                User.list().catch(() => [])
+                listFarmUsers(user.current_farm_id)
             ]);
 
             setEmployees(Array.isArray(employeesData) ? employeesData : []);

@@ -35,6 +35,8 @@ function apiFetch(path, opts = {}) {
 }
 
 const EMPTY_INVITE = { email: '', full_name: '', password: '', role: 'worker', field_worker: false };
+// אותו רף כמו בהרשמה (שרת: strongPassword): 8+ תווים, אות וספרה
+const strongPassword = (p) => typeof p === 'string' && p.length >= 8 && /[A-Za-z\u0590-\u05FF]/.test(p) && /\d/.test(p);
 const EMPTY_NOTIF  = { title: '', body: '', type: 'info' };
 
 export default function FarmMembers() {
@@ -114,7 +116,7 @@ export default function FarmMembers() {
       // מציגים מסך תוצאה: סטטוס שליחת המייל + לינק כניסה להעתקה
       setInviteResult({
         email: res2.email,
-        password: invite.password && invite.password.length >= 6 ? invite.password : '',
+        password: strongPassword(invite.password) ? invite.password : '',
         invite_link: res2.invite_link || '',
         email_sent: !!res2.email_sent,
         email_error: res2.email_error || '',
@@ -428,7 +430,7 @@ export default function FarmMembers() {
               </div>
               <div>
                 <Label>סיסמה</Label>
-                <Input type="password" placeholder={reinvite ? 'סיסמה חדשה (לפחות 6 תווים)' : 'לפחות 6 תווים (לחשבון חדש)'} dir="ltr"
+                <Input type="password" placeholder={reinvite ? 'סיסמה חדשה (8+ תווים, אות וספרה)' : '8+ תווים עם אות וספרה (לחשבון חדש)'} dir="ltr"
                   value={invite.password} onChange={e => setInvite(p => ({ ...p, password: e.target.value }))} />
                 <p className="text-xs text-gray-400 mt-1">
                   {reinvite

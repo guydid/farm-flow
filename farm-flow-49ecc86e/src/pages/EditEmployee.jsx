@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { listFarmUsers } from '@/api/farmUsers';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Employee, ManpowerCompany, User, Farm } from '@/entities/all';
 import EmployeeForm from '../components/employees/EmployeeForm';
@@ -47,7 +48,7 @@ export default function EditEmployee() {
             const [employeeData, companiesData, usersData] = await Promise.all([
                 Employee.get(employeeId),
                 ManpowerCompany.filter(farmFilter),
-                User.list()
+                listFarmUsers(farm.id)
             ]);
             
             setEmployee(employeeData);

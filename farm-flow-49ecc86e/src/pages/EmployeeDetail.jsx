@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { listFarmUsers } from '@/api/farmUsers';
 import { Link, useNavigate } from "react-router-dom";
 import { Employee, ManpowerCompany, User, EmployeeLog, Farm } from "@/entities/all";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ export default function EmployeeDetail() {
 
             const [mcData, userData, empData, logData] = await Promise.all([
                 ManpowerCompany.filter({ farm_id: farm.id }),
-                User.list(),
+                listFarmUsers(farm.id),
                 Employee.get(employeeId),
                 EmployeeLog.filter({ employee_id: employeeId }, "-created_date")
             ]);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { listFarmUsers } from '@/api/farmUsers';
 import { useNavigate } from 'react-router-dom';
 import { ManpowerCompany, User, Farm } from '@/entities/all';
 import EmployeeForm from '../components/employees/EmployeeForm';
@@ -32,7 +33,7 @@ export default function AddEmployee() {
             const farmFilter = { farm_id: user.current_farm_id };
             const [companiesData, usersData] = await Promise.all([
                 ManpowerCompany.filter(farmFilter),
-                User.list()
+                listFarmUsers(farm.id)
             ]);
             
             setManpowerCompanies(Array.isArray(companiesData) ? companiesData : []);
