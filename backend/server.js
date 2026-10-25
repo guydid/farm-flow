@@ -204,7 +204,18 @@ app.use('/uploads', (req, res, next) => {
   const token = (req.headers.authorization || '').replace('Bearer ', '') ||
     (req.query.token || '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  if (!verifySessionToken(token)) return res.status(401).json({ error: 'Invalid token' });
+  const sess = verifySessionToken(token);
+  if (!sess) return res.status(401).json({ error: 'Invalid token' });
+  // קובץ רשום (הועלה אחרי 25/10/2026) מוגש רק לחברי המשק שלו / למעלה / לאדמין
+  const fname = path.basename(req.path);
+  const reg = db.prepare("SELECT farm_id, data FROM entities WHERE entity_type = 'uploads' AND id = ?").get(`up_${fname}`);
+  if (reg) {
+    const u = getUser(sess.id);
+    let uploader = null; try { uploader = JSON.parse(reg.data).uploader_id; } catch { /* ignore */ }
+    if (!u || !(u.is_admin || uploader === u.id || (reg.farm_id && u.farm_ids.includes(reg.farm_id)))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+  }
   // רק סוגי קבצים מוכרים מוגשים; כל השאר כהורדה (הגנה מ-XSS בקבצים ישנים)
   const ext = path.extname(req.path).toLowerCase();
   if (!UPLOAD_EXTS.has(ext)) res.setHeader('Content-Disposition', 'attachment');
@@ -488,15 +499,73 @@ function getGroqApiKey() {
   } catch (_) { return null; }
 }
 
-// Attendance (time-clock) machine-to-machine API key. Auto-generates on first read
-// so an admin always has a key to hand to the Python sync bridge.
-function getAttendanceApiKey({ create = true } = {}) {
-  const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get('attendance_api_key');
-  if (row?.value) return row.value;
+// ─── Attendance (time-clock) machine-to-machine API keys — ONE PER FARM ───────
+// Stored as internal entity `attendance_api_keys` (id attnkey_<farm_id>). The key
+// identifies the farm, so the bridge can never push records into another farm.
+function getFarmAttendanceKey(farmId, { create = true } = {}) {
+  const row = db.prepare("SELECT data FROM entities WHERE entity_type = 'attendance_api_keys' AND farm_id = ?").get(farmId);
+  if (row) { try { const d = JSON.parse(row.data); if (d.key) return d.key; } catch { /* fallthrough */ } }
   if (!create) return null;
+  return rotateFarmAttendanceKey(farmId);
+}
+function rotateFarmAttendanceKey(farmId) {
   const key = 'attn_' + crypto.randomBytes(24).toString('hex');
-  db.prepare('INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)').run('attendance_api_key', key, NOW());
+  const now = NOW();
+  db.prepare("INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'attendance_api_keys', ?, ?, ?, ?)")
+    .run(`attnkey_${farmId}`, farmId, JSON.stringify({ key, rotated_at: now }), now, now);
   return key;
+}
+function findFarmByAttendanceKey(key) {
+  if (!key || typeof key !== 'string' || key.length < 20) return null;
+  const row = db.prepare("SELECT farm_id FROM entities WHERE entity_type = 'attendance_api_keys' AND json_extract(data, '$.key') = ?").get(key);
+  return row?.farm_id || null;
+}
+// One-time migration from the legacy GLOBAL key (system_settings.attendance_api_key):
+// hand it to the single farm that already syncs attendance so the running bridge keeps
+// working, then drop the global key. With 0 or 2+ candidate farms the key is just dropped.
+(function migrateLegacyAttendanceKey() {
+  try {
+    const legacy = db.prepare("SELECT value FROM system_settings WHERE key = 'attendance_api_key'").get()?.value;
+    if (!legacy) return;
+    const farms = db.prepare("SELECT DISTINCT farm_id FROM entities WHERE entity_type = 'attendance_records' AND farm_id IS NOT NULL").all().map(r => r.farm_id);
+    if (farms.length === 1 && !db.prepare("SELECT 1 FROM entities WHERE entity_type = 'attendance_api_keys' AND farm_id = ?").get(farms[0])) {
+      const now = NOW();
+      db.prepare("INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'attendance_api_keys', ?, ?, ?, ?)")
+        .run(`attnkey_${farms[0]}`, farms[0], JSON.stringify({ key: legacy, rotated_at: now, migrated_from_global: true }), now, now);
+      console.log(`[attendance] migrated legacy global API key to farm ${farms[0]}`);
+    } else {
+      console.log(`[attendance] legacy global API key dropped (candidate farms: ${farms.length}) — issue per-farm keys in Settings`);
+    }
+    db.prepare("DELETE FROM system_settings WHERE key = 'attendance_api_key'").run();
+  } catch (e) { console.error('[attendance] legacy key migration failed:', e.message); }
+})();
+
+// ─── Upload ownership ─────────────────────────────────────────────────────────
+// Every new upload is registered (entity `uploads`, id up_<filename>) with the uploader
+// and their current farm. Access = admin, uploader, or member of that farm. Files from
+// before the registry exist only as references inside farm rows — those are allowed when
+// some row of the user's farms references them.
+function registerUpload(file, user) {
+  try {
+    const now = NOW();
+    db.prepare("INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'uploads', ?, ?, ?, ?)")
+      .run(`up_${file.filename}`, user?.current_farm_id || null,
+        JSON.stringify({ filename: file.filename, original_name: file.originalname, size: file.size, uploader_id: user?.id || null }), now, now);
+  } catch (e) { console.error('[upload] register failed:', e.message); }
+}
+function userCanAccessUpload(user, filename) {
+  if (!user || !filename) return false;
+  if (user.is_admin) return true;
+  const reg = db.prepare("SELECT farm_id, data FROM entities WHERE entity_type = 'uploads' AND id = ?").get(`up_${filename}`);
+  if (reg) {
+    if (reg.farm_id && user.farm_ids.includes(reg.farm_id)) return true;
+    try { if (JSON.parse(reg.data).uploader_id === user.id) return true; } catch { /* ignore */ }
+    return false;
+  }
+  if (!user.farm_ids.length) return false;
+  const ph = user.farm_ids.map(() => '?').join(',');
+  const ref = db.prepare(`SELECT 1 FROM entities WHERE farm_id IN (${ph}) AND data LIKE ? LIMIT 1`).get(...user.farm_ids, `%/uploads/${filename}%`);
+  return !!ref;
 }
 
 // Anthropic AI settings
@@ -1425,6 +1494,7 @@ app.post('/api/extract-document', authMiddleware, aiLimiter, async (req, res) =>
     const filePath = path.join(UPLOADS_DIR, filename);
     console.log('[extract] file_url:', file_url, '→ filePath:', filePath, 'exists:', fs.existsSync(filePath), 'doc_type:', document_type);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    if (!userCanAccessUpload(getUser(req.user.id), filename)) return res.status(403).json({ error: 'Forbidden' });
     const { method, data } = await runDocumentExtraction(filePath, document_type);
     const count = Object.keys(data || {}).length;
     res.json({ success: count > 0, data, method });
@@ -2814,6 +2884,7 @@ app.post('/api/extract-face', authMiddleware, async (req, res) => {
     const filename = path.basename(file_url.split('?')[0]);
     const filePath = path.join(UPLOADS_DIR, filename);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    if (!userCanAccessUpload(getUser(req.user.id), filename)) return res.status(403).json({ error: 'Forbidden' });
 
     // Try jimp — graceful fallback: return original if not installed
     let Jimp;
@@ -2874,6 +2945,7 @@ app.post('/api/extract-face', authMiddleware, async (req, res) => {
 // Upload file — returns { file_url } pointing to /uploads/<uuid>.<ext>
 app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  registerUpload(req.file, getUser(req.user.id));
   // Build URL that goes through nginx (port 80), not direct to backend
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
   const hostWithoutPort = host.split(':')[0];
@@ -2917,7 +2989,7 @@ mailer.setFallbackSender({
     for (const a of admins) {
       if (!a.current_farm_id) continue;
       const c = getGmailConnectionForUser(a.current_farm_id, a.id);
-      if (c) return { farmId: a.current_farm_id, conn: c };
+      if (c && !c.needs_reauth) return { farmId: a.current_farm_id, conn: c };
     }
     return null;
   },
@@ -3375,7 +3447,7 @@ app.put('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, res
   if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
   if (full_name !== undefined) { updates.push('full_name = ?'); params.push(full_name); }
   if (new_password) {
-    if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (!strongPassword(new_password)) return res.status(400).json({ error: 'סיסמה: לפחות 8 תווים עם אות וספרה', code: 'weak_password' });
     const hash = await bcrypt.hash(new_password, 10);
     updates.push('password_hash = ?');
     params.push(hash);
@@ -3388,6 +3460,8 @@ app.put('/api/admin/users/:id', authMiddleware, adminMiddleware, async (req, res
   params.push(id);
 
   db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  // סיסמה חדשה או השבתה → כל ההתחברויות הקיימות של המשתמש מתבטלות
+  if (new_password || is_active === false || is_active === 0) bumpTokenVersion(id);
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   res.json(formatUser(updated));
 });
@@ -3642,7 +3716,7 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
   let isNewUser = false;
 
   if (!targetUser) {
-    if (!password || password.length < 6) return res.status(400).json({ error: 'Password (min 6 chars) required to create new user' });
+    if (!strongPassword(password)) return res.status(400).json({ error: 'סיסמה לחשבון חדש: לפחות 8 תווים עם אות וספרה', code: 'weak_password' });
     const hash = await bcrypt.hash(password, 10);
     const newId = uuidv4();
     const now = NOW();
@@ -3667,15 +3741,30 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
 
   const inviteLink = `${APP_BASE_URL}/login`;
 
-  // שליחת מייל הזמנה אמיתי דרך ה-Gmail המחובר של המזמין (אם התבקש).
-  // כולל לינק כניסה, האימייל, והסיסמה (אם הוזנה כעת). מחזיר סטטוס שליחה.
+  // שליחת מייל הזמנה (אם התבקש): קודם דרך מערכת המייל (SMTP), ואם אינה זמינה — דרך
+  // ה-Gmail המחובר של המזמין. כולל לינק כניסה, האימייל, והסיסמה (אם הוזנה כעת).
   const maybeSendInviteEmail = async () => {
     if (!send_email) return { email_sent: false, email_error: null };
+    const farmRow = db.prepare("SELECT data FROM entities WHERE entity_type='farms' AND id=?").get(farm_id);
+    const farmName = farmRow ? (JSON.parse(farmRow.data || '{}').name || '') : '';
+    if (mailer.mailAvailable()) {
+      try {
+        const { html, text } = mailer.renderEmail({
+          title: `הוזמנת למשק${farmName ? ` "${farmName}"` : ''} ב-Farm Flow`,
+          intro: `${targetUser.full_name ? `שלום ${targetUser.full_name}, ` : ''}נפתח לך חשבון במערכת ניהול המשק. פרטי הכניסה: אימייל ${targetUser.email}${password ? `, סיסמה ${password}` : ''}. מומלץ להחליף סיסמה אחרי הכניסה הראשונה (תפריט המשתמש → שינוי סיסמה).`,
+          buttonText: 'כניסה למערכת',
+          url: inviteLink,
+          outro: `ההזמנה נשלחה על ידי ${user.full_name || user.email}${farmName ? ` מטעם ${farmName}` : ''}.`,
+        });
+        await mailer.sendMail({ to: targetUser.email, subject: `הוזמנת למשק${farmName ? ` ${farmName}` : ''} ב-Farm Flow`, html, text });
+        return { email_sent: true, email_error: null };
+      } catch (e) {
+        console.error('[invite] system mail failed, trying inviter Gmail:', String(e?.message || e));
+      }
+    }
     try {
       const conn = getGmailConnectionForUser(farm_id, req.user.id);
-      if (!conn) return { email_sent: false, email_error: 'אין חיבור Gmail — חבר את Gmail בהגדרות' };
-      const farmRow = db.prepare("SELECT data FROM entities WHERE entity_type='farms' AND id=?").get(farm_id);
-      const farmName = farmRow ? (JSON.parse(farmRow.data || '{}').name || '') : '';
+      if (!conn) return { email_sent: false, email_error: 'שירות המייל אינו זמין ואין חיבור Gmail — מסור את פרטי הכניסה ידנית' };
       const body = [
         `שלום ${targetUser.full_name || ''}`.trim() + ',',
         '',
@@ -3683,7 +3772,7 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
         '',
         `כתובת המערכת: ${APP_BASE_URL}`,
         `האימייל שלך לכניסה: ${targetUser.email}`,
-        (password && password.length >= 6) ? `סיסמה: ${password}` : null,
+        password ? `סיסמה: ${password}` : null,
         '',
         `להתחברות: ${inviteLink}`,
         '',
@@ -3708,7 +3797,8 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
   const existing = getFarmMember(farm_id, targetUser.id);
   if (existing) {
     let passwordReset = false;
-    if (password && password.length >= 6) {
+    if (password) {
+      if (!strongPassword(password)) return res.status(400).json({ error: 'סיסמה חדשה: לפחות 8 תווים עם אות וספרה', code: 'weak_password' });
       // איפוס סיסמה ע"י המשק — רק לעובד שכל החשבון שלו שייך למשק הזה (לא בעלים, לא חבר במשק אחר)
       if (!isFarmLocalUser(targetUser)) {
         return res.status(403).json({ error: 'לא ניתן לאפס סיסמה למשתמש שחבר גם במשק אחר או בעלים. המשתמש יכול לאפס בעצמו דרך "שכחתי סיסמה".' });
@@ -4369,17 +4459,19 @@ app.post('/api/sensors/config', authMiddleware, adminMiddleware, (req, res) => {
 // Data is stored as generic entities: `attendance_records` (per worker per day) and
 // `clock_workers` (active-worker registry, mirrors the old active_workers.json).
 function attendanceApiAuth(req, res, next) {
-  const key = req.headers['x-api-key'];
-  const expected = getAttendanceApiKey({ create: false });
-  if (!expected || !key || key !== expected) {
-    return res.status(401).json({ error: 'Invalid or missing x-api-key' });
-  }
+  const farmId = findFarmByAttendanceKey(req.headers['x-api-key']);
+  if (!farmId) return res.status(401).json({ error: 'Invalid or missing x-api-key' });
+  req.attendanceFarmId = farmId;
   next();
 }
 
 app.post('/api/attendance/sync', attendanceApiAuth, (req, res) => {
-  const { farm_id, as_of, workers = {}, records = [] } = req.body || {};
-  if (!farm_id) return res.status(400).json({ error: 'farm_id required' });
+  const { as_of, workers = {}, records = [] } = req.body || {};
+  // המשק נגזר מהמפתח בלבד; farm_id בגוף הבקשה משמש רק לאימות שהגשר מוגדר נכון
+  const farm_id = req.attendanceFarmId;
+  if (req.body?.farm_id && String(req.body.farm_id) !== farm_id) {
+    return res.status(403).json({ error: 'farm_id does not match this API key' });
+  }
   const farm = db.prepare("SELECT id FROM entities WHERE entity_type = 'farms' AND id = ?").get(farm_id);
   if (!farm) return res.status(400).json({ error: 'Unknown farm_id' });
 
@@ -4450,14 +4542,70 @@ app.post('/api/attendance/sync', attendanceApiAuth, (req, res) => {
   res.json({ success: true, synced_records: recCount, workers: Object.keys(nameByWorker).length, as_of: asOfDate });
 });
 
-// Admin: view / rotate the attendance sync API key (shown in Settings).
-app.get('/api/attendance/apikey', authMiddleware, adminMiddleware, (req, res) => {
-  res.json({ api_key: getAttendanceApiKey(), sync_path: '/api/attendance/sync' });
+// Owner/manager/admin: view / rotate the farm's attendance sync API key (Settings → שעון נוכחות).
+function attendanceKeyFarm(req, res) {
+  const farmId = req.query.farm_id || getUser(req.user.id)?.current_farm_id;
+  if (!farmId) { res.status(400).json({ error: 'No farm selected' }); return null; }
+  if (!canManageFarmAlerts(req, farmId)) { res.status(403).json({ error: 'Forbidden' }); return null; }
+  return farmId;
+}
+app.get('/api/attendance/apikey', authMiddleware, (req, res) => {
+  const farmId = attendanceKeyFarm(req, res); if (!farmId) return;
+  res.json({ api_key: getFarmAttendanceKey(farmId), farm_id: farmId, sync_path: '/api/attendance/sync' });
 });
-app.post('/api/attendance/apikey', authMiddleware, adminMiddleware, (req, res) => {
-  const key = 'attn_' + crypto.randomBytes(24).toString('hex');
-  db.prepare('INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)').run('attendance_api_key', key, NOW());
-  res.json({ api_key: key });
+app.post('/api/attendance/apikey', authMiddleware, (req, res) => {
+  const farmId = attendanceKeyFarm(req, res); if (!farmId) return;
+  res.json({ api_key: rotateFarmAttendanceKey(farmId), farm_id: farmId });
+});
+
+// ─── Bridge installer download: ZIP with the Python bridge + a config.json prefilled
+// for THIS farm (server URL, farm_id, the farm's API key). Store-only ZIP writer, no deps.
+const BRIDGE_DIR = path.join(__dirname, 'bridge');
+const CRC_TABLE = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c; } return t; })();
+function crc32(buf) { let c = -1; for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ -1) >>> 0; }
+function buildZip(entries) {
+  const locals = [], centrals = []; let offset = 0;
+  const d = new Date(); const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  for (const { name, data } of entries) {
+    const nameBuf = Buffer.from(name, 'utf8'); const crc = crc32(data);
+    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(0, 8);
+    lh.writeUInt16LE(dosTime, 10); lh.writeUInt16LE(dosDate, 12); lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22);
+    lh.writeUInt16LE(nameBuf.length, 26); lh.writeUInt16LE(0, 28);
+    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(0, 10);
+    ch.writeUInt16LE(dosTime, 12); ch.writeUInt16LE(dosDate, 14); ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24);
+    ch.writeUInt16LE(nameBuf.length, 28); ch.writeUInt16LE(0, 30); ch.writeUInt16LE(0, 32); ch.writeUInt16LE(0, 34); ch.writeUInt16LE(0, 36); ch.writeUInt32LE(0, 38); ch.writeUInt32LE(offset, 42);
+    locals.push(lh, nameBuf, data); centrals.push(ch, nameBuf);
+    offset += lh.length + nameBuf.length + data.length;
+  }
+  const cdSize = centrals.reduce((n, b) => n + b.length, 0);
+  const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(0, 4); end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(cdSize, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
+  return Buffer.concat([...locals, ...centrals, end]);
+}
+app.get('/api/attendance/installer', authMiddleware, (req, res) => {
+  const farmId = attendanceKeyFarm(req, res); if (!farmId) return;
+  let bridgeFiles;
+  try { bridgeFiles = fs.readdirSync(BRIDGE_DIR).filter(f => /\.(py|vbs|bat|txt)$/i.test(f)); } catch { bridgeFiles = []; }
+  if (!bridgeFiles.length) return res.status(500).json({ error: 'Bridge files missing on server' });
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const apiUrl = process.env.APP_BASE_URL || `${proto}://${String(host).split(':')[0]}`;
+  const farmRow = db.prepare("SELECT data FROM entities WHERE entity_type = 'farms' AND id = ?").get(farmId);
+  let farmName = ''; try { farmName = JSON.parse(farmRow?.data || '{}').name || ''; } catch { /* ignore */ }
+  const config = {
+    clock: { ip: '192.168.1.166', port: 4370, password: 0, timeout: 10, wrk_folder: 'C:\\jbclock' },
+    farmflow: { api_url: apiUrl, api_key: getFarmAttendanceKey(farmId), farm_id: farmId, farm_name: farmName },
+    ui: { auto_sync: true, interval_min: 30 },
+  };
+  const folder = 'FarmFlowSync/';
+  const entries = bridgeFiles.map(f => ({ name: folder + f, data: fs.readFileSync(path.join(BRIDGE_DIR, f)) }));
+  entries.push({ name: folder + 'config.json', data: Buffer.from(JSON.stringify(config, null, 2), 'utf8') });
+  const slug = (farmName || farmId.slice(0, 8)).replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 40) || 'farm';
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="farmflow-clock-bridge.zip"; filename*=UTF-8''${encodeURIComponent('farmflow-clock-bridge-' + slug + '.zip')}`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buildZip(entries));
 });
 
 // ─── MCP (external AI agents) ─────────────────────────────────────────────────
@@ -4669,7 +4817,10 @@ function cleanupOldUploads({ maxAgeDays = 14, dryRun = false } = {}) {
     try { st = fs.statSync(fp); } catch { continue; }
     if (!st.isFile()) continue;
     if (st.mtimeMs > cutoff) { skippedYoung++; continue; } // טרי מדי — אולי בתהליך העלאה
-    if (!dryRun) { try { fs.unlinkSync(fp); } catch { continue; } }
+    if (!dryRun) {
+      try { fs.unlinkSync(fp); } catch { continue; }
+      try { db.prepare("DELETE FROM entities WHERE entity_type = 'uploads' AND id = ?").run(`up_${f}`); } catch { /* ignore */ }
+    }
     deleted++; freed += st.size;
   }
   console.log(`[uploads-cleanup]${dryRun ? ' (dry-run)' : ''} deleted=${deleted} freed=${(freed / 1048576).toFixed(1)}MB kept(referenced)=${keptReferenced} skipped(young)=${skippedYoung}`);
@@ -4933,6 +5084,7 @@ const INTERNAL_ENTITIES = new Set([
   'admin', 'farm-members', 'notifications', 'sensors', 'telegram', 'users',
   'telegram_config', 'gmail_connections', 'gmail_ignore_rules', 'gmail_dismissed',
   'bookkeeper_settings', 'attendance_alert_config', 'pusr_config', 'mcp_tokens', 'auth_tokens',
+  'uploads', 'attendance_api_keys',
 ]);
 const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role : null) || null;
 const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);

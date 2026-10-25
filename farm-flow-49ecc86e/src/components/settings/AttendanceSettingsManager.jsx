@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Clock, Eye, EyeOff, Copy, Check, Loader2, RefreshCw, ShieldAlert, Info, BellRing, Send
+  Clock, Eye, EyeOff, Copy, Check, Loader2, RefreshCw, ShieldAlert, Info, BellRing, Send, Download
 } from "lucide-react";
 import { getToken } from "@/api/localClient";
 
@@ -43,6 +43,8 @@ export default function AttendanceSettingsManager({ currentFarm }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState(null);
   const [message, setMessage] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const farmQs = currentFarm?.id ? `?farm_id=${encodeURIComponent(currentFarm.id)}` : "";
 
   // ── Absence-alert config ──
   const [cfg, setCfg] = useState(null);
@@ -51,12 +53,12 @@ export default function AttendanceSettingsManager({ currentFarm }) {
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
 
-  useEffect(() => { load(); loadAlertConfig(); }, []);
+  useEffect(() => { load(); loadAlertConfig(); }, [currentFarm?.id]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const d = await apiFetch("/attendance/apikey");
+      const d = await apiFetch(`/attendance/apikey${farmQs}`);
       setApiKey(d.api_key);
       if (d.sync_path) setSyncPath(d.sync_path);
       setForbidden(false);
@@ -83,7 +85,7 @@ export default function AttendanceSettingsManager({ currentFarm }) {
     if (!confirm("ליצור מפתח חדש? המפתח הישן יפסיק לעבוד וצריך לעדכן את הגשר.")) return;
     setRotating(true);
     try {
-      const d = await apiFetch("/attendance/apikey", { method: "POST" });
+      const d = await apiFetch(`/attendance/apikey${farmQs}`, { method: "POST" });
       setApiKey(d.api_key);
       setMessage({ type: "success", text: "נוצר מפתח חדש" });
       setTimeout(() => setMessage(null), 4000);
@@ -144,6 +146,27 @@ export default function AttendanceSettingsManager({ currentFarm }) {
     }
   };
 
+  const downloadInstaller = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(`${BASE_URL}/attendance/installer${farmQs}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!res.ok) { let m = `HTTP ${res.status}`; try { m = (await res.json()).error || m; } catch {} throw new Error(m); }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename\*=UTF-8''([^;]+)/.exec(cd);
+      const name = m ? decodeURIComponent(m[1]) : "farmflow-clock-bridge.zip";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setMessage({ type: "success", text: "חבילת ההתקנה הורדה. חלץ אותה למחשב השעון והפעל install.bat" });
+      setTimeout(() => setMessage(null), 6000);
+    } catch (e) {
+      setMessage({ type: "error", text: e.message || "שגיאה בהורדה" });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const copy = (text, which) => {
     navigator.clipboard?.writeText(text);
     setCopied(which);
@@ -172,7 +195,7 @@ export default function AttendanceSettingsManager({ currentFarm }) {
         <Card>
           <CardContent className="p-6 flex items-start gap-3 text-sm text-amber-700">
             <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <span>ניהול מפתח סנכרון השעון זמין למנהלי מערכת בלבד.</span>
+            <span>ניהול מפתח סנכרון השעון זמין לבעלים ולמנהלי המשק בלבד.</span>
           </CardContent>
         </Card>
       ) : (
@@ -186,7 +209,16 @@ export default function AttendanceSettingsManager({ currentFarm }) {
           <CardContent className="space-y-4">
             <div className="flex gap-2 p-3 rounded-lg border bg-indigo-50 border-indigo-100 text-indigo-700 text-sm">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>גשר ה-Python (farmflow_sync.py) שרץ על מחשב השעון משתמש במפתח זה כדי לדחוף נתוני נוכחות. העתק את המפתח וה-URL להגדרות הגשר.</span>
+              <span>המפתח שייך למשק הזה בלבד. הדרך הקלה: הורד את חבילת ההתקנה (כוללת את המפתח והגדרות המשק מוכנות), חלץ אותה למחשב שמחובר לשעון, והפעל install.bat. ידנית: העתק את המפתח וה-URL ל-config.json של הגשר.</span>
+            </div>
+
+            {/* installer download */}
+            <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border bg-green-50 border-green-100">
+              <Button onClick={downloadInstaller} disabled={downloading || !currentFarm?.id} className="bg-green-600 hover:bg-green-700 text-white">
+                {downloading ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Download className="w-4 h-4 ml-1" />}
+                הורד חבילת התקנה לשעון
+              </Button>
+              <span className="text-xs text-green-800">ZIP עם הגשר, config.json מוכן למשק "{currentFarm?.name || ""}" והוראות. דורש Python 3.10+ על מחשב השעון.</span>
             </div>
 
             {/* API key */}

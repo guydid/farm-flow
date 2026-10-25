@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Farm Flow deployment script to VM 192.168.1.230"""
+"""Farm Flow deployment script — target: Hetzner VPS 178.105.41.152 (root + SSH key).
+Override with FARMFLOW_HOST / FARMFLOW_USER. Legacy home VM (192.168.1.231, user nitur + .deploy_pass) still works via FARMFLOW_HOST=192.168.1.231 FARMFLOW_USER=nitur."""
 import paramiko
 import os
 import sys
@@ -9,15 +10,16 @@ import sys
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-HOST = '192.168.1.231'
-USER = 'nitur'
-# סיסמת SSH: ממשתנה סביבה או מקובץ מקומי שאינו ב-git (.deploy_pass) — לא בקוד
+HOST = os.environ.get('FARMFLOW_HOST', '178.105.41.152')
+USER = os.environ.get('FARMFLOW_USER', 'root')
+IS_ROOT = (USER == 'root')
+# סיסמת SSH (רק ליעד הביתי עם משתמש nitur): ממשתנה סביבה או מקובץ מקומי שאינו ב-git (.deploy_pass)
 PASS = os.environ.get('FARMFLOW_SSH_PASS', '')
-if not PASS:
+if not PASS and not IS_ROOT:
     _pf = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.deploy_pass')
     if os.path.exists(_pf):
         PASS = open(_pf, encoding='utf-8').read().strip()
-if not PASS:
+if not PASS and not IS_ROOT:
     sys.exit('Missing SSH password: set FARMFLOW_SSH_PASS or create .deploy_pass next to deploy.py')
 REMOTE_DIR = '/home/nitur/farm-flow'
 
@@ -44,7 +46,7 @@ GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 APP_BASE_URL         = PUBLIC_DOMAIN
 
 def run(ssh, cmd, sudo=False):
-    if sudo:
+    if sudo and not IS_ROOT:
         cmd = f"echo '{PASS}' | sudo -S bash -c \"{cmd.replace('\"', chr(34))}\""
     stdin, stdout, stderr = ssh.exec_command(cmd)
     out = stdout.read().decode('utf-8', errors='replace').strip()
@@ -60,7 +62,10 @@ print(f"Target: {USER}@{HOST}")
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect(HOST, username=USER, password=PASS, timeout=30)
+if IS_ROOT:
+    ssh.connect(HOST, username=USER, timeout=30)  # SSH key (~/.ssh/id_ed25519)
+else:
+    ssh.connect(HOST, username=USER, password=PASS, timeout=30)
 print("[OK] Connected to VM")
 
 # Retrieve or generate JWT_SECRET (persisted on VM so tokens survive redeploys)
@@ -175,9 +180,18 @@ for f in ['server.js', 'mcp.js', 'pesticideStock.js', 'recentUpdates.js', 'maile
         sftp.put(local_path, f'{backend_remote}/{f}')
         print(f"  [OK] {f}")
 
+# Upload time-clock bridge package (served as a ZIP by /api/attendance/installer)
+bridge_local = os.path.join(backend_local, 'bridge')
+run(ssh, f"mkdir -p {backend_remote}/bridge")
+for f in sorted(os.listdir(bridge_local)):
+    if f.lower().endswith(('.py', '.vbs', '.bat', '.txt')):
+        sftp.put(os.path.join(bridge_local, f), f'{backend_remote}/bridge/{f}')
+        print(f"  [OK] bridge/{f}")
+
 # Install backend dependencies
 print("\n[3] Installing backend dependencies...")
-run(ssh, f"cd {REMOTE_DIR}/backend && npm install --production 2>&1 | tail -3")
+run(ssh, f"chown -R nitur:nitur {REMOTE_DIR}", sudo=True)
+run(ssh, f"cd {REMOTE_DIR}/backend && {'sudo -u nitur ' if IS_ROOT else ''}npm install --omit=dev 2>&1 | tail -3")
 print("  [OK] Dependencies installed")
 
 # Download Tesseract language data (only if missing) — download on Windows, upload via SFTP
@@ -227,13 +241,14 @@ def upload_dist(local_dir, remote_dir):
             upload_dist(local_path, remote_path)
 
 upload_dist(dist_local, f'{REMOTE_DIR}/frontend')
+run(ssh, f"chown -R nitur:nitur {REMOTE_DIR}", sudo=True)
 print("  [OK] Frontend files uploaded")
 
 sftp.close()
 
 # Update systemd service with API key (if provided)
 print("\n[5] Updating systemd service...")
-ALLOWED_ORIGINS = f"{PUBLIC_DOMAIN},http://192.168.1.231,http://192.168.1.231:3002"
+ALLOWED_ORIGINS = f"{PUBLIC_DOMAIN},https://farm.tutaluy.com,http://{HOST},https://{HOST},http://192.168.1.231,http://192.168.1.231:3002"
 
 service_content = f"""[Unit]
 Description=Farm Flow Backend
@@ -262,7 +277,7 @@ Environment=SMTP_HOST={SMTP_HOST}
 Environment=SMTP_PORT={SMTP_PORT}
 Environment=SMTP_USER={SMTP_USER}
 Environment=SMTP_PASS={SMTP_PASS}
-Environment=MAIL_FROM={MAIL_FROM}
+Environment="MAIL_FROM={MAIL_FROM}"
 ExecStart=/usr/bin/node --dns-result-order=ipv4first server.js
 Restart=always
 RestartSec=5
@@ -276,7 +291,7 @@ import io
 sftp2.putfo(io.BytesIO(service_content.encode('utf-8')), f'/tmp/farm-flow.service')
 sftp2.close()
 
-run(ssh, f"cp /tmp/farm-flow.service /etc/systemd/system/farm-flow.service", sudo=True)
+run(ssh, f"cp /tmp/farm-flow.service /etc/systemd/system/farm-flow.service && chmod 600 /etc/systemd/system/farm-flow.service && rm -f /tmp/farm-flow.service", sudo=True)
 run(ssh, "systemctl daemon-reload", sudo=True)
 
 # Stop the unit and free port 3002 BEFORE starting. A stray `node server.js`
@@ -334,6 +349,6 @@ else:
     print("       Example (Linux):   ANTHROPIC_API_KEY=sk-ant-api03-... python deploy.py")
 
 print(f"\n=== Deployment complete! ===")
-print(f"   App URL: http://192.168.1.231")
+print(f"   App URL: {PUBLIC_DOMAIN}  (host {HOST})")
 
 ssh.close()
