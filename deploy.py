@@ -100,7 +100,10 @@ def read_existing_env_from_service(ssh_conn):
     for line in body.splitlines():
         line = line.strip()
         if line.startswith('Environment='):
-            kv = line[len('Environment='):]
+            kv = line[len('Environment='):].strip()
+            # systemd allows Environment="KEY=value with spaces" — strip the surrounding quotes
+            if len(kv) >= 2 and kv[0] == kv[-1] and kv[0] in ('"', "'"):
+                kv = kv[1:-1]
             if '=' in kv:
                 k, v = kv.split('=', 1)
                 env[k.strip()] = v
