@@ -3066,6 +3066,21 @@ function createFarmForUser(userId, farmName) {
   return farmId;
 }
 
+// מבטל הרשמה שנכשלה אחרי יצירת המשתמש והמשק (מייל האימות לא נשלח)
+function rollbackRegistration(userId, farmId) {
+  try {
+    db.transaction(() => {
+      db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(userId);
+      db.prepare('DELETE FROM farm_members WHERE user_id = ?').run(userId);
+      if (farmId) {
+        db.prepare('DELETE FROM entities WHERE farm_id = ?').run(farmId);
+        db.prepare("DELETE FROM entities WHERE entity_type = 'farms' AND id = ?").run(farmId);
+      }
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    })();
+  } catch (e) { console.error('[auth] registration rollback failed:', e.message); }
+}
+
 const registrationOpen = () => ALLOW_REGISTRATION;
 const authEmailLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, message: { error: 'Too many requests', code: 'rate_limited' } });
 // הגבלה לפי חשבון (בנוסף ל-IP): 10 כישלונות ב-15 דק' נועלים את המייל הזה זמנית
@@ -3116,16 +3131,21 @@ app.post('/api/auth/register', registerLimiter, async (req, res) => {
   const password_hash = await bcrypt.hash(password, 12);
   const userId = uuidv4();
   const now = NOW();
-  db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(
-    userId, email, password_hash, full_name, '[]', null, isFirstUser ? 1 : 0, needVerify ? 0 : 1, now, now
-  );
-  createFarmForUser(userId, farm_name || (full_name ? `המשק של ${full_name}` : 'המשק שלי'));
+  let farmId = null;
+  db.transaction(() => {
+    db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(
+      userId, email, password_hash, full_name, '[]', null, isFirstUser ? 1 : 0, needVerify ? 0 : 1, now, now
+    );
+    farmId = createFarmForUser(userId, farm_name || (full_name ? `המשק של ${full_name}` : 'המשק שלי'));
+  })();
 
   if (!needVerify) return res.json(loginPayload({ id: userId }));
   try {
     await sendVerificationEmail({ id: userId, email, full_name });
   } catch (e) {
     console.error('[auth] verification email failed:', e.message);
+    // בלי מייל אימות אין דרך להיכנס — לא משאירים משתמש ומשק יתומים; אפשר להירשם שוב
+    rollbackRegistration(userId, farmId);
     return res.status(503).json({ error: 'Could not send verification email', code: 'email_unavailable' });
   }
   res.json({ verify_required: true });
@@ -3747,14 +3767,21 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
     if (!send_email) return { email_sent: false, email_error: null };
     const farmRow = db.prepare("SELECT data FROM entities WHERE entity_type='farms' AND id=?").get(farm_id);
     const farmName = farmRow ? (JSON.parse(farmRow.data || '{}').name || '') : '';
+    // הסיסמה לא נשלחת במייל. חשבון חדש / איפוס ע"י המשק → קישור חד-פעמי לבחירת סיסמה (7 ימים);
+    // צירוף משתמש קיים → קישור כניסה רגיל.
+    const needsPassword = isNewUser || !!password;
+    const setPasswordUrl = needsPassword
+      ? `${APP_BASE_URL}/login?reset=${encodeURIComponent(issueAuthToken(targetUser.id, 'reset', 7 * 24 * 3600 * 1000))}`
+      : null;
+    const actionUrl = setPasswordUrl || inviteLink;
     if (mailer.mailAvailable()) {
       try {
         const { html, text } = mailer.renderEmail({
           title: `הוזמנת למשק${farmName ? ` "${farmName}"` : ''} ב-Farm Flow`,
-          intro: `${targetUser.full_name ? `שלום ${targetUser.full_name}, ` : ''}נפתח לך חשבון במערכת ניהול המשק. פרטי הכניסה: אימייל ${targetUser.email}${password ? `, סיסמה ${password}` : ''}. מומלץ להחליף סיסמה אחרי הכניסה הראשונה (תפריט המשתמש → שינוי סיסמה).`,
-          buttonText: 'כניסה למערכת',
-          url: inviteLink,
-          outro: `ההזמנה נשלחה על ידי ${user.full_name || user.email}${farmName ? ` מטעם ${farmName}` : ''}.`,
+          intro: `${targetUser.full_name ? `שלום ${targetUser.full_name}, ` : ''}${isNewUser ? 'נפתח לך חשבון' : 'צורפת'} במערכת ניהול המשק. שם המשתמש שלך: ${targetUser.email}.${needsPassword ? ' לחץ על הכפתור כדי לבחור סיסמה ולהיכנס.' : ''}`,
+          buttonText: needsPassword ? 'בחירת סיסמה וכניסה' : 'כניסה למערכת',
+          url: actionUrl,
+          outro: `${needsPassword ? 'הקישור תקף ל-7 ימים ולשימוש אחד. ' : ''}ההזמנה נשלחה על ידי ${user.full_name || user.email}${farmName ? ` מטעם ${farmName}` : ''}.`,
         });
         await mailer.sendMail({ to: targetUser.email, subject: `הוזמנת למשק${farmName ? ` ${farmName}` : ''} ב-Farm Flow`, html, text });
         return { email_sent: true, email_error: null };
@@ -3772,9 +3799,8 @@ app.post('/api/farm-members/invite', authMiddleware, async (req, res) => {
         '',
         `כתובת המערכת: ${APP_BASE_URL}`,
         `האימייל שלך לכניסה: ${targetUser.email}`,
-        password ? `סיסמה: ${password}` : null,
         '',
-        `להתחברות: ${inviteLink}`,
+        needsPassword ? `לבחירת סיסמה וכניסה (קישור חד-פעמי, תקף 7 ימים): ${actionUrl}` : `להתחברות: ${inviteLink}`,
         '',
         'בברכה,',
         farmName || 'farm-flow',
@@ -5298,6 +5324,10 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
   let farm_id;
 
   if (entity === 'farms') {
+    // משתמש רגיל יכול להיות בעלים של משק אחד; משקים נוספים נפתחים ע"י מנהל המערכת
+    if (!user.is_admin && user.farm_ids.some(fid => roleOf(fid, user.id) === 'owner')) {
+      return res.status(403).json({ error: 'כבר יש לך משק בבעלותך. לפתיחת משק נוסף פנה למנהל המערכת.', code: 'farm_limit' });
+    }
     farm_id = null;
   } else if (entity === 'pesticides') {
     // קטלוג משותף (farm_id NULL) — מנהל מערכת בלבד; משתמש רגיל מוסיף חומר פרטי למשק שלו

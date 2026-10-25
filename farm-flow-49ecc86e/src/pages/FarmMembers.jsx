@@ -455,7 +455,7 @@ export default function FarmMembers() {
                 <input type="checkbox" className="h-4 w-4 accent-indigo-600"
                   checked={sendEmail} onChange={e => setSendEmail(e.target.checked)} />
                 <span className="text-sm text-indigo-800 flex items-center gap-1.5">
-                  <Mail className="h-4 w-4" /> שלח מייל הזמנה דרך Gmail המחובר
+                  <Mail className="h-4 w-4" /> שלח מייל הזמנה (קישור לבחירת סיסמה, בלי הסיסמה עצמה)
                 </span>
               </label>
               <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 cursor-pointer">

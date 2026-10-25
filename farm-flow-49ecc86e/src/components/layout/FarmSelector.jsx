@@ -134,6 +134,7 @@ export default function FarmSelector({ currentUser, currentFarm, onFarmChange })
               </DropdownMenuItem>
             ))
           )}
+          {(currentUser?.is_admin || !(currentUser?.farm_ids?.length > 0)) && (<>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={() => setIsDialogOpen(true)}
@@ -142,6 +143,7 @@ export default function FarmSelector({ currentUser, currentFarm, onFarmChange })
             <Plus className="w-4 h-4 ml-2" />
             צור משק חדש
           </DropdownMenuItem>
+          </>)}
         </DropdownMenuContent>
       </DropdownMenu>
 
