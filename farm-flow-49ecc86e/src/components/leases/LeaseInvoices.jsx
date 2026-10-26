@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Receipt, ExternalLink, FlaskConical, Check, Ban } from "lucide-react";
 import { apiFetch, METHODS, KINDS, BILLING_MODES, INVOICE_STATUS, money, fmtDate, todayIso } from "./leaseUtils";
 
+import { DateInput } from "@/components/ui/date-input";
 const thisMonth = () => todayIso().slice(0, 7);
 
 export default function LeaseInvoices({ lease, farmId, invoices, payments, canWrite, onChanged }) {
@@ -120,7 +121,7 @@ export default function LeaseInvoices({ lease, farmId, invoices, payments, canWr
             )}
             {docType === "320" && (
               <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1"><Label className="text-xs">תאריך תשלום</Label><Input type="date" value={paid.paid_date} onChange={(e) => setPaid({ ...paid, paid_date: e.target.value })} /></div>
+                <div className="space-y-1"><Label className="text-xs">תאריך תשלום</Label><DateInput value={paid.paid_date} onChange={(e) => setPaid({ ...paid, paid_date: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">אמצעי</Label><Select value={paid.method} onValueChange={(v) => setPaid({ ...paid, method: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(METHODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
                 <div className="space-y-1"><Label className="text-xs">אסמכתא</Label><Input value={paid.reference} onChange={(e) => setPaid({ ...paid, reference: e.target.value })} /></div>
               </div>
@@ -140,7 +141,7 @@ export default function LeaseInvoices({ lease, farmId, invoices, payments, canWr
           <DialogContent className="max-w-sm" dir="rtl">
             <DialogHeader><DialogTitle>קבלת תשלום · חשבונית #{payInv.number}</DialogTitle><DialogDescription>{money(payInv.total)} · {payInv.period}</DialogDescription></DialogHeader>
             <div className="space-y-3">
-              <div className="space-y-1"><Label>תאריך</Label><Input type="date" value={payForm.paid_date} onChange={(e) => setPayForm({ ...payForm, paid_date: e.target.value })} /></div>
+              <div className="space-y-1"><Label>תאריך</Label><DateInput value={payForm.paid_date} onChange={(e) => setPayForm({ ...payForm, paid_date: e.target.value })} /></div>
               <div className="space-y-1"><Label>אמצעי</Label><Select value={payForm.method} onValueChange={(v) => setPayForm({ ...payForm, method: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(METHODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
               <div className="space-y-1"><Label>אסמכתא</Label><Input value={payForm.reference} onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })} placeholder="מס' העברה / צ'ק" /></div>
               {payInv.maven && payInv.doc_type === 305 && <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={payForm.issue_receipt} onCheckedChange={(v) => setPayForm({ ...payForm, issue_receipt: !!v })} /> הפק קבלה ב-Maven</label>}

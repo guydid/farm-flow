@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { format } from "date-fns";
 import { Plus } from "lucide-react";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function SeedingExpenses({ seedingId, expenses, onUpdate }) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ date: "", category: "", type: "", description: "", amount: "" });
@@ -54,7 +55,7 @@ export default function SeedingExpenses({ seedingId, expenses, onUpdate }) {
           <DialogContent>
             <DialogHeader><DialogTitle>הוספת הוצאה חדשה</DialogTitle></DialogHeader>
             <div className="space-y-4 py-4">
-              <div><Label>תאריך</Label><Input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
+              <div><Label>תאריך</Label><DateInput value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
               <div><Label>קטגוריה</Label>
                 <Select onValueChange={value => setFormData({...formData, category: value})}><SelectTrigger><SelectValue/></SelectTrigger>
                   <SelectContent><SelectItem value="labor">עבודה</SelectItem><SelectItem value="inputs">תשומות</SelectItem></SelectContent>

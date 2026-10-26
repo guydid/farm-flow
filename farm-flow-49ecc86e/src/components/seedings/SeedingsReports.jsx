@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Download, Printer, Filter } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
+import { DateInput } from "@/components/ui/date-input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -291,11 +292,11 @@ export default function SeedingsReports() {
                 </div>
                 <div>
                   <Label>מתאריך</Label>
-                  <Input type="date" value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} />
+                  <DateInput value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} />
                 </div>
                 <div>
                   <Label>עד תאריך</Label>
-                  <Input type="date" value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} />
+                  <DateInput value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} />
                 </div>
               </div>
               <div className="mt-4">

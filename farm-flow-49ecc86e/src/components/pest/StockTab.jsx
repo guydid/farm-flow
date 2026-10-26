@@ -16,6 +16,7 @@ import { parseDosage } from './pestConstants';
 import PriceEditor from './PriceEditor';
 import { savePesticidePrice } from '@/api/pesticidePrices';
 
+import { DateInput } from "@/components/ui/date-input";
 const fmtDate = (d) => { try { return format(parseISO(d), 'dd/MM/yy'); } catch { return d || ''; } };
 const UNITS = ['ליטר', 'מ"ל', 'ק"ג', 'גרם', "יח'"];
 const STOCK_STATUS = {
@@ -266,7 +267,7 @@ function MovementDialog({ init, pesticides, stock, me, onClose, onSaved }) {
 
           <div className="space-y-1.5">
             <Label>תאריך</Label>
-            <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
+            <DateInput value={date} onChange={e => setDate(e.target.value)} />
           </div>
 
           {type === 'purchase' && (

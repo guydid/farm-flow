@@ -16,6 +16,7 @@ import { format } from 'date-fns';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import PageHeader from "@/components/common/PageHeader";
+import { DateInput } from "@/components/ui/date-input";
 export default function Plots() {
   const [plots, setPlots] = useState([]);
   const [seedings, setSeedings] = useState([]);
@@ -527,11 +528,11 @@ export default function Plots() {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <Label>תחילת שכירות</Label>
-                        <Input type="date" value={formData.lease_start_date} onChange={e => setFormData({...formData, lease_start_date: e.target.value})}/>
+                        <DateInput value={formData.lease_start_date} onChange={e => setFormData({...formData, lease_start_date: e.target.value})}/>
                       </div>
                       <div className="grid gap-2">
                         <Label>סיום שכירות</Label>
-                        <Input type="date" value={formData.lease_end_date} onChange={e => setFormData({...formData, lease_end_date: e.target.value})}/>
+                        <DateInput value={formData.lease_end_date} onChange={e => setFormData({...formData, lease_end_date: e.target.value})}/>
                       </div>
                     </div>
                     <div className="grid gap-2">

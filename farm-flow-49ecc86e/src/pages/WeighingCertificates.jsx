@@ -32,6 +32,7 @@ import { getMeCached, getFarmCached, getListCached, invalidateList } from "@/api
 import CustomerOpenReportLayout from "../components/weighing/CustomerOpenReport";
 
 
+import { DateInput } from "@/components/ui/date-input";
 export default function WeighingCertificates() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -830,11 +831,11 @@ export default function WeighingCertificates() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label className="text-sm">מתאריך</Label>
-                      <Input type="date" value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} className="h-9 mt-1" />
+                      <DateInput value={filters.date_from} onChange={e => setFilters({...filters, date_from: e.target.value})} className="h-9 mt-1" />
                     </div>
                     <div>
                       <Label className="text-sm">עד תאריך</Label>
-                      <Input type="date" value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} className="h-9 mt-1" />
+                      <DateInput value={filters.date_to} onChange={e => setFilters({...filters, date_to: e.target.value})} className="h-9 mt-1" />
                     </div>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => { setFilters({status: "all", customer: "", date_from: "", date_to: "", delivery_note: "all"}); setFiltersOpen(false); }} className="w-full h-9">
@@ -880,8 +881,7 @@ export default function WeighingCertificates() {
               </div>
               <div>
                 <Label className="text-sm">מתאריך</Label>
-                <Input
-                  type="date"
+                <DateInput
                   value={filters.date_from}
                   onChange={e => setFilters({...filters, date_from: e.target.value})}
                   className="h-9"
@@ -889,8 +889,7 @@ export default function WeighingCertificates() {
               </div>
               <div>
                 <Label className="text-sm">עד תאריך</Label>
-                <Input
-                  type="date"
+                <DateInput
                   value={filters.date_to}
                   onChange={e => setFilters({...filters, date_to: e.target.value})}
                   className="h-9"
@@ -1371,8 +1370,7 @@ export default function WeighingCertificates() {
                   <div className="grid grid-cols-2 gap-4">
                       <div>
                           <Label>תאריך</Label>
-                          <Input 
-                            type="date" 
+                          <DateInput 
                             value={formData.date} 
                             onChange={e => setFormData({...formData, date: e.target.value})} 
                             required 

@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { DateInput } from "@/components/ui/date-input";
 // Variety Management Component (Internal)
 function SeedingVarietiesManager({ seeding, cropType, currentVarieties, onVarietiesChange }) {
   const [availableVarieties, setAvailableVarieties] = useState([]);
@@ -446,18 +447,16 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                   </div>
                   <div>
                     <Label htmlFor="start_date">תאריך הזמנה</Label>
-                    <Input
+                    <DateInput
                       id="start_date"
-                      type="date"
                       value={formData.start_date}
                       onChange={(e) => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
                     />
                   </div>
                   <div>
                     <Label htmlFor="planting_date">תאריך שתילה</Label>
-                    <Input
+                    <DateInput
                       id="planting_date"
-                      type="date"
                       value={formData.planting_date}
                       onChange={(e) => setFormData(prev => ({ ...prev, planting_date: e.target.value }))}
                     />
@@ -465,8 +464,7 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                   </div>
                   <div>
                     <Label>קטיף ראשון</Label>
-                    <Input
-                      type="date"
+                    <DateInput
                       value={seeding?.first_harvest_date ? format(new Date(seeding.first_harvest_date), "yyyy-MM-dd") : ""}
                       readOnly
                       disabled
@@ -476,8 +474,7 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                   </div>
                   <div>
                     <Label>סיום (עקירה)</Label>
-                    <Input
-                      type="date"
+                    <DateInput
                       value={seeding?.end_date ? format(new Date(seeding.end_date), "yyyy-MM-dd") : ""}
                       readOnly
                       disabled
@@ -487,9 +484,8 @@ export default function EditSeedingForm({ seeding, isOpen, onClose, onSuccess })
                   </div>
                   <div>
                     <Label htmlFor="estimated_end_date">תאריך סיום משוער</Label>
-                    <Input
+                    <DateInput
                       id="estimated_end_date"
-                      type="date"
                       value={formData.estimated_end_date}
                       onChange={(e) => setFormData(prev => ({ ...prev, estimated_end_date: e.target.value }))}
                     />

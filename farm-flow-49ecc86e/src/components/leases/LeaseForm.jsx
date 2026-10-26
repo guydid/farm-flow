@@ -10,6 +10,7 @@ import { Loader2, Save, Upload, FileText, Plus, Trash2, X } from "lucide-react";
 import { UploadFile } from "@/api/integrations";
 import { DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, BILLING_MODES } from "./leaseUtils";
 
+import { DateInput } from "@/components/ui/date-input";
 const EMPTY = {
   direction: "pay", title: "", asset_type: "land", asset_description: "",
   counterparty_name: "", counterparty_phone: "", counterparty_id_number: "", counterparty_email: "",
@@ -96,8 +97,8 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1"><Label>תאריך התחלה *</Label><Input type="date" value={form.start_date} onChange={(e) => set({ start_date: e.target.value })} /></div>
-            <div className="space-y-1"><Label>תאריך סיום</Label><Input type="date" value={form.end_date} onChange={(e) => set({ end_date: e.target.value })} /></div>
+            <div className="space-y-1"><Label>תאריך התחלה *</Label><DateInput value={form.start_date} onChange={(e) => set({ start_date: e.target.value })} /></div>
+            <div className="space-y-1"><Label>תאריך סיום</Label><DateInput value={form.end_date} onChange={(e) => set({ end_date: e.target.value })} /></div>
             <div className="space-y-1">
               <Label>סטטוס</Label>
               <Select value={form.status} onValueChange={(v) => set({ status: v })}><SelectTrigger><SelectValue /></SelectTrigger>
@@ -172,7 +173,7 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
                 <div className="space-y-1"><Label className="text-xs">מס' מונה</Label><Input dir="ltr" value={m.meter_number || ""} onChange={(e) => setMeter(i, { meter_number: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">תעריף ליח' (₪/{m.unit || "יח'"})</Label><Input type="number" step="0.001" dir="ltr" value={m.rate_per_unit ?? ""} onChange={(e) => setMeter(i, { rate_per_unit: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">קריאה אחרונה</Label><Input type="number" step="0.01" dir="ltr" value={m.last_reading ?? ""} onChange={(e) => setMeter(i, { last_reading: e.target.value })} /></div>
-                <div className="flex items-center gap-1"><Input type="date" value={m.last_reading_date || ""} onChange={(e) => setMeter(i, { last_reading_date: e.target.value })} /><Button type="button" size="icon" aria-label="מחק" variant="ghost" onClick={() => removeMeter(i)}><Trash2 className="w-4 h-4 text-red-500" /></Button></div>
+                <div className="flex items-center gap-1"><DateInput value={m.last_reading_date || ""} onChange={(e) => setMeter(i, { last_reading_date: e.target.value })} /><Button type="button" size="icon" aria-label="מחק" variant="ghost" onClick={() => removeMeter(i)}><Trash2 className="w-4 h-4 text-red-500" /></Button></div>
               </div>
             ))}
           </div>

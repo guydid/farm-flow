@@ -18,6 +18,7 @@ import {
 import { format, parseISO } from 'date-fns';
 import { getToken } from '@/api/localClient';
 
+import { DateInput } from "@/components/ui/date-input";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 async function uploadFile(file) {
@@ -256,7 +257,7 @@ export default function EmployeeTimeline({ employee, currentUser, farmId }) {
                 <Calendar className="w-3.5 h-3.5 text-gray-400" />
                 תאריך
               </Label>
-              <Input type="date" value={form.event_date}
+              <DateInput value={form.event_date}
                 onChange={e => setForm(p => ({ ...p, event_date: e.target.value }))} />
             </div>
 

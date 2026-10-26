@@ -14,6 +14,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { fetchPesticidePrices, farmPriceFor } from "@/api/pesticidePrices";
 import { isPercentUnit, parseDosage, sprayVolumeFromText, percentToLiters } from "@/components/pest/pestConstants";
 
+import { DateInput } from "@/components/ui/date-input";
 // מינון באחוזים הוא ריכוז בתרסיס — בהדברה עצמה הכמות נשמרת תמיד בליטרים.
 // גם רשומות ישנות שנשמרו עם יחידה "%" מומרות כאן (האחוז נשמר ב-concentration_percent).
 function normalizeApplied(list, area) {
@@ -352,9 +353,8 @@ export default function SprayingForm({ seeding, pesticides, plots, onSubmit, onC
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <Label htmlFor="date">תאריך *</Label>
-              <Input
+              <DateInput
                 id="date"
-                type="date"
                 value={formData.date}
                 onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
                 required

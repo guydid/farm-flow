@@ -13,6 +13,7 @@ import { getToken } from '@/api/localClient';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import EntitySelect from "@/components/common/EntitySelect";
 
+import { DateInput } from "@/components/ui/date-input";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 // Append token to /uploads URLs so the server can authenticate static file requests
@@ -444,11 +445,11 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                 <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div>
                         <Label>תאריך תחילת עבודה*</Label>
-                        <Input type="date" name="start_date" value={formData.start_date || ''} onChange={handleChange} required />
+                        <DateInput name="start_date" value={formData.start_date || ''} onChange={handleChange} required />
                     </div>
                     <div>
                         <Label>תאריך כניסה לארץ</Label>
-                        <Input type="date" name="entry_date" value={formData.entry_date || ''} onChange={handleChange} />
+                        <DateInput name="entry_date" value={formData.entry_date || ''} onChange={handleChange} />
                     </div>
                     <div>
                         <Label>חברת כח אדם</Label>
@@ -490,7 +491,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                         </div>
                         <div>
                             <Label>תוקף דרכון</Label>
-                            <Input type="date" name="passport_expiry" value={formData.passport_expiry || ''} onChange={handleChange} />
+                            <DateInput name="passport_expiry" value={formData.passport_expiry || ''} onChange={handleChange} />
                         </div>
                     </div>
                     <div className="space-y-4">
@@ -501,7 +502,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                         </div>
                         <div>
                             <Label>תוקף אשרה</Label>
-                            <Input type="date" name="visa_expiry" value={formData.visa_expiry || ''} onChange={handleChange} />
+                            <DateInput name="visa_expiry" value={formData.visa_expiry || ''} onChange={handleChange} />
                         </div>
                     </div>
                 </CardContent>

@@ -15,6 +15,7 @@ import { Loader2, Plus, Trash2, ExternalLink, Sprout, Leaf } from "lucide-react"
 import { format } from "date-fns";
 import { useNavigate } from "react-router-dom";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function CreateSeedingForm({ isOpen, onClose, onSuccess, availablePlots = [] }) {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
@@ -362,9 +363,8 @@ export default function CreateSeedingForm({ isOpen, onClose, onSuccess, availabl
 
               <div>
                 <Label htmlFor="start_date">תאריך הזמנה</Label>
-                <Input
+                <DateInput
                   id="start_date"
-                  type="date"
                   value={formData.start_date}
                   onChange={(e) => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
                 />
@@ -372,9 +372,8 @@ export default function CreateSeedingForm({ isOpen, onClose, onSuccess, availabl
 
               <div>
                 <Label htmlFor="planting_date">תאריך שתילה משוער</Label>
-                <Input
+                <DateInput
                   id="planting_date"
-                  type="date"
                   value={formData.planting_date}
                   onChange={(e) => handlePlantingOrDaysChange('planting_date', e.target.value)}
                 />
@@ -401,9 +400,8 @@ export default function CreateSeedingForm({ isOpen, onClose, onSuccess, availabl
                     <span className="text-xs text-green-600 mr-2">(חושב אוטומטית)</span>
                   )}
                 </Label>
-                <Input
+                <DateInput
                   id="estimated_end_date"
-                  type="date"
                   value={formData.estimated_end_date}
                   onChange={(e) => setFormData(prev => ({ ...prev, estimated_end_date: e.target.value }))}
                   placeholder="יחושב אוטומטית מתאריך שתילה + ימים"

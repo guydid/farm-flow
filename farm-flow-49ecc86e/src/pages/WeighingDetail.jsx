@@ -25,6 +25,7 @@ import useCertificateShare from "../components/weighing/useCertificateShare";
 import MavenDocumentsCard from "../components/weighing/MavenDocumentsCard";
 import { getMeCached, getFarmCached, getListCached } from "@/api/cachedReads";
 
+import { DateInput } from "@/components/ui/date-input";
 // Helper functions
 const safeArray = (arr) => (Array.isArray(arr) ? arr : []);
 const safeFind = (arr, predicate) => safeArray(arr).find(predicate);
@@ -595,7 +596,7 @@ export default function WeighingDetail() {
     <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4 text-sm flex-grow">
       <div>
         <Label>תאריך:</Label>
-        <Input type="date" value={safeObject(certificateFormData).date} onChange={handleFieldChange('date')} />
+        <DateInput value={safeObject(certificateFormData).date} onChange={handleFieldChange('date')} />
       </div>
       <div>
         <Label>שעה:</Label>

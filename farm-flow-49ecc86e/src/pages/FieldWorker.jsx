@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Globe, CheckCircle, Sprout, ClipboardList, LogOut } from "lucide-react";
 import { format } from "date-fns";
 
+import { DateInput } from "@/components/ui/date-input";
 const translations = {
   en: {
     title: "Field Work Entry",
@@ -365,8 +366,7 @@ export default function FieldWorker() {
                   {/* Date */}
                   <div>
                     <Label>{t.date} *</Label>
-                    <Input
-                      type="date"
+                    <DateInput
                       value={harvestForm.date}
                       onChange={(e) => setHarvestForm({...harvestForm, date: e.target.value})}
                       required
@@ -530,8 +530,7 @@ export default function FieldWorker() {
                 <form onSubmit={handleActivitySubmit} className="space-y-6">
                   <div>
                     <Label>{t.date} *</Label>
-                    <Input
-                      type="date"
+                    <DateInput
                       value={activityForm.date}
                       onChange={(e) => setActivityForm({...activityForm, date: e.target.value})}
                       required

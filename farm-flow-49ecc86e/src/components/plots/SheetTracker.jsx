@@ -14,6 +14,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Plus, Edit, Trash2, Save, X } from "lucide-react";
 import { format } from "date-fns";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function SheetTracker({ plot, isOpen, onClose }) {
   const [sheets, setSheets] = useState([]);
   const [sheetTypes, setSheetTypes] = useState([]);
@@ -375,8 +376,7 @@ export default function SheetTracker({ plot, isOpen, onClose }) {
                 </div>
                 <div>
                   <Label>תאריך התקנה</Label>
-                  <Input
-                    type="date"
+                  <DateInput
                     value={newSheet.installation_date}
                     onChange={(e) => setNewSheet({...newSheet, installation_date: e.target.value})}
                   />
@@ -673,8 +673,7 @@ function EditSheetDialog({ sheet, onSave, onClose }) {
           </div>
           <div>
             <Label>תאריך התקנה</Label>
-            <Input
-              type="date"
+            <DateInput
               value={formData.installation_date}
               onChange={(e) => setFormData({...formData, installation_date: e.target.value})}
             />

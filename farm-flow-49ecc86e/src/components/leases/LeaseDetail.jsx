@@ -11,6 +11,7 @@ import LeaseInvoices from "./LeaseInvoices";
 import { getToken } from "@/api/localClient";
 import { apiFetch, DIRECTIONS, ASSET_TYPES, FREQUENCIES, STATUSES, METHODS, METER_TYPES, KINDS, CREDIT_KINDS, PAYMENT_STATUS, money, fmtDate, todayIso, daysUntil } from "./leaseUtils";
 
+import { DateInput } from "@/components/ui/date-input";
 const contractHref = (url) => (url ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(getToken() || "")}` : null);
 
 export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDelete, onChanged, canWrite }) {
@@ -130,7 +131,7 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
             <div className="space-y-1"><Label className="text-xs">סוג</Label><Select value={charge.kind} onValueChange={(v) => setCharge({ ...charge, kind: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(KINDS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
             <div className="space-y-1 sm:col-span-2"><Label className="text-xs">תיאור</Label><Input value={charge.description} onChange={(e) => setCharge({ ...charge, description: e.target.value })} placeholder={CREDIT_KINDS.has(charge.kind) ? "למשל: החזר על ימים שלא גרו, פיצוי על תקלה" : "למשל: מגורים אוקטובר · 4 עובדים, ארנונה, תיקון גדר"} /></div>
             <div className="space-y-1"><Label className="text-xs">{CREDIT_KINDS.has(charge.kind) ? "סכום הזיכוי" : "סכום"}</Label><Input type="number" min="0" dir="ltr" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} className={CREDIT_KINDS.has(charge.kind) ? "border-green-400" : ""} /></div>
-            <div className="space-y-1"><Label className="text-xs">מועד</Label><div className="flex gap-1"><Input type="date" value={charge.due_date} onChange={(e) => setCharge({ ...charge, due_date: e.target.value })} /><Button size="sm" onClick={addCharge} disabled={busy === "charge"}>הוסף</Button></div></div>
+            <div className="space-y-1"><Label className="text-xs">מועד</Label><div className="flex gap-1"><DateInput value={charge.due_date} onChange={(e) => setCharge({ ...charge, due_date: e.target.value })} /><Button size="sm" onClick={addCharge} disabled={busy === "charge"}>הוסף</Button></div></div>
           </div>
         )}
 
@@ -139,7 +140,7 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
             <div className="grid gap-2 sm:grid-cols-5 items-end">
               <div className="space-y-1"><Label className="text-xs">מונה</Label><Select value={meterForm.meter_type} onValueChange={(v) => setMeterForm({ ...meterForm, meter_type: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{meters.map((m) => <SelectItem key={m.type} value={m.type}>{METER_TYPES[m.type]?.label || m.type}{m.meter_number ? ` ${m.meter_number}` : ""}</SelectItem>)}</SelectContent></Select></div>
               <div className="space-y-1"><Label className="text-xs">קריאה נוכחית</Label><Input type="number" step="0.01" dir="ltr" value={meterForm.reading} onChange={(e) => setMeterForm({ ...meterForm, reading: e.target.value })} /></div>
-              <div className="space-y-1"><Label className="text-xs">תאריך</Label><Input type="date" value={meterForm.reading_date} onChange={(e) => setMeterForm({ ...meterForm, reading_date: e.target.value })} /></div>
+              <div className="space-y-1"><Label className="text-xs">תאריך</Label><DateInput value={meterForm.reading_date} onChange={(e) => setMeterForm({ ...meterForm, reading_date: e.target.value })} /></div>
               <div className="space-y-1"><Label className="text-xs">תעריף (ריק = מההסכם)</Label><Input type="number" step="0.001" dir="ltr" value={meterForm.rate_per_unit} onChange={(e) => setMeterForm({ ...meterForm, rate_per_unit: e.target.value })} /></div>
               <Button size="sm" onClick={submitMeter} disabled={busy === "meter" || !meterForm.meter_type || meterForm.reading === ""}>{busy === "meter" ? <Loader2 className="w-4 h-4 animate-spin" /> : "שמור וחייב"}</Button>
             </div>
@@ -211,7 +212,7 @@ export default function LeaseDetail({ open, onClose, lease, farmId, onEdit, onDe
             <DialogContent className="max-w-sm" dir="rtl">
               <DialogHeader><DialogTitle>{isPay ? "סימון תשלום ששולם" : "סימון תשלום שהתקבל"}</DialogTitle><DialogDescription>{payDialog.description} · {money(payDialog.amount)}</DialogDescription></DialogHeader>
               <div className="space-y-3">
-                <div className="space-y-1"><Label>תאריך</Label><Input type="date" value={payForm.paid_date} onChange={(e) => setPayForm({ ...payForm, paid_date: e.target.value })} /></div>
+                <div className="space-y-1"><Label>תאריך</Label><DateInput value={payForm.paid_date} onChange={(e) => setPayForm({ ...payForm, paid_date: e.target.value })} /></div>
                 <div className="space-y-1"><Label>סכום</Label><Input type="number" dir="ltr" value={payForm.paid_amount} onChange={(e) => setPayForm({ ...payForm, paid_amount: e.target.value })} /></div>
                 <div className="space-y-1"><Label>אמצעי</Label><Select value={payForm.method} onValueChange={(v) => setPayForm({ ...payForm, method: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(METHODS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
                 <div className="space-y-1"><Label>אסמכתא</Label><Input value={payForm.reference} onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })} placeholder="מס' צ'ק / העברה" /></div>

@@ -16,6 +16,7 @@ import SprayingForm from "./SprayingForm";
 import { packagingsForSeeding } from "@/lib/seedingFilters";
 import { useNavigate } from "react-router-dom";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function AddEventControl({ seeding, pesticides, onSuccess, onClose, varieties, packagings, products, initialState }) {
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
@@ -535,7 +536,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
               <div className="grid grid-cols-2 gap-4">
                   <div>
                       <Label htmlFor="event-date">תאריך</Label>
-                      <Input id="event-date" type="date" value={formData.date} onChange={e => setFormData(prev => ({...prev, date: e.target.value}))} required />
+                      <DateInput id="event-date" value={formData.date} onChange={e => setFormData(prev => ({...prev, date: e.target.value}))} required />
                   </div>
                   {plots.length > 0 && (
                     <div>

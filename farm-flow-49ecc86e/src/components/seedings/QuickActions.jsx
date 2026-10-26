@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function QuickActions({ seeding, varieties, onRefresh, pesticides, packagings, products }) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [actionType, setActionType] = useState(null);
@@ -429,9 +430,8 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
             {actionType !== 'spraying' && (
               <div>
                 <Label htmlFor="date">תאריך</Label>
-                <Input
+                <DateInput
                   id="date"
-                  type="date"
                   value={formData.date}
                   onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
                   required
@@ -637,9 +637,8 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="date">תאריך *</Label>
-                        <Input
+                        <DateInput
                           id="date"
-                          type="date"
                           value={formData.date}
                           onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
                           required

@@ -11,6 +11,7 @@ import { Vehicle } from '@/entities/all';
 import { getToken } from '@/api/localClient';
 import { format } from "date-fns";
 
+import { DateInput } from "@/components/ui/date-input";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 // Append token to /uploads URLs so the server can authenticate static file requests
@@ -353,7 +354,7 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                     <div><Label>יצרן</Label><Input name="manufacturer" value={formData.manufacturer || ''} onChange={handleChange} /></div>
                     <div><Label>דגם</Label><Input name="model" value={formData.model || ''} onChange={handleChange} /></div>
                     <div><Label>שנת ייצור</Label><Input type="number" name="year" value={formData.year || ''} onChange={handleChange} /></div>
-                    <div><Label>תאריך רכישה</Label><Input type="date" name="purchase_date" value={formData.purchase_date || ''} onChange={handleChange} /></div>
+                    <div><Label>תאריך רכישה</Label><DateInput name="purchase_date" value={formData.purchase_date || ''} onChange={handleChange} /></div>
                     <div><Label>סטטוס</Label><Select name="status" value={formData.status} onValueChange={(v) => handleSelectChange('status', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">פעיל</SelectItem><SelectItem value="in_service">בטיפול</SelectItem><SelectItem value="sold">נמכר</SelectItem><SelectItem value="out_of_order">מושבת</SelectItem></SelectContent></Select></div>
                 </CardContent>
             </Card>
@@ -382,8 +383,8 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                         </div>
                         <div><Label>חברת ביטוח</Label><Input name="provider" value={formData.insurance_compulsory?.provider || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
                         <div><Label>מספר פוליסה</Label><Input name="policy_number" value={formData.insurance_compulsory?.policy_number || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
-                        <div><Label>תאריך תחילת ביטוח</Label><Input type="date" name="start_date" value={formData.insurance_compulsory?.start_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
-                        <div><Label>תאריך סיום ביטוח</Label><Input type="date" name="end_date" value={formData.insurance_compulsory?.end_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>תאריך תחילת ביטוח</Label><DateInput name="start_date" value={formData.insurance_compulsory?.start_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
+                        <div><Label>תאריך סיום ביטוח</Label><DateInput name="end_date" value={formData.insurance_compulsory?.end_date || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
                         <div><Label>עלות</Label><Input type="number" name="cost" value={formData.insurance_compulsory?.cost || ''} onChange={(e) => handleNestedChange('insurance_compulsory', e)} /></div>
                     </CardContent>
                 </Card>
@@ -410,16 +411,16 @@ export default function VehicleForm({ vehicle, currentFarm, onSuccess, onCancel 
                         </div>
                         <div><Label>חברת ביטוח</Label><Input name="provider" value={formData.insurance_info?.provider || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                         <div><Label>מספר פוליסה</Label><Input name="policy_number" value={formData.insurance_info?.policy_number || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
-                        <div><Label>תאריך תחילת ביטוח</Label><Input type="date" name="start_date" value={formData.insurance_info?.start_date || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
-                        <div><Label>תאריך סיום ביטוח</Label><Input type="date" name="end_date" value={formData.insurance_info?.end_date || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
+                        <div><Label>תאריך תחילת ביטוח</Label><DateInput name="start_date" value={formData.insurance_info?.start_date || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
+                        <div><Label>תאריך סיום ביטוח</Label><DateInput name="end_date" value={formData.insurance_info?.end_date || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                         <div><Label>עלות</Label><Input type="number" name="cost" value={formData.insurance_info?.cost || ''} onChange={(e) => handleNestedChange('insurance_info', e)} /></div>
                     </CardContent>
                 </Card>
                 <Card className="lg:col-span-2">
                     <CardHeader><CardTitle>פרטי רישוי (טסט)</CardTitle></CardHeader>
                     <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><Label>תאריך טסט אחרון</Label><Input type="date" name="last_test_date" value={formData.licensing_info?.last_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
-                        <div><Label>תאריך טסט הבא</Label><Input type="date" name="next_test_date" value={formData.licensing_info?.next_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
+                        <div><Label>תאריך טסט אחרון</Label><DateInput name="last_test_date" value={formData.licensing_info?.last_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
+                        <div><Label>תאריך טסט הבא</Label><DateInput name="next_test_date" value={formData.licensing_info?.next_test_date || ''} onChange={(e) => handleNestedChange('licensing_info', e)} /></div>
                     </CardContent>
                 </Card>
             </div>

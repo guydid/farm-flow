@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { UploadPrivateFile, CreateFileSignedUrl } from "@/integrations/Core";
 import { getToken } from "@/api/localClient";
 
+import { DateInput } from "@/components/ui/date-input";
 // מוסיף טוקן לקבצי /uploads כדי שהשרת יאמת את הבקשה הסטטית
 function withToken(url) {
   if (!url) return url;
@@ -406,7 +407,7 @@ export default function VehicleDetail() {
                     <form onSubmit={handleTreatmentFormSubmit} className="space-y-4 pt-4">
                         <div>
                             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">תאריך טיפול</label>
-                            <Input type="date" name="treatment_date" value={treatmentFormData.treatment_date || ''} onChange={handleTreatmentFormChange} required />
+                            <DateInput name="treatment_date" value={treatmentFormData.treatment_date || ''} onChange={handleTreatmentFormChange} required />
                         </div>
                         <div>
                             <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">תיאור הטיפול</label>

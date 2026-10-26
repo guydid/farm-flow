@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import SupplierPicker from '@/components/invoices/SupplierPicker';
 
+import { DateInput } from "@/components/ui/date-input";
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const STATUS_OPTIONS = [
@@ -320,11 +321,11 @@ export default function InvoiceDetail() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">תאריך</Label>
-                  <Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
+                  <DateInput value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
                 </div>
                 <div>
                   <Label className="text-xs">תאריך פירעון</Label>
-                  <Input type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} />
+                  <DateInput value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3">

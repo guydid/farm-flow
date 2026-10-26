@@ -11,6 +11,7 @@ import { Plus, X, Edit, Trash2, ExternalLink } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useNavigate } from "react-router-dom";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function SeedingHarvests({ seeding, varieties, harvests, onUpdate }) {
   const navigate = useNavigate();
   const [palletTypes, setPalletTypes] = useState([]);
@@ -161,8 +162,7 @@ export default function SeedingHarvests({ seeding, varieties, harvests, onUpdate
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>תאריך</Label>
-                <Input
-                  type="date"
+                <DateInput
                   value={formData.date}
                   onChange={e => setFormData({...formData, date: e.target.value})}
                   required

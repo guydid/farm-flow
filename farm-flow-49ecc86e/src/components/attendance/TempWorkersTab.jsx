@@ -19,6 +19,7 @@ import { Plus, Pencil, Trash2, HardHat, FileText, Printer, Download } from 'luci
 import { useToast } from '@/components/ui/use-toast';
 import { format } from 'date-fns';
 
+import { DateInput } from "@/components/ui/date-input";
 /** ערך מיוחד בבורר המעסיק שפותח שדה טקסט חופשי */
 const FREE_TEXT = '__free__';
 /** קידומת לערך בבורר שמייצג שם שהוזן ידנית בעבר (ולא חברה רשומה) */
@@ -664,7 +665,7 @@ ${byEmployer.length > 1 ? `<h2>סיכום לפי מעסיק</h2><table>
           <div className="space-y-3">
             <div>
               <Label htmlFor="tw-date">תאריך *</Label>
-              <Input id="tw-date" type="date" value={form.date}
+              <DateInput id="tw-date" value={form.date}
                 onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} />
             </div>
 

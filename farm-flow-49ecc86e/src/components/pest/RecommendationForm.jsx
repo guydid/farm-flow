@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Search, X, Loader2 } from 'lucide-react';
+import { DateInput } from "@/components/ui/date-input";
 import {
   SEVERITIES, CONTROL_METHODS, TREATMENT_TYPES, ACTIVE_SEEDING_STATUSES, parseDosage, isPercentUnit, sprayVolumeFromText,
 } from './pestConstants';
@@ -265,7 +266,7 @@ export default function RecommendationForm({ plots, seedings, plotSeedings, pest
       <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>לביצוע עד</Label>
-          <Input type="date" value={data.due_date} onChange={e => set({ due_date: e.target.value })} />
+          <DateInput value={data.due_date} onChange={e => set({ due_date: e.target.value })} />
         </div>
       </section>
 

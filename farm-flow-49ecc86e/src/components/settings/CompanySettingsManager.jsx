@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Loader2, Upload, Trash2, Plus } from "lucide-react";
 import { UploadFile } from "@/integrations/Core";
 
+import { DateInput } from "@/components/ui/date-input";
 export default function CompanySettingsManager({ currentFarm }) { // currentFarm is now a prop
   const [settings, setSettings] = useState(null);
   const [formData, setFormData] = useState({});
@@ -234,7 +235,7 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
               </div>
               <div>
                 <Label>תאריך הקמה</Label>
-                <Input type="date" value={formData.established_date || ""} onChange={e => handleInputChange('established_date', e.target.value)} />
+                <DateInput value={formData.established_date || ""} onChange={e => handleInputChange('established_date', e.target.value)} />
               </div>
               <div>
                 <Label>שטח כולל (דונם)</Label>
@@ -292,7 +293,7 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
                 </div>
                 <div>
                   <Label>תאריך תוקף</Label>
-                  <Input type="date" value={cert.expiry_date || ""} onChange={e => handleCertificationChange(index, 'expiry_date', e.target.value)} />
+                  <DateInput value={cert.expiry_date || ""} onChange={e => handleCertificationChange(index, 'expiry_date', e.target.value)} />
                 </div>
                 <div className="flex items-end">
                   <Button type="button" variant="outline" size="sm" onClick={() => removeCertification(index)}>
