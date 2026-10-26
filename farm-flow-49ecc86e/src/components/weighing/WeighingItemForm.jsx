@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Calculator, ExternalLink, Plus } from "lucide-react";
 import QuickAddDialog from "@/components/common/QuickAddDialog";
 import { getMeCached } from "@/api/cachedReads";
+import { apiFetch, BASE_URL } from "@/api/localClient";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 
@@ -60,6 +61,7 @@ const saveProductPrefs = (productId, prefs) => {
 };
 
 const QUALITIES = ["א", "ב", "ג", "תעשייתי"];
+const fmtDMY = (iso) => { const [y, m, d] = String(iso || '').slice(0, 10).split('-'); return d && m && y ? `${d}/${m}/${y}` : ''; };
 
 // כפתור בחירה (chip) — אבן הבניין של הזרימה המהירה
 const Chip = ({ selected, onClick, children, className }) => (
@@ -89,6 +91,20 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
   const [addingProduct, setAddingProduct] = useState(false);
   const [farmId, setFarmId] = useState(null);
   useEffect(() => { getMeCached().then(u => setFarmId(u?.current_farm_id || null)).catch(() => {}); }, []);
+
+  // מחיר אחרון לכל מוצר אצל לקוח התעודה — ממולא אוטומטית בבחירת מוצר בפריט חדש, ומוצג כרמז מתחת לשדה המחיר
+  const [lastPrices, setLastPrices] = useState({});
+  useEffect(() => {
+    if (!certificateCustomerId) { setLastPrices({}); return; }
+    let alive = true;
+    const qs = new URLSearchParams({ customer_id: certificateCustomerId });
+    if (farmId) qs.set('farm_id', farmId);
+    apiFetch(`${BASE_URL}/weighing/customer-last-prices?${qs.toString()}`)
+      .then(d => { if (alive) setLastPrices(d && typeof d === 'object' ? d : {}); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [certificateCustomerId, farmId]);
+  const lastForProduct = formData.product_id ? lastPrices[formData.product_id] : null;
   const [formData, setFormData] = useState({
     product_id: "",
     product_name: "",
@@ -225,6 +241,8 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     if (!product) return;
     const notWeighable = product.weighable === false;
     const prefs = loadProductPrefs(product.id);
+    const last = lastPrices[product.id];
+    const useLast = !item && last && Number(last.price_per_unit) > 0; // פריט חדש בלבד — לא בעריכה/העתקה
     const isRelevant = (pkgName) => {
       if (!pkgName) return false;
       const pkg = safeArray(packagings).find(p => p && p.name === pkgName);
@@ -237,14 +255,16 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
         ...prev,
         product_id: product.id,
         product_name: product.name,
-        pricing_method: notWeighable ? 'per_unit' : (product.default_pricing_method || 'per_kg'),
+        pricing_method: notWeighable ? 'per_unit' : ((useLast && last.pricing_method) || product.default_pricing_method || 'per_kg'),
+        price_per_unit: useLast ? String(last.price_per_unit) : prev.price_per_unit,
+        discount_percentage: useLast ? (last.discount_percentage ? String(last.discount_percentage) : '') : prev.discount_percentage,
         quality: prefs?.quality || prev.quality || 'א',
         packaging_type: notWeighable ? '' : (isRelevant(candidate) ? candidate : ''),
         pallet_type: notWeighable ? '' : (prefs?.pallet_type ?? prev.pallet_type ?? ''),
         gross_weight: notWeighable ? '' : prev.gross_weight,
       };
     });
-  }, [packagings]);
+  }, [packagings, lastPrices, item]);
 
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
@@ -555,6 +575,14 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
                       placeholder="0.00"
                       className="h-10 mt-1"
                     />
+                    {lastForProduct && (
+                      <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">
+                        <span>מחיר אחרון ללקוח: ₪{Number(lastForProduct.price_per_unit).toLocaleString('he-IL')}{lastForProduct.pricing_method === 'per_unit' ? ' ליחידה' : ' לק"ג'}{lastForProduct.date ? ` (${fmtDMY(lastForProduct.date)})` : ''}</span>
+                        {String(lastForProduct.price_per_unit) !== String(formData.price_per_unit) && (
+                          <button type="button" className="text-primary underline" onClick={() => setFormData(prev => ({ ...prev, price_per_unit: String(lastForProduct.price_per_unit) }))}>החל</button>
+                        )}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label htmlFor="discount_percentage" className="text-xs">הנחה (%)</Label>

@@ -4660,6 +4660,41 @@ app.get('/api/recent-updates', authMiddleware, (req, res) => {
   res.json(getRecentUpdates(db, farmId, { limit: req.query.limit, before: req.query.before || null, types }));
 });
 
+// מחיר אחרון לכל מוצר אצל לקוח — למילוי אוטומטי של המחיר בפריט שקילה חדש.
+// נגזר מפריטי השקילה של תעודות הלקוח (האחרונה לפי תאריך התעודה, ואז לפי זמן יצירת הפריט).
+app.get('/api/weighing/customer-last-prices', authMiddleware, (req, res) => {
+  const user = getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const farmId = req.query.farm_id || user.current_farm_id;
+  if (!farmId || !(user.is_admin || user.farm_ids.includes(farmId))) return res.status(403).json({ error: 'אין גישה למשק' });
+  const customerId = String(req.query.customer_id || '');
+  if (!customerId) return res.json({});
+  const rows = db.prepare(`
+    SELECT i.data AS item, c.data AS cert
+    FROM entities i
+    JOIN entities c ON c.entity_type = 'weighing_certificates' AND c.id = json_extract(i.data, '$.certificate_id')
+    WHERE i.entity_type = 'weighing_items' AND i.farm_id = ? AND json_extract(c.data, '$.customer_id') = ?
+    ORDER BY json_extract(c.data, '$.date') DESC, i.created_at DESC
+  `).all(farmId, customerId);
+  const out = {};
+  for (const r of rows) {
+    let it, c;
+    try { it = JSON.parse(r.item); c = JSON.parse(r.cert); } catch { continue; }
+    if (!it.product_id || out[it.product_id]) continue;
+    const price = Number(it.price_per_unit) || 0;
+    if (price <= 0) continue;
+    out[it.product_id] = {
+      price_per_unit: price,
+      pricing_method: it.pricing_method || 'per_kg',
+      discount_percentage: Number(it.discount_percentage) || 0,
+      quality: it.quality || null,
+      date: c.date || null,
+      certificate_number: c.certificate_number || null,
+    };
+  }
+  res.json(out);
+});
+
 // מחירון קנייה של המשק (לא על הקטלוג המשותף)
 function pesticidePriceFarm(req, res) {
   const user = getUser(req.user.id);

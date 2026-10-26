@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +56,8 @@ export default function WeighingDetail() {
   const [copyingItem, setCopyingItem] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [lastAddedItem, setLastAddedItem] = useState(null);
-  const [showStickerDialog, setShowStickerDialog] = useState(false);
+  // הדפסת מדבקה ישירה: בלי חלון תצוגה מקדימה — המדבקה מרונדרת מחוץ למסך ונשלחת להדפסה כשהיא מוכנה
+  const [pendingStickerPrint, setPendingStickerPrint] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false); // עריכת פרטי תעודה בנייד (מכווץ כברירת מחדל)
@@ -155,7 +156,7 @@ export default function WeighingDetail() {
       return;
     }
     setLastAddedItem(safeObject(item));
-    setShowStickerDialog(true);
+    setPendingStickerPrint(true);
   }, [toast]);
 
   const updateCertificateTotals = useCallback(async (items) => {
@@ -324,7 +325,6 @@ export default function WeighingDetail() {
               title: "הצלחה!",
               description: "המדבקה נשלחה להדפסה"
             });
-            setShowStickerDialog(false);
           },
           (error) => {
             console.error('Print error:', error);
@@ -412,7 +412,6 @@ export default function WeighingDetail() {
       setTimeout(() => {
         iframe.contentWindow.focus();
         iframe.contentWindow.print();
-        setShowStickerDialog(false);
       }, 500);
 
     } catch (error) {
@@ -420,6 +419,13 @@ export default function WeighingDetail() {
       toast({ title: "שגיאה", description: "ההדפסה נכשלה.", variant: "destructive" });
     }
   }, [toast, printerConfig, printZebraSticker]);
+
+  useEffect(() => {
+    if (!pendingStickerPrint || !lastAddedItem) return;
+    setPendingStickerPrint(false);
+    const t = setTimeout(() => printSticker(), 60);
+    return () => clearTimeout(t);
+  }, [pendingStickerPrint, lastAddedItem, printSticker]);
 
   const handlePrintCertificate = useCallback(() => {
     if (!certificate || weighingItems.length === 0) {
@@ -1004,35 +1010,16 @@ export default function WeighingDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Sticker Print Dialog */}
-      <Dialog open={showStickerDialog} onOpenChange={setShowStickerDialog}>
-        <DialogContent className="max-w-fit" onPointerDownOutside={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>הדפסת מדבקה</DialogTitle>
-            <DialogDescription>
-              תצוגה מקדימה של המדבקה. לחץ על &quot;הדפס&quot; כדי להדפיס.
-            </DialogDescription>
-          </DialogHeader>
-          <div ref={stickerPrintRef} className="mx-auto my-4">
-            {lastAddedItem && (
-              <PalletSticker
-                item={safeObject(lastAddedItem)}
-                certificate={safeObject(certificate)}
-                companySettings={safeObject(companySettings)}
-              />
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowStickerDialog(false)}>
-              סגור
-            </Button>
-            <Button onClick={printSticker}>
-              <Printer className="w-4 h-4 ml-2" />
-              הדפס
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* מדבקת משטח מרונדרת מחוץ למסך — נשלחת ישירות להדפסה, ללא חלון תצוגה מקדימה */}
+      <div ref={stickerPrintRef} aria-hidden="true" style={{ position: 'absolute', left: '-10000px', top: 0, width: 'max-content' }}>
+        {lastAddedItem && (
+          <PalletSticker
+            item={safeObject(lastAddedItem)}
+            certificate={safeObject(certificate)}
+            companySettings={safeObject(companySettings)}
+          />
+        )}
+      </div>
 
       {/* Hidden iframe for sticker printing */}
       <iframe ref={stickerPrintIframeRef} title="Print Sticker Iframe" style={{ height: '0', width: '0', position: 'absolute', border: 'none' }}></iframe>
