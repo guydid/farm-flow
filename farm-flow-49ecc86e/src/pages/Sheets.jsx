@@ -13,11 +13,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from "@/components/ui/use-toast";
 import { 
   Plus, Download, Printer, FileText, AlertTriangle, ChevronLeft, Send, 
-  ShoppingCart, Filter, Search, X, Check, Package, Truck, Wrench, Archive
-} from "lucide-react";
+  ShoppingCart, Filter, Search, X, Check, Package, Truck, Wrench, Archive, Layers } from "lucide-react";
 import SheetTracker from "../components/plots/SheetTracker";
 import { format, parseISO, addMonths, differenceInDays } from "date-fns";
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Sheets() {
   const [sheets, setSheets] = useState([]);
   const [plots, setPlots] = useState([]);
@@ -383,12 +383,7 @@ export default function Sheets() {
   return (
     <div className="p-4 sm:p-6 lg:p-8" dir="rtl">
       <div className="max-w-screen-2xl mx-auto space-y-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold">ניהול יריעות</h1>
-          <div className="text-sm text-gray-500">
-            {filteredSheets.length} מתוך {sheets.length} יריעות
-          </div>
-        </div>
+        <PageHeader icon={Layers} title="ניהול יריעות" subtitle={`${filteredSheets.length} מתוך ${sheets.length} יריעות`} className="mb-0" />
 
         {/* Filters */}
         <Card>

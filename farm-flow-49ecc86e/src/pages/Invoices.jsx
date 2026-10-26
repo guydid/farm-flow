@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
+import PageHeader from "@/components/common/PageHeader";
 // Lazy — the scanner (perspective/filters) only loads when the user scans an image
 const ScanDialog = lazy(() => import('@/components/invoices/ScanDialog'));
 
@@ -501,12 +502,11 @@ export default function Invoices() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">חשבוניות ספקים</h1>
-            <p className="text-sm text-gray-500 mt-1">{filtered.length} מתוך {invoices.length} חשבוניות</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+        <PageHeader
+          icon={FileText}
+          title="חשבוניות ספקים"
+          subtitle={`${filtered.length} מתוך ${invoices.length} חשבוניות`}
+          actions={<>
             <div className="flex rounded-lg border overflow-hidden">
               <button
                 onClick={() => switchView('list')}
@@ -546,8 +546,8 @@ export default function Invoices() {
               {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               סרוק חשבונית
             </Button>
-          </div>
-        </div>
+          </>}
+        />
         <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => handlePicked(e.target.files)} />
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => handlePicked(e.target.files)} />
 

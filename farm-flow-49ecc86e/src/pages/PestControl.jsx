@@ -18,6 +18,7 @@ import { fetchPesticidePrices, farmPriceFor } from '@/api/pesticidePrices';
 import SprayingForm from '@/components/seedings/SprayingForm';
 import { STATUSES, severityOf, treatmentLabel, ACTIVE_SEEDING_STATUSES, isPercentUnit, sprayVolumeFromText } from '@/components/pest/pestConstants';
 
+import PageHeader from "@/components/common/PageHeader";
 const fmtDate = (d) => { try { return format(parseISO(d), 'dd/MM/yy'); } catch { return d || ''; } };
 
 export default function PestControl() {
@@ -141,21 +142,16 @@ export default function PestControl() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen pb-24" dir="rtl">
       <div className="max-w-5xl mx-auto">
-        <div className="flex items-start justify-between gap-3 mb-5">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-2">
-              <Bug className="w-7 h-7 text-emerald-600" /> הדברה
-            </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              {tab === 'stock' ? 'מלאי חומרי ההדברה — מתעדכן אוטומטית מכל הדברה שנרשמת' : 'המלצות הדברה מהפקח — ממתינות עד לביצוע בשטח'}
-            </p>
-          </div>
-          {tab === 'inspection' && (
-            <Button onClick={() => { setEditing(null); setFormOpen(true); }} className="bg-emerald-600 hover:bg-emerald-700 flex-shrink-0">
-              <Plus className="w-4 h-4 ml-1" /> המלצה חדשה
+        <PageHeader
+          icon={Bug}
+          title="הדברה"
+          subtitle={tab === 'stock' ? 'מלאי חומרי ההדברה — מתעדכן אוטומטית מכל הדברה שנרשמת' : 'המלצות הדברה מהפקח — ממתינות עד לביצוע בשטח'}
+          actions={tab === 'inspection' && (
+            <Button onClick={() => { setEditing(null); setFormOpen(true); }}>
+              <Plus className="w-4 h-4" aria-hidden="true" /> המלצה חדשה
             </Button>
           )}
-        </div>
+        />
 
         <div className="flex border-b mb-4">
           {[

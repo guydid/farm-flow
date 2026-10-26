@@ -166,10 +166,10 @@ export default function ManpowerCompaniesManager({ currentFarm }) {
                     <TableRow key={company.id}>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(company)}>
+                          <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(company)}>
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(company.id)}>
+                          <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDelete(company.id)}>
                             <Trash2 className="w-4 h-4 text-red-500" />
                           </Button>
                         </div>

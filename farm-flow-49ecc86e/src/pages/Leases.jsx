@@ -11,6 +11,7 @@ import LeaseForm from "../components/leases/LeaseForm";
 import LeaseDetail from "../components/leases/LeaseDetail";
 import { apiFetch, ASSET_TYPES, FREQUENCIES, STATUSES, money, fmtDate, daysUntil } from "../components/leases/leaseUtils";
 
+import PageHeader from "@/components/common/PageHeader";
 const TABS = [
   { key: "pay", label: "אנחנו שוכרים", icon: ArrowUpRight, hint: "קרקעות, מבנים וציוד שהמשק שוכר ומשלם עליהם" },
   { key: "receive", label: "אנחנו משכירים", icon: ArrowDownLeft, hint: "נכסים שהמשק משכיר ומקבל עליהם תשלום, כולל מוני חשמל ומים" },
@@ -107,13 +108,13 @@ export default function Leases() {
 
   return (
     <div className="p-3 sm:p-6 space-y-4" dir="rtl">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl lg:text-3xl font-bold flex items-center gap-2"><KeyRound className="w-6 h-6 text-indigo-500" /> שכירויות</h1>
-          <p className="text-sm text-gray-500 hidden sm:block">הסכמי שכירות, חוזים, תשלומים צפויים, מונים ותזכורות</p>
-        </div>
-        {canWrite && <Button onClick={() => { setEditing(null); setFormOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white"><Plus className="w-4 h-4 ml-2" /> הסכם חדש</Button>}
-      </div>
+      <PageHeader
+        icon={KeyRound}
+        title="שכירויות"
+        subtitle="הסכמי שכירות, חוזים, תשלומים צפויים, מונים ותזכורות"
+        className="mb-0"
+        actions={canWrite && <Button onClick={() => { setEditing(null); setFormOpen(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> הסכם חדש</Button>}
+      />
 
       {/* tabs */}
       <div className="grid grid-cols-2 gap-2">

@@ -30,8 +30,7 @@ import {
   Mail,
   Clock,
   Receipt,
-  Plug,
-} from "lucide-react";
+  Plug, Settings as SettingsIcon } from "lucide-react";
 
 import CompanySettingsManager from "../components/settings/CompanySettingsManager";
 import UsersManager from "../components/settings/UsersManager";
@@ -58,6 +57,7 @@ import McpSettingsManager from '../components/settings/McpSettingsManager';
 import IntegrationsManager from '../components/settings/IntegrationsManager';
 import { User, Farm } from '@/entities/all';
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Settings() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -145,10 +145,13 @@ export default function Settings() {
   return (
     <div className="p-3 sm:p-6 lg:p-8" dir="rtl">
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-3 lg:mb-6">
-          <h1 className="text-xl lg:text-3xl font-bold">הגדרות{currentFarm ? ` — ${currentFarm.name}` : ''}</h1>
-          <span className="text-[11px] text-gray-400 whitespace-nowrap" title="גרסת המערכת">{formatVersion()}</span>
-        </div>
+        <PageHeader
+          icon={SettingsIcon}
+          title="הגדרות"
+          subtitle={currentFarm?.name}
+          className="mb-3 lg:mb-6"
+          actions={<span className="text-[11px] text-muted-foreground whitespace-nowrap" title="גרסת המערכת">{formatVersion()}</span>}
+        />
 
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <div className="relative mb-4 lg:mb-6">

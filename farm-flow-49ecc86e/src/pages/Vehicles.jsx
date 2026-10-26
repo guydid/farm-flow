@@ -11,6 +11,7 @@ import { Plus, Truck, Filter, Search, X, AlertTriangle, SlidersHorizontal, Chevr
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { useToast } from "@/components/ui/use-toast";
 
+import PageHeader from "@/components/common/PageHeader";
 const vehicleTypeTranslations = {
     tractor: "טרקטור",
     private_car: "רכב פרטי",
@@ -97,18 +98,16 @@ export default function Vehicles() {
     return (
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
             <div className="max-w-screen-2xl mx-auto">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                    <div>
-                        <h1 className="text-3xl font-bold text-gray-900">צי רכבים</h1>
-                        <p className="text-sm text-gray-500 mt-1">{filteredVehicles.length} מתוך {vehicles.length} רכבים</p>
-                    </div>
-                    <Link to={createPageUrl("AddVehicle")}>
-                        <Button className="flex items-center gap-1.5">
-                            <Plus className="w-4 h-4" />
-                            <span className="hidden sm:inline">הוסף רכב</span>
+                <PageHeader
+                    icon={Truck}
+                    title="צי רכבים"
+                    subtitle={`${filteredVehicles.length} מתוך ${vehicles.length} רכבים`}
+                    actions={
+                        <Button asChild>
+                            <Link to={createPageUrl("AddVehicle")}><Plus className="w-4 h-4" aria-hidden="true" /><span>הוסף רכב</span></Link>
                         </Button>
-                    </Link>
-                </div>
+                    }
+                />
 
                 {/* Mobile filters toggle */}
                 <div className="sm:hidden mb-4">

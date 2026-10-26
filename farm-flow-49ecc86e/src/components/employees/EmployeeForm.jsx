@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Loader2, Upload, Camera, FileText, User as UserIcon, ImagePlus, Paperclip } from "lucide-react";
 import { getToken } from '@/api/localClient';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import EntitySelect from "@/components/common/EntitySelect";
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
@@ -68,6 +69,9 @@ const statusTranslations = {
 };
 
 export default function EmployeeForm({ employee, currentFarm, manpowerCompanies, users, onClose, onSuccess }) {
+    // רשימת חברות כ"א מקומית — מתעדכנת מיד כשמוסיפים חברה מתוך הטופס
+    const [companies, setCompanies] = useState(Array.isArray(manpowerCompanies) ? manpowerCompanies : []);
+    useEffect(() => { setCompanies(Array.isArray(manpowerCompanies) ? manpowerCompanies : []); }, [manpowerCompanies]);
     const { toast } = useToast();
     const [formData, setFormData] = useState({
         first_name: '', last_name: '', nickname: '', status: 'active', photo_url: '',
@@ -448,15 +452,16 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                     </div>
                     <div>
                         <Label>חברת כח אדם</Label>
-                        <Select name="manpower_company_id" value={formData.manpower_company_id || '__none__'} onValueChange={(v) => handleSelectChange('manpower_company_id', v)}>
-                            <SelectTrigger><SelectValue placeholder="בחר חברה" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="__none__">ללא</SelectItem>
-                                {manpowerCompanies.map(company => (
-                                    <SelectItem key={company.id} value={company.id}>{company.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <EntitySelect
+                            options={companies}
+                            value={formData.manpower_company_id || ''}
+                            onValueChange={(v) => handleSelectChange('manpower_company_id', v || '__none__')}
+                            noneLabel="ללא"
+                            placeholder="בחר חברה"
+                            quickAdd="manpower_company"
+                            farmId={currentFarm?.id}
+                            onCreated={(c) => setCompanies(prev => [...prev, c])}
+                        />
                     </div>
                     <div>
                         <Label>מנהל ישיר</Label>

@@ -166,10 +166,10 @@ export default function CustomersManager({ currentFarm }) {
                     <TableRow key={customer.id}>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(customer)}>
+                          <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(customer)}>
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(customer.id)}>
+                          <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDelete(customer.id)}>
                             <Trash2 className="w-4 h-4 text-red-500" />
                           </Button>
                         </div>

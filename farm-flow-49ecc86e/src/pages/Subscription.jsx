@@ -3,6 +3,7 @@ import { User, Farm } from "@/entities/all";
 import { useToast } from "@/components/ui/use-toast";
 import SubscriptionManager from "../components/subscription/SubscriptionManager";
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Subscription() {
   const [currentFarm, setCurrentFarm] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,10 +44,7 @@ export default function Subscription() {
   return (
     <div className="p-6" dir="rtl">
       <div className="max-w-6xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold">ניהול מנוי</h1>
-          <p className="text-gray-600">ניהול מנוי ותשלומים עבור המשק</p>
-        </div>
+        <PageHeader title="ניהול מנוי" subtitle="ניהול מנוי ותשלומים עבור המשק" />
         
         <SubscriptionManager currentFarm={currentFarm} />
       </div>

@@ -213,7 +213,7 @@ export default function EmployeeTimeline({ employee, currentUser, farmId }) {
                             )}
                           </div>
                           {!ev._auto && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0 text-gray-300 hover:text-red-500"
+                            <Button variant="ghost" size="icon" aria-label="מחק" className="h-7 w-7 flex-shrink-0 text-gray-300 hover:text-red-500"
                               onClick={() => handleDelete(ev.id)}>
                               <Trash2 className="w-3.5 h-3.5" />
                             </Button>

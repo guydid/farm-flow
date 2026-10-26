@@ -516,7 +516,7 @@ export default function EmployeeDetail() {
                                                         <p className="text-xs text-gray-500">הועלה בתאריך: {format(parseISO(doc.upload_date), 'dd/MM/yyyy')}</p>
                                                     </div>
                                                 </div>
-                                                <Button variant="ghost" size="icon" onClick={() => handleDeleteGeneralDoc(index)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
+                                                <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDeleteGeneralDoc(index)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
                                             </li>
                                         ))}
                                     </ul>

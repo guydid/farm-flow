@@ -360,7 +360,7 @@ export default function PesticidesManager() {
                       <TableRow key={product.id} className="hover:bg-gray-50">
                         <TableCell className="p-1">
                           {variantCount > 0 && (
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => toggleExpand(regKey)}>
+                            <Button variant="ghost" size="icon" aria-label="הרחב" className="h-6 w-6" onClick={() => toggleExpand(regKey)}>
                               {isExpanded ? <ChevronDown className="w-4 h-4 text-blue-600" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
                             </Button>
                           )}
@@ -401,8 +401,8 @@ export default function PesticidesManager() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(product)}><Edit className="w-3.5 h-3.5" /></Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={() => handleDelete(product.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                            <Button variant="ghost" size="icon" aria-label="ערוך" className="h-7 w-7" onClick={() => handleEdit(product)}><Edit className="w-3.5 h-3.5" /></Button>
+                            <Button variant="ghost" size="icon" aria-label="מחק" className="h-7 w-7 text-red-400 hover:text-red-600" onClick={() => handleDelete(product.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -427,7 +427,7 @@ export default function PesticidesManager() {
                             )}
                           </TableCell>
                           <TableCell className="py-1.5">
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-red-400 hover:text-red-600" onClick={() => handleDelete(v.id)}><Trash2 className="w-3 h-3" /></Button>
+                            <Button variant="ghost" size="icon" aria-label="מחק" className="h-6 w-6 text-red-400 hover:text-red-600" onClick={() => handleDelete(v.id)}><Trash2 className="w-3 h-3" /></Button>
                           </TableCell>
                         </TableRow>
                       ))}

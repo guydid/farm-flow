@@ -172,7 +172,7 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
                 <div className="space-y-1"><Label className="text-xs">מס' מונה</Label><Input dir="ltr" value={m.meter_number || ""} onChange={(e) => setMeter(i, { meter_number: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">תעריף ליח' (₪/{m.unit || "יח'"})</Label><Input type="number" step="0.001" dir="ltr" value={m.rate_per_unit ?? ""} onChange={(e) => setMeter(i, { rate_per_unit: e.target.value })} /></div>
                 <div className="space-y-1"><Label className="text-xs">קריאה אחרונה</Label><Input type="number" step="0.01" dir="ltr" value={m.last_reading ?? ""} onChange={(e) => setMeter(i, { last_reading: e.target.value })} /></div>
-                <div className="flex items-center gap-1"><Input type="date" value={m.last_reading_date || ""} onChange={(e) => setMeter(i, { last_reading_date: e.target.value })} /><Button type="button" size="icon" variant="ghost" onClick={() => removeMeter(i)}><Trash2 className="w-4 h-4 text-red-500" /></Button></div>
+                <div className="flex items-center gap-1"><Input type="date" value={m.last_reading_date || ""} onChange={(e) => setMeter(i, { last_reading_date: e.target.value })} /><Button type="button" size="icon" aria-label="מחק" variant="ghost" onClick={() => removeMeter(i)}><Trash2 className="w-4 h-4 text-red-500" /></Button></div>
               </div>
             ))}
           </div>
@@ -191,7 +191,7 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
           {error && <div className="p-2 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>ביטול</Button>
-            <Button type="submit" disabled={saving || uploading} className="bg-indigo-600 hover:bg-indigo-700 text-white">{saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Save className="w-4 h-4 ml-1" />} שמור</Button>
+            <Button type="submit" disabled={saving || uploading}>{saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Save className="w-4 h-4 ml-1" />} שמור</Button>
           </DialogFooter>
         </form>
       </DialogContent>

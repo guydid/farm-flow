@@ -190,10 +190,10 @@ export default function PackagingManager({ currentFarm }) {
                     <TableRow key={pack.id}>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(pack)}>
+                          <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(pack)}>
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(pack.id)}>
+                          <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDelete(pack.id)}>
                             <Trash2 className="w-4 h-4 text-red-500" />
                           </Button>
                         </div>

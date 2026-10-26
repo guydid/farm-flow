@@ -78,7 +78,7 @@ export default function BottomNav({ onQuickAction }) {
   if (onSeedingDetail) {
     const btnCls = "flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors min-w-[48px] text-gray-500 active:text-indigo-600";
     return (
-      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+      <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
           <button onClick={() => navigate(createPageUrl("Seedings"))} className={btnCls}>
             <ArrowRight className="w-5 h-5" />
@@ -111,7 +111,7 @@ export default function BottomNav({ onQuickAction }) {
 
   if (onSeedings) {
     return (
-      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+      <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
           <button onClick={() => navigate(createPageUrl("Dashboard"))} className={actionBtnCls}>
             <ArrowRight className="w-5 h-5" />
@@ -143,7 +143,7 @@ export default function BottomNav({ onQuickAction }) {
 
   if (onWeighingList) {
     return (
-      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+      <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
           <button onClick={() => navigate(createPageUrl("Dashboard"))} className={actionBtnCls}>
             <ArrowRight className="w-5 h-5" />
@@ -176,7 +176,7 @@ export default function BottomNav({ onQuickAction }) {
   if (onWeighingDetail) {
     const actionBtn = actionBtnCls;
     return (
-      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+      <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
           <button onClick={() => navigate(createPageUrl("WeighingCertificates"))} className={actionBtn}>
             <ArrowRight className="w-5 h-5" />
@@ -297,7 +297,7 @@ export default function BottomNav({ onQuickAction }) {
       </div>
 
       {/* ── Bottom Navigation Bar ─────────────────────────────────────────── */}
-      <nav className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
+      <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
           {mainNav.map((item, index) => {
             // ── FAB center button ──
@@ -310,7 +310,7 @@ export default function BottomNav({ onQuickAction }) {
                     "relative -top-4 flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all duration-200",
                     fabOpen
                       ? "bg-red-500 rotate-45 scale-95"
-                      : "bg-indigo-600 hover:bg-indigo-700 active:scale-95"
+                      : "bg-primary hover:bg-primary/90 active:scale-95"
                   )}
                   aria-label="פעולה מהירה"
                 >
@@ -325,9 +325,11 @@ export default function BottomNav({ onQuickAction }) {
                 <button
                   key="more"
                   onClick={() => { setMoreOpen(v => !v); setFabOpen(false); }}
+                  aria-expanded={moreOpen}
+                  aria-label={moreOpen ? "סגור תפריט נוסף" : "תפריט נוסף"}
                   className={cn(
                     "flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors min-w-[48px]",
-                    (isMoreActive || moreOpen) ? "text-indigo-600" : "text-gray-500"
+                    (isMoreActive || moreOpen) ? "text-primary" : "text-gray-600"
                   )}
                 >
                   {moreOpen
@@ -346,15 +348,16 @@ export default function BottomNav({ onQuickAction }) {
                 key={item.path}
                 to={createPageUrl(item.path)}
                 onClick={() => { setMoreOpen(false); setFabOpen(false); }}
+                aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors min-w-[48px]",
-                  active ? "text-indigo-600" : "text-gray-500 hover:text-gray-700"
+                  active ? "text-primary" : "text-gray-600 hover:text-gray-800"
                 )}
               >
                 <div className="relative">
                   <item.icon className={cn("w-5 h-5", active && "stroke-[2.5]")} />
                   {active && (
-                    <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600" />
+                    <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
                   )}
                 </div>
                 <span className={cn("text-[10px] font-medium leading-none", active && "font-semibold")}>

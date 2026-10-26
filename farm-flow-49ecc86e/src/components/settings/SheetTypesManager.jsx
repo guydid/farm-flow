@@ -174,10 +174,10 @@ export default function SheetTypesManager({ currentFarm }) {
                     <TableRow key={type.id}>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(type)}>
+                          <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(type)}>
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(type.id)}>
+                          <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDelete(type.id)}>
                             <Trash2 className="w-4 h-4 text-red-500" />
                           </Button>
                         </div>

@@ -449,6 +449,7 @@ export default function Layout({ children, currentPageName }) {
   return (
     <ErrorBoundary>
       <div className="flex h-screen bg-gray-50" dir="rtl">
+        <a href="#main-content" className="skip-link">דלג לתוכן הראשי</a>
         {/* Desktop Sidebar */}
         <aside className="hidden lg:flex lg:w-16 hover:lg:w-60 transition-all duration-300 group">
           <div className="flex h-full flex-col justify-between bg-white border-l shadow-sm">
@@ -459,14 +460,16 @@ export default function Layout({ children, currentPageName }) {
                   {brand?.name || currentFarm?.name || 'Farm Flow'}
                 </span>
               </div>
-              <nav className="flex-1 space-y-1 p-2">
+              <nav className="flex-1 space-y-1 p-2" aria-label="ניווט ראשי">
                 {navigation.map((item) => (
                   <Link
                     key={item.name}
                     to={createPageUrl(item.path)}
+                    aria-current={isActive(item.path) ? "page" : undefined}
+                    title={item.name}
                     className={cn(
-                      "flex items-center rounded-lg px-3 py-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors",
-                      isActive(item.path) && "bg-gray-100 text-gray-900"
+                      "flex items-center rounded-lg px-3 py-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors",
+                      isActive(item.path) && "bg-primary/10 text-primary font-medium"
                     )}
                   >
                     <item.icon className="h-5 w-5 flex-shrink-0" />
@@ -522,7 +525,7 @@ export default function Layout({ children, currentPageName }) {
             }
           />
           {/* Extra bottom padding on mobile for BottomNav */}
-          <main className="flex-1 overflow-auto bg-gray-50 pb-16 lg:pb-0">
+          <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto bg-gray-50 pb-16 lg:pb-0 outline-none">
             <ErrorBoundary>
               {currentFarm || ['AdminPanel', 'FarmMembers'].includes(currentPageName) ? (
                 <div key={currentFarm?.id || 'admin'}>

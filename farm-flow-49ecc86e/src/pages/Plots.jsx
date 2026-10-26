@@ -10,11 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, Upload, FileText, Loader2, ListChecks, SlidersHorizontal, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Edit2, Upload, FileText, Loader2, ListChecks, SlidersHorizontal, ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
 import SheetTracker from "../components/plots/SheetTracker";
 import { format } from 'date-fns';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Plots() {
   const [plots, setPlots] = useState([]);
   const [seedings, setSeedings] = useState([]);
@@ -279,12 +280,12 @@ export default function Plots() {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>{plot.name}</CardTitle>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={() => handleEdit(plot)}>
+            <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(plot)}>
               <Edit2 className="w-4 h-4" />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" aria-label="הוסף">
                   <Plus className="w-4 h-4 rotate-45" />
                 </Button>
               </DropdownMenuTrigger>
@@ -402,12 +403,12 @@ export default function Plots() {
       <div className="max-w-screen-xl mx-auto">
         <div className="relative z-10 mb-4">
           {/* Title + Add button row */}
-          <div className="flex justify-between items-center mb-3">
-            <h1 className="text-2xl font-bold">
-              חלקות
-              {currentFarm && <span className="text-lg text-gray-500 font-normal ml-4"> - {currentFarm.name}</span>}
-            </h1>
-            <div className="flex gap-2 items-center">
+          <PageHeader
+            icon={MapIcon}
+            title="חלקות"
+            subtitle={currentFarm?.name}
+            className="mb-3"
+            actions={<>
               {/* Mobile filter toggle */}
               <button
                 onClick={() => setFiltersOpen(o => !o)}
@@ -427,8 +428,8 @@ export default function Plots() {
               <Button onClick={() => { resetForm(); setIsDialogOpen(true); }}>
                 <Plus className="w-4 h-4 ml-2" /> הוסף חלקה
               </Button>
-            </div>
-          </div>
+            </>}
+          />
           {/* Mobile expanded filter panel */}
           {filtersOpen && (
             <div className="sm:hidden p-2 rounded-xl bg-white border border-gray-200 mb-3">

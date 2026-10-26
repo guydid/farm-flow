@@ -241,7 +241,7 @@ export default function AttendanceSettingsManager({ currentFarm }) {
                 <Button variant="outline" onClick={() => copy(apiKey, "key")}>
                   {copied === "key" ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
                 </Button>
-                <Button onClick={rotate} disabled={rotating} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                <Button onClick={rotate} disabled={rotating}>
                   {rotating ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <RefreshCw className="w-4 h-4 ml-1" />}
                   מפתח חדש
                 </Button>
@@ -364,7 +364,7 @@ export default function AttendanceSettingsManager({ currentFarm }) {
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
-                <Button onClick={saveCfg} disabled={savingCfg} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                <Button onClick={saveCfg} disabled={savingCfg}>
                   {savingCfg ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Check className="w-4 h-4 ml-1" />}
                   שמור הגדרות
                 </Button>

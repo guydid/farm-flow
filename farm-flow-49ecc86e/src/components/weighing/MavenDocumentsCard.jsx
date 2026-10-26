@@ -183,7 +183,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={issuing}>ביטול</Button>
-            <Button onClick={() => issue(false)} disabled={issuing || loadingPreview || !preview} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+            <Button onClick={() => issue(false)} disabled={issuing || loadingPreview || !preview} >
               {issuing ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : <FileText className="w-4 h-4 ml-2" />}
               {cfg.test_mode ? "הפק (בדיקה)" : "הפק מסמך"}
             </Button>

@@ -173,10 +173,10 @@ export default function PalletTypesManager({ currentFarm }) {
                       <TableCell>{item.weight} ק"ג</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEdit(item)}>
+                          <Button variant="ghost" size="icon" aria-label="ערוך" onClick={() => handleEdit(item)}>
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="text-red-500">
+                          <Button variant="ghost" size="icon" aria-label="מחק" onClick={() => handleDelete(item.id)} className="text-red-500">
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>

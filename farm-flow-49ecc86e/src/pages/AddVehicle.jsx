@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { createPageUrl } from '@/utils';
 import { ArrowRight, Loader2 } from 'lucide-react';
 
+import PageHeader from "@/components/common/PageHeader";
 export default function AddVehicle() {
     const [currentFarm, setCurrentFarm] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -42,10 +43,7 @@ export default function AddVehicle() {
     return (
         <div className="p-4 sm:p-6 lg:p-8" dir="rtl">
             <div className="max-w-4xl mx-auto">
-                <div className="mb-6">
-                    <Link to={createPageUrl("Vehicles")} className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-4"><ArrowRight className="h-4 w-4" />חזרה לרשימת הרכבים</Link>
-                    <h1 className="text-3xl font-bold text-gray-900">הוספת רכב חדש</h1>
-                </div>
+                <PageHeader title="הוספת רכב חדש" backTo={createPageUrl("Vehicles")} backLabel="חזרה לרשימת הרכבים" />
                 <VehicleForm
                     currentFarm={currentFarm}
                     onSuccess={handleSuccess}

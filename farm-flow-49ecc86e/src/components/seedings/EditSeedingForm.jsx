@@ -126,7 +126,7 @@ function SeedingVarietiesManager({ seeding, cropType, currentVarieties, onVariet
                                 </Select>
                             </TableCell>
                             <TableCell>
-                                <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveVariety(v.variety_id)}>
+                                <Button type="button" variant="ghost" size="icon" aria-label="מחק" onClick={() => handleRemoveVariety(v.variety_id)}>
                                     <Trash2 className="w-4 h-4 text-red-500" />
                                 </Button>
                             </TableCell>

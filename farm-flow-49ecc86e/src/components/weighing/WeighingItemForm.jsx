@@ -4,7 +4,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Calculator, ExternalLink } from "lucide-react";
+import { Calculator, ExternalLink, Plus } from "lucide-react";
+import QuickAddDialog from "@/components/common/QuickAddDialog";
+import { getMeCached } from "@/api/cachedReads";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 
@@ -82,6 +84,11 @@ const SectionLabel = ({ children }) => (
 
 // Main Component
 export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, onCancel, products, packagings, palletTypes, certificateCustomerId }) {
+  // מוצרים שנוצרו ב"הוספה מהירה" מתוך הטופס (ההורה ירענן את הרשימה בטעינה הבאה)
+  const [extraProducts, setExtraProducts] = useState([]);
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [farmId, setFarmId] = useState(null);
+  useEffect(() => { getMeCached().then(u => setFarmId(u?.current_farm_id || null)).catch(() => {}); }, []);
   const [formData, setFormData] = useState({
     product_id: "",
     product_name: "",
@@ -304,7 +311,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
   }, [formData, displayValues, onSubmit, isWeighable, productWeighable]);
 
   const navigate = useNavigate();
-  const safeProducts = safeArray(products);
+  const safeProducts = [...safeArray(products), ...extraProducts.filter(p => !safeArray(products).some(q => q && q.id === p.id))];
   const safePackagings = safeArray(packagings);
   const safePalletTypes = safeArray(palletTypes);
 
@@ -342,9 +349,15 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
           <div>
             <SectionLabel>מוצר</SectionLabel>
             {safeProducts.length === 0 ? (
-              <EmptyState tab="products" text="אין מוצרים מוגדרים" />
+              <div className="space-y-2">
+                <EmptyState tab="products" text="אין מוצרים מוגדרים" />
+                <Button type="button" variant="outline" size="sm" onClick={() => setAddingProduct(true)}><Plus className="w-4 h-4" aria-hidden="true" /> מוצר חדש</Button>
+              </div>
             ) : (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                <Chip selected={false} onClick={() => setAddingProduct(true)} className="border-dashed text-primary border-primary/40 hover:bg-primary/5">
+                  <Plus className="w-4 h-4 inline-block ml-1" aria-hidden="true" />חדש
+                </Chip>
                 {safeProducts.map(product => product && (
                   <Chip
                     key={product.id}
@@ -360,6 +373,14 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
               </div>
             )}
           </div>
+
+          <QuickAddDialog
+            kind="product"
+            open={addingProduct}
+            onOpenChange={setAddingProduct}
+            farmId={farmId}
+            onCreated={(p) => { setExtraProducts(prev => [...prev, p]); handleProductSelect(p); }}
+          />
 
           {productChosen && (
             <>

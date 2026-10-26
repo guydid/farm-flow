@@ -9,6 +9,7 @@ import { createPageUrl } from '@/utils';
 import { ArrowRight, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 
+import PageHeader from "@/components/common/PageHeader";
 export default function AddEmployee() {
     const [manpowerCompanies, setManpowerCompanies] = useState([]);
     const [users, setUsers] = useState([]);
@@ -65,13 +66,7 @@ export default function AddEmployee() {
     return (
         <div className="p-4 sm:p-6 lg:p-8" dir="rtl">
             <div className="max-w-4xl mx-auto">
-                <div className="mb-6">
-                    <Link to={createPageUrl("Employees")} className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-4">
-                        <ArrowRight className="h-4 w-4" />
-                        חזרה לרשימת העובדים
-                    </Link>
-                    <h1 className="text-3xl font-bold text-gray-900">הוספת עובד חדש</h1>
-                </div>
+                <PageHeader title="הוספת עובד חדש" backTo={createPageUrl("Employees")} backLabel="חזרה לרשימת העובדים" />
 
                 <Card>
                     <CardContent className="pt-6">

@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Plus, Search, Trash2, Edit2, Phone, MapPin, Mail, Loader2, FileText, Building2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
   const [invoiceCounts, setInvoiceCounts] = useState({});
@@ -124,16 +125,12 @@ export default function Suppliers() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
       <div className="max-w-screen-xl mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">ספקים</h1>
-            <p className="text-sm text-gray-500 mt-1">{filtered.length} מתוך {suppliers.length} ספקים</p>
-          </div>
-          <Button onClick={openNew} className="flex items-center gap-1.5">
-            <Plus className="w-4 h-4" />
-            <span>ספק חדש</span>
-          </Button>
-        </div>
+        <PageHeader
+          icon={Building2}
+          title="ספקים"
+          subtitle={`${filtered.length} מתוך ${suppliers.length} ספקים`}
+          actions={<Button onClick={openNew}><Plus className="w-4 h-4" aria-hidden="true" /><span>ספק חדש</span></Button>}
+        />
 
         <Card className="mb-4">
           <CardContent className="p-3">

@@ -165,7 +165,7 @@ export default function McpSettingsManager() {
                 ))}
               </div>
             </div>
-            <Button onClick={create} disabled={creating} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+            <Button onClick={create} disabled={creating}>
               {creating ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Plus className="w-4 h-4 ml-1" />}
               צור טוקן
             </Button>

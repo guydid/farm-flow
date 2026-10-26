@@ -11,6 +11,7 @@ import { ArrowRight, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
+import PageHeader from "@/components/common/PageHeader";
 export default function EditEmployee() {
     const [employee, setEmployee] = useState(null);
     const [manpowerCompanies, setManpowerCompanies] = useState([]);
@@ -92,13 +93,7 @@ export default function EditEmployee() {
     return (
         <div className="p-4 sm:p-6 lg:p-8" dir="rtl">
             <div className="max-w-4xl mx-auto">
-                <div className="mb-6">
-                    <Link to={createPageUrl(`EmployeeDetail?id=${employeeId}`)} className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-4">
-                        <ArrowRight className="h-4 w-4" />
-                        חזרה לפרטי העובד
-                    </Link>
-                    <h1 className="text-3xl font-bold text-gray-900">עריכת עובד: {employee.full_name}</h1>
-                </div>
+                <PageHeader title={`עריכת עובד: ${employee.full_name}`} backTo={createPageUrl(`EmployeeDetail?id=${employeeId}`)} backLabel="חזרה לפרטי העובד" />
 
                 <Card>
                     <CardContent className="pt-6">

@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 
+import PageHeader from "@/components/common/PageHeader";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 function adminFetch(path, opts = {}) {
@@ -236,21 +237,15 @@ export default function AdminPanel() {
   return (
     <div className="p-4 lg:p-8 max-w-7xl mx-auto" dir="rtl">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="bg-red-600 p-2 rounded-xl">
-            <ShieldCheck className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">פאנל ניהול</h1>
-            <p className="text-sm text-gray-500">גישת מנהל מערכת</p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+      <PageHeader
+        icon={ShieldCheck}
+        title="פאנל ניהול"
+        subtitle="גישת מנהל מערכת"
+        actions={<Button variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCw className={`w-4 h-4 ml-2 ${loading ? 'animate-spin' : ''}`} />
           רענן
-        </Button>
-      </div>
+        </Button>}
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b">

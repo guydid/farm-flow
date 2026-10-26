@@ -16,8 +16,9 @@ import RecentUpdates from "../components/dashboard/RecentUpdates";
 const EventsTimelineChart = lazy(() => import("../components/dashboard/EventsTimelineChart"));
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, LayoutDashboard } from "lucide-react";
 
+import PageHeader from "@/components/common/PageHeader";
 const DashboardSkeleton = () => (
   <div className="space-y-6">
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -213,10 +214,7 @@ export default function Dashboard() {
     <ErrorBoundary>
       <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
         <div className="max-w-screen-2xl mx-auto space-y-6">
-          <h1 className="text-3xl font-bold text-gray-800">
-            סקירה
-            {currentFarm && <span className="text-lg text-gray-500 font-normal ml-4"> - {currentFarm.name}</span>}
-          </h1>
+          <PageHeader icon={LayoutDashboard} title="סקירה" subtitle={currentFarm?.name} className="mb-0" />
           
           {isLoading ? (
             <DashboardSkeleton />

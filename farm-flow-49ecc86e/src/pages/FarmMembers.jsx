@@ -18,6 +18,7 @@ import {
 import { getToken } from '@/api/localClient';
 import { useAuth } from '@/lib/AuthContext';
 
+import PageHeader from "@/components/common/PageHeader";
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 const ROLES = {
@@ -228,15 +229,11 @@ export default function FarmMembers() {
     <div className="p-4 lg:p-8 max-w-3xl mx-auto" dir="rtl">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Users2 className="h-7 w-7 text-indigo-600" />
-            חברי המשק
-          </h1>
-          {currentFarm && <p className="text-gray-500 text-sm mt-0.5">משק: {currentFarm.name}</p>}
-        </div>
-        <div className="flex gap-2">
+      <PageHeader
+        icon={Users2}
+        title="חברי המשק"
+        subtitle={currentFarm ? `משק: ${currentFarm.name}` : undefined}
+        actions={<>
           {canManage && (
             <Button variant="outline" onClick={handleBackfillNames} disabled={backfilling} className="flex items-center gap-2" title="ממלא שמות אנגלית למזרעים/זנים/פעילויות עבור עובדי שדה">
               {backfilling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Languages className="h-4 w-4" />}
@@ -255,8 +252,8 @@ export default function FarmMembers() {
               הזמן חבר
             </Button>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Role legend */}
       <Card className="mb-6">

@@ -180,7 +180,7 @@ export default function IntegrationsManager({ currentFarm }) {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => save()} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                <Button onClick={() => save()} disabled={saving} >
                   {saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Save className="w-4 h-4 ml-1" />} שמור הגדרות
                 </Button>
                 <Button variant="outline" onClick={testConnection} disabled={testing || !cfg?.configured}>

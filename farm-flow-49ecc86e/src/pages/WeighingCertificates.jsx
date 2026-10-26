@@ -7,10 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import EntitySelect from "@/components/common/EntitySelect";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { he } from 'date-fns/locale'; // Import Hebrew locale
-import { Plus, Edit, Eye, Printer, Truck, Trash2, UserPlus, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical } from "lucide-react";
+import { Plus, Edit, Eye, Printer, Truck, Trash2, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -37,7 +38,6 @@ export default function WeighingCertificates() {
   const [certificates, setCertificates] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isCustomerDialogOpen, setIsCustomerDialogOpen] = useState(false);
   const [editingCertificate, setEditingCertificate] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   // const [showFilters, setShowFilters] = useState(false); // Filters are now always visible, no need for state
@@ -99,13 +99,6 @@ export default function WeighingCertificates() {
     driver_name: ""
   });
 
-  const [newCustomerData, setNewCustomerData] = useState({
-    name: "",
-    contact_person: "",
-    phone: "",
-    email: "",
-    address: ""
-  });
 
   useEffect(() => {
     loadData();
@@ -326,40 +319,9 @@ export default function WeighingCertificates() {
     }
   };
 
-  const handleCreateCustomer = async (e) => {
-    e.preventDefault();
-    
-    if (!newCustomerData.name.trim()) {
-      toast({ title: "שגיאה", description: "שם לקוח הוא שדה חובה.", variant: "destructive" });
-      return;
-    }
-    if (!currentFarm) {
-      toast({ title: "שגיאה", description: "לא ניתן ליצור לקוח ללא משק פעיל.", variant: "destructive" });
-      return;
-    }
-
-    try {
-      const newCustomer = await Customer.create({
-        ...newCustomerData,
-        farm_id: currentFarm.id
-      });
-      invalidateList(`customers_${currentFarm.id}`);
-      
-      const updatedCustomers = [...(Array.isArray(customers) ? customers : []), newCustomer].sort((a,b) => a.name.localeCompare(b.name));
-      setCustomers(updatedCustomers);
-      setFormData(prev => ({
-        ...prev, 
-        customer_id: newCustomer.id,
-      }));
-      
-      setNewCustomerData({ name: "", contact_person: "", phone: "", email: "", address: "" });
-      setIsCustomerDialogOpen(false);
-      
-      toast({ title: "הצלחה", description: "לקוח חדש נוצר ונבחר" });
-    } catch(err) {
-      console.error("Error creating customer:", err);
-      toast({ title: "שגיאה", description: "יצירת לקוח נכשלה", variant: "destructive" });
-    }
+  // לקוח שנוצר ב"הוספה מהירה" מתוך הטופס — נכנס לרשימה ונבחר (EntitySelect מטפל בבחירה)
+  const addCustomerToList = (newCustomer) => {
+    setCustomers(prev => [...(Array.isArray(prev) ? prev : []), newCustomer].sort((a, b) => (a.name || '').localeCompare(b.name || '')));
   };
 
   const resetForm = () => {
@@ -1129,7 +1091,7 @@ export default function WeighingCertificates() {
                             <div onClick={(e) => e.stopPropagation()} className="shrink-0">
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-9 w-9 text-gray-400">
+                                  <Button variant="ghost" size="icon" aria-label="פעולות נוספות" className="h-9 w-9 text-gray-400">
                                     <MoreVertical className="w-5 h-5" />
                                   </Button>
                                 </DropdownMenuTrigger>
@@ -1386,33 +1348,17 @@ export default function WeighingCertificates() {
                 <>
                   <div>
                     <Label className="text-base font-semibold">לקוח *</Label>
-                    <div className="flex gap-2 mt-1">
-                      <Select
-                        value={formData.customer_id}
-                        onValueChange={(value) => setFormData(prev => ({...prev, customer_id: value}))}
-                        required
-                      >
-                        <SelectTrigger className="flex-1">
-                          <SelectValue placeholder="בחר לקוח..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(customers || []).map(customer => (
-                            <SelectItem key={customer.id} value={customer.id}>
-                              {customer.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button 
-                        type="button" 
-                        variant="outline"
-                        size="icon"
-                        onClick={() => setIsCustomerDialogOpen(true)}
-                        title="לקוח חדש"
-                      >
-                        <UserPlus className="w-4 h-4"/>
-                      </Button>
-                    </div>
+                    <EntitySelect
+                      className="mt-1"
+                      options={customers}
+                      value={formData.customer_id}
+                      onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
+                      placeholder="בחר לקוח..."
+                      quickAdd="customer"
+                      farmId={currentFarm?.id}
+                      onCreated={addCustomerToList}
+                      required
+                    />
                   </div>
 
                   <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
@@ -1443,34 +1389,19 @@ export default function WeighingCertificates() {
                   </div>
 
                   <div>
-                      <div className="flex justify-between items-center mb-1">
-                          <Label>שם הלקוח</Label>
-                          <Button 
-                            type="button" 
-                            variant="link" 
-                            className="p-0 h-auto"
-                            onClick={() => setIsCustomerDialogOpen(true)}
-                          >
-                            <UserPlus className="w-3 h-3 ml-1"/>
-                            לקוח חדש
-                          </Button>
-                      </div>
-                      <Select
+                      <Label htmlFor="wc-customer">שם הלקוח</Label>
+                      <EntitySelect
+                        id="wc-customer"
+                        className="mt-1"
+                        options={customers}
                         value={formData.customer_id}
-                        onValueChange={(value) => setFormData(prev => ({...prev, customer_id: value}))}
+                        onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
+                        placeholder="בחר לקוח..."
+                        quickAdd="customer"
+                        farmId={currentFarm?.id}
+                        onCreated={addCustomerToList}
                         required
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="בחר לקוח..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(customers || []).map(customer => (
-                              <SelectItem key={customer.id} value={customer.id}>
-                               {customer.name}
-                             </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -1580,62 +1511,6 @@ export default function WeighingCertificates() {
         </DialogContent>
       </Dialog>
 
-      {/* New customer dialog */}
-      <Dialog open={isCustomerDialogOpen} onOpenChange={setIsCustomerDialogOpen}>
-        <DialogContent className="sm:max-w-md" dir="rtl">
-          <DialogHeader>
-            <DialogTitle>לקוח חדש</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleCreateCustomer} className="space-y-4 pt-4">
-            <div>
-              <Label>שם הלקוח *</Label>
-              <Input 
-                value={newCustomerData.name}
-                onChange={e => setNewCustomerData({...newCustomerData, name: e.target.value})}
-                placeholder="שם הלקוח"
-                required
-              />
-            </div>
-            <div>
-              <Label>איש קשר</Label>
-              <Input 
-                value={newCustomerData.contact_person}
-                onChange={e => setNewCustomerData({...newCustomerData, contact_person: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label>טלפון</Label>
-              <Input 
-                value={newCustomerData.phone}
-                onChange={e => setNewCustomerData({...newCustomerData, phone: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label>אימייל</Label>
-              <Input 
-                type="email"
-                value={newCustomerData.email}
-                onChange={e => setNewCustomerData({...newCustomerData, email: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label>כתובת</Label>
-              <Input 
-                value={newCustomerData.address}
-                onChange={e => setNewCustomerData({...newCustomerData, address: e.target.value})}
-              />
-            </div>
-            <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => setIsCustomerDialogOpen(false)}>
-                ביטול
-              </Button>
-              <Button type="submit">
-                צור לקוח
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

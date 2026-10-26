@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { getToken } from '@/api/localClient';
 import TempWorkersTab from '@/components/attendance/TempWorkersTab';
 
+import PageHeader from "@/components/common/PageHeader";
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 const HEB_MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
@@ -247,22 +248,17 @@ export default function Attendance() {
   return (
     <div className="p-3 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
       <div className="max-w-screen-2xl mx-auto">
-        <div className="flex justify-between items-center gap-2 mb-4 lg:mb-6">
-          <div className="flex items-center gap-2">
-            <Clock className="w-6 h-6 text-indigo-600" />
-            <div>
-              <h1 className="text-xl lg:text-3xl font-bold text-gray-900">שעון נוכחות</h1>
-              <p className="text-xs text-gray-500 mt-0.5">{workers.length} עובדי שעון · {presentCount} נוכחים היום</p>
-              {lastUpdateLabel && (
-                <p className="text-xs text-gray-400 mt-0.5">עודכן מהשעון: {lastUpdateLabel}</p>
-              )}
-            </div>
-          </div>
-          <Button onClick={loadData} disabled={isLoading} variant="outline" size="sm" className="flex items-center gap-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">רענן</span>
-          </Button>
-        </div>
+        <PageHeader
+          icon={Clock}
+          title="שעון נוכחות"
+          subtitle={<>{workers.length} עובדי שעון · {presentCount} נוכחים היום{lastUpdateLabel && <span className="hidden sm:inline"> · עודכן מהשעון {lastUpdateLabel}</span>}</>}
+          actions={
+            <Button onClick={loadData} disabled={isLoading} variant="outline" size="sm" aria-label="רענן נתוני נוכחות">
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="hidden sm:inline">רענן</span>
+            </Button>
+          }
+        />
 
         {noData && (
           <Card className="mb-4 border-amber-200 bg-amber-50">

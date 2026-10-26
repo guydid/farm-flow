@@ -82,7 +82,7 @@ export default function EventItem({ event, onEdit, onDelete, onDuplicate }) {
             <div onClick={(e) => e.stopPropagation()} className="shrink-0">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400">
+                        <Button variant="ghost" size="icon" aria-label="פעולות נוספות" className="h-8 w-8 text-gray-400">
                             <MoreVertical className="w-4 h-4" />
                         </Button>
                     </DropdownMenuTrigger>

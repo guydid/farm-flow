@@ -130,7 +130,7 @@ export default function LeaseInvoices({ lease, farmId, invoices, payments, canWr
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>ביטול</Button>
-            <Button onClick={() => issue()} disabled={busy || loading || !preview || preview.payments.length === 0 || preview.total <= 0} className="bg-indigo-600 hover:bg-indigo-700 text-white">{busy ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Receipt className="w-4 h-4 ml-1" />} הפק חשבונית</Button>
+            <Button onClick={() => issue()} disabled={busy || loading || !preview || preview.payments.length === 0 || preview.total <= 0} >{busy ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Receipt className="w-4 h-4 ml-1" />} הפק חשבונית</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -17,6 +17,7 @@ import { getCropIcon } from "../components/seedings/CropIcons";
 import { getMeCached, getFarmCached, peekList, primeList } from "@/api/cachedReads";
 import { batchFetch } from "@/api/localClient";
 
+import PageHeader from "@/components/common/PageHeader";
 // Safe array utilities
 const safeArray = (value, fallback = []) => {
   if (value === null || value === undefined) return fallback;
@@ -414,16 +415,12 @@ export default function Seedings() {
       <div className="max-w-7xl mx-auto space-y-4">
 
         {/* ── Header ─────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h1 className="text-xl lg:text-2xl font-bold text-gray-900">
-              {showReports ? "דוחות מזרעים" : titleMap[filterStatus]}
-            </h1>
-            {currentFarm && (
-              <p className="text-xs text-gray-500 mt-0.5">{currentFarm.name}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
+        <PageHeader
+          icon={Leaf}
+          title={showReports ? "דוחות מזרעים" : titleMap[filterStatus]}
+          subtitle={currentFarm?.name}
+          className="mb-0"
+          actions={<>
             <Button
               variant="outline"
               size="sm"
@@ -440,8 +437,8 @@ export default function Seedings() {
                 הוסף מזרע
               </Button>
             )}
-          </div>
-        </div>
+          </>}
+        />
 
         {/* ── Filters ─────────────────────────────────────────────────── */}
         {!showReports && (

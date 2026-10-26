@@ -16,6 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { useToast } from "@/components/ui/use-toast";
 
+import PageHeader from "@/components/common/PageHeader";
 export default function Employees() {
     const [employees, setEmployees] = useState([]);
     const [manpowerCompanies, setManpowerCompanies] = useState([]);
@@ -376,15 +377,11 @@ export default function Employees() {
     return (
         <div className="p-3 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
             <div className="max-w-screen-2xl mx-auto">
-                <div className="flex justify-between items-center gap-2 mb-4 lg:mb-6">
-                    <div>
-                        <h1 className="text-xl lg:text-3xl font-bold text-gray-900">עובדים</h1>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                            {showArchive ? `${filteredEmployees.length} עובדים בארכיון` : `${filteredEmployees.length} מתוך ${employees.length - archivedCount} עובדים`}
-                            {!showArchive && archivedCount > 0 && <span className="text-gray-400"> · {archivedCount} בארכיון</span>}
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2">
+                <PageHeader
+                    icon={Users}
+                    title={showArchive ? "ארכיון עובדים" : "עובדים"}
+                    subtitle={<>{showArchive ? `${filteredEmployees.length} עובדים בארכיון` : `${filteredEmployees.length} מתוך ${employees.length - archivedCount} עובדים`}{!showArchive && archivedCount > 0 && <span> · {archivedCount} בארכיון</span>}</>}
+                    actions={<>
                         {!showArchive && archivable.length > 0 && (
                             <Button onClick={archiveAllInactive} variant="outline" size="sm" disabled={archiving === 'bulk'} className="flex items-center gap-1.5"
                                     title="העברת כל העובדים הלא פעילים ושנטשו לארכיון">
@@ -408,8 +405,8 @@ export default function Employees() {
                                 <span className="hidden sm:inline">הוסף עובד</span>
                             </Button>
                         </Link>
-                    </div>
-                </div>
+                    </>}
+                />
 
                 {/* ── Status bar ── */}
                 {employees.length > 0 && (
