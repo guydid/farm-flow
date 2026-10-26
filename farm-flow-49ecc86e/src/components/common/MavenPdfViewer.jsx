@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, ExternalLink, FileText } from "lucide-react";
+import { Download, ExternalLink, FileText, Share2, Loader2, MessageCircle, Mail, Link2, Check } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useToast } from "@/components/ui/use-toast";
 import { getToken } from "@/api/localClient";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "/api";
@@ -32,6 +34,38 @@ export default function MavenPdfViewer({ doc, open, onOpenChange, farmId, title 
   const downloadUrl = mavenPdfUrl(src, { farmId, name: baseName, download: true });
   const heading = title || [doc?.doc_type_name, doc?.doc_no ? `מס' ${doc.doc_no}` : null].filter(Boolean).join(" ");
 
+  // ── שיתוף ──
+  // בטלפון: שיתוף הקובץ עצמו (WhatsApp, מייל, Drive...) דרך Web Share API.
+  // במחשב / דפדפן ללא תמיכה: שיתוף הקישור הציבורי שהחזיר Maven (לא הקישור הפנימי שלנו, שמכיל טוקן).
+  const { toast } = useToast();
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const shareText = `${heading || "מסמך"} מ-Farm Flow`;
+  const canShareFiles = typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const shareFile = async () => {
+    if (!viewUrl) return;
+    setSharing(true);
+    try {
+      const res = await fetch(viewUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const file = new File([blob], `${baseName}.pdf`, { type: "application/pdf" });
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: shareText });
+      } else {
+        await navigator.share({ title: shareText, text: shareText, url: src });
+      }
+    } catch (e) {
+      if (e?.name !== "AbortError") toast({ title: "השיתוף לא הושלם", description: e.message, variant: "destructive" });
+    } finally { setSharing(false); }
+  };
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(src); setCopied(true); setTimeout(() => setCopied(false), 2000); toast({ title: "הקישור הועתק" }); }
+    catch { toast({ title: "לא ניתן להעתיק", description: src, variant: "destructive" }); }
+  };
+  const waHref = src ? `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${src}`)}` : null;
+  const mailHref = src ? `mailto:?subject=${encodeURIComponent(shareText)}&body=${encodeURIComponent(`${shareText}\n${src}`)}` : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-4xl w-[calc(100vw-1rem)] sm:w-full p-0 overflow-hidden flex flex-col max-h-[92vh]">
@@ -48,6 +82,22 @@ export default function MavenPdfViewer({ doc, open, onOpenChange, farmId, title 
               </div>
             )}
             <div className="ms-auto flex items-center gap-2">
+              {src && (canShareFiles ? (
+                <Button size="sm" onClick={shareFile} disabled={sharing}>
+                  {sharing ? <Loader2 className="w-4 h-4 ml-1 animate-spin" aria-hidden="true" /> : <Share2 className="w-4 h-4 ml-1" aria-hidden="true" />} שתף
+                </Button>
+              ) : (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm"><Share2 className="w-4 h-4 ml-1" aria-hidden="true" /> שתף</Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" dir="rtl">
+                    <DropdownMenuItem asChild><a href={waHref} target="_blank" rel="noreferrer" className="flex items-center gap-2 cursor-pointer"><MessageCircle className="w-4 h-4 text-green-600" aria-hidden="true" /> WhatsApp</a></DropdownMenuItem>
+                    <DropdownMenuItem asChild><a href={mailHref} className="flex items-center gap-2 cursor-pointer"><Mail className="w-4 h-4" aria-hidden="true" /> מייל</a></DropdownMenuItem>
+                    <DropdownMenuItem onSelect={copyLink} className="flex items-center gap-2 cursor-pointer">{copied ? <Check className="w-4 h-4 text-green-600" aria-hidden="true" /> : <Link2 className="w-4 h-4" aria-hidden="true" />} העתק קישור</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ))}
               {downloadUrl && <Button asChild size="sm" variant="outline"><a href={downloadUrl}><Download className="w-4 h-4 ml-1" aria-hidden="true" /> הורדה</a></Button>}
               {viewUrl && <Button asChild size="sm" variant="outline"><a href={viewUrl} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4 ml-1" aria-hidden="true" /> חלון חדש</a></Button>}
             </div>
