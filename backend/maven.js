@@ -225,8 +225,8 @@ function registerMavenRoutes(app, deps) {
       if (product?.vat_exempt || opts.no_vat) line.no_vat = true;
       return line;
     });
-    // תעודת משלוח: גם האריזות והמשטחים מופיעים כשורות כמות בלי מחיר (לצורך החזרת ציוד / ספירה אצל הלקוח)
-    if (Number(opts.doc_type) === 200) {
+    // בכל סוגי המסמכים: האריזות והמשטחים מופיעים כשורות כמות בלי מחיר (לצורך החזרת ציוד / ספירה אצל הלקוח)
+    {
       const packagings = rowsOf('packagings', farmId);
       const palletTypes = rowsOf('pallet_types', farmId);
       const byPackaging = new Map(), byPallet = new Map();
