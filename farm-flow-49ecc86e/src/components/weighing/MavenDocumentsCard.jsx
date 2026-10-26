@@ -147,13 +147,14 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
                       <tr key={i} className="border-t border-gray-200">
                         <td className="py-1">{l.description}{l.item_number ? <span className="text-gray-400"> ({l.item_number})</span> : null}{l.no_vat ? <span className="text-green-700 text-[10px] mr-1">פטור ממע"מ</span> : null}</td>
                         <td className="text-left tabular-nums">{l.quantity}</td>
-                        <td className="text-left tabular-nums">{money(l.price)}</td>
-                        <td className="text-left tabular-nums">{money(l.price * l.quantity)}</td>
+                        <td className="text-left tabular-nums">{l.price > 0 ? money(l.price) : <span className="text-muted-foreground">—</span>}</td>
+                        <td className="text-left tabular-nums">{l.price > 0 ? money(l.price * l.quantity) : <span className="text-muted-foreground">—</span>}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div className="flex justify-between font-semibold border-t pt-2"><span>סה"כ{preview.vat_included ? " (כולל מע\"מ)" : " (לפני מע\"מ)"}</span><span>{money(preview.total)}</span></div>
+                {preview.equipment_lines > 0 && <div className="text-xs text-gray-500">כולל {preview.equipment_lines} שורות אריזה/משטח בכמות בלבד, ללא מחיר.</div>}
                 {preview.total === 0 && <div className="flex items-start gap-1 text-amber-700 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> אין מחירים בפריטי התעודה. המסמך יופק בסכום 0 (מתאים לתעודת משלוח).</div>}
               </div>
             )}

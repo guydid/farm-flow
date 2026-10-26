@@ -225,6 +225,31 @@ function registerMavenRoutes(app, deps) {
       if (product?.vat_exempt || opts.no_vat) line.no_vat = true;
       return line;
     });
+    // תעודת משלוח: גם האריזות והמשטחים מופיעים כשורות כמות בלי מחיר (לצורך החזרת ציוד / ספירה אצל הלקוח)
+    if (Number(opts.doc_type) === 200) {
+      const packagings = rowsOf('packagings', farmId);
+      const palletTypes = rowsOf('pallet_types', farmId);
+      const byPackaging = new Map(), byPallet = new Map();
+      for (const it of items) {
+        const pkg = String(it.packaging_type || '').trim();
+        const cnt = Number(it.package_count) || 0;
+        if (pkg && cnt > 0) byPackaging.set(pkg, (byPackaging.get(pkg) || 0) + cnt);
+        const pal = String(it.pallet_type || '').trim();
+        if (pal) byPallet.set(pal, (byPallet.get(pal) || 0) + 1); // משטח אחד לכל שורת שקילה
+      }
+      for (const [name, qty] of byPackaging) {
+        const def = packagings.find(x => x && x.name === name);
+        const line = { description: `אריזה · ${name}`, price: 0, quantity: qty, equipment: true };
+        if (def?.maven_item_no) line.item_number = def.maven_item_no;
+        lines.push(line);
+      }
+      for (const [name, qty] of byPallet) {
+        const def = palletTypes.find(x => x && x.name === name);
+        const line = { description: `משטח · ${name}`, price: 0, quantity: qty, equipment: true };
+        if (def?.maven_item_no) line.item_number = def.maven_item_no;
+        lines.push(line);
+      }
+    }
     const certNo = cert.certificate_number || cert.barcode || String(cert.id).slice(0, 8);
     const body = {
       doc_type: opts.doc_type,
@@ -235,7 +260,8 @@ function registerMavenRoutes(app, deps) {
         ...(customer?.phone ? { cell_phone: customer.phone } : {}),
         ...(customer?.address ? { address: customer.address } : {}),
       },
-      items: lines,
+      items: lines.map(({ equipment, ...l }) => l),
+      _equipment_lines: lines.filter(l => l.equipment).length,
       // Maven דורש רצף כרונולוגי של תאריכים לכל סוג מסמך → תאריך המסמך = היום; תאריך השקילה בתיאור
       document_date: ddmmyyyy(opts.document_date || new Date().toISOString().slice(0, 10)),
       description: `תעודת שקילה ${certNo} מתאריך ${ddmmyyyy(cert.date)}`,
@@ -319,7 +345,7 @@ function registerMavenRoutes(app, deps) {
     const docType = Number(req.query.doc_type) || 200;
     const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType, no_vat: req.query.no_vat === '1' });
     const total = body.items.reduce((s, l) => s + l.price * l.quantity, 0);
-    res.json({ customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, vat_included: body.vat_included, no_vat: !!body.no_vat, exempt_lines: body.items.filter(l => l.no_vat).length, test_mode: cfg.test_mode !== false, issued: cert.maven_documents || [] });
+    res.json({ customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, vat_included: body.vat_included, no_vat: !!body.no_vat, exempt_lines: body.items.filter(l => l.no_vat && l.price > 0).length, equipment_lines: body._equipment_lines || 0, test_mode: cfg.test_mode !== false, issued: cert.maven_documents || [] });
   });
 
   app.post('/api/integrations/maven/document', authMiddleware, async (req, res) => {
@@ -337,7 +363,8 @@ function registerMavenRoutes(app, deps) {
     if (already && !force) return res.status(409).json({ error: `כבר הופק ${DOC_TYPES[docType]} מס' ${already.doc_no} לתעודה זו`, code: 'already_issued', existing: already });
     const body = buildDocument(cfg, ctx.farmId, cert, items, { doc_type: docType, send_to_customer, remarks, vat_included, no_vat: !!no_vat, force: !!force || !!already });
     try {
-      const r = await mavenCall(cfg, '/api/documents/addDocument', body);
+      const { _equipment_lines, ...payload } = body;
+      const r = await mavenCall(cfg, '/api/documents/addDocument', payload);
       const entry = {
         id: r.id || null, doc_no: r.doc_no ?? null, doc_type: docType, doc_type_name: DOC_TYPES[docType],
         pdf_original: r.pdf_original || null, pdf_copy: r.pdf_copy || null, allocation_number: r.allocation_number || null,
