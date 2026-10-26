@@ -25,7 +25,7 @@ ssh -o BatchMode=yes "root@$HOST" 'set -e
   echo "   authorized_keys: $(wc -l < /home/nitur/.ssh/authorized_keys) מפתחות, sudoers תקין"'
 
 echo "== 2/4 בודק חיבור כ-nitur עם המפתח"
-ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "$KEY" "nitur@$HOST" 'echo "   ok: $(whoami)@$(hostname)"; sudo -n systemctl status farm-flow --no-pager | head -3'
+ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "$KEY" "nitur@$HOST" 'echo "   ok: $(whoami)@$(hostname)"; systemctl status farm-flow --no-pager | head -3; sudo -n -l 2>/dev/null | grep -q "systemctl restart farm-flow" && echo "   sudo restart: מאושר" || echo "   אזהרה: ל-nitur אין הרשאת restart"'
 
 echo "== 3/4 שומר סודות ב-GitHub"
 gh secret set VPS_HOST --body "$HOST"
