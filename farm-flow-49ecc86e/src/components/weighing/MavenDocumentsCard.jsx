@@ -6,7 +6,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { FileText, Loader2, ExternalLink, FlaskConical, AlertTriangle } from "lucide-react";
+import { FileText, Loader2, FlaskConical, AlertTriangle, Eye } from "lucide-react";
+import MavenPdfViewer from "@/components/common/MavenPdfViewer";
 import { getToken } from "@/api/localClient";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "/api";
@@ -32,6 +33,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
   const [noVat, setNoVat] = useState(false);
   const [remarks, setRemarks] = useState("");
   const [preview, setPreview] = useState(null);
+  const [viewDoc, setViewDoc] = useState(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [issuing, setIssuing] = useState(false);
   const [error, setError] = useState(null);
@@ -67,6 +69,7 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
       });
       setOpen(false); setRemarks(""); setExisting(null);
       onIssued?.(d.document, d.warnings || []);
+      if (d.document?.pdf_original) setViewDoc(d.document); // הצגת המסמך מיד לאחר ההפקה
     } catch (e) {
       if (e.status === 409 && e.data?.existing) setExisting(e.data.existing);
       setError(e.data?.error || e.message);
@@ -104,8 +107,11 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
                     {d.test && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">בדיקה — לא נשמר</span>}
                     <span className="text-gray-400 text-xs">{fmtTime(d.issued_at)} · {d.by}</span>
                     <span className="text-gray-600">{money(d.total)}</span>
-                    {d.pdf_original && <a href={d.pdf_original} target="_blank" rel="noreferrer" className="text-blue-600 inline-flex items-center gap-1 text-xs">מקור <ExternalLink className="w-3 h-3" /></a>}
-                    {d.pdf_copy && <a href={d.pdf_copy} target="_blank" rel="noreferrer" className="text-blue-600 inline-flex items-center gap-1 text-xs">העתק <ExternalLink className="w-3 h-3" /></a>}
+                    {d.pdf_original ? (
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewDoc(d)} aria-label={`הצג ${d.doc_type_name || ""} ${d.doc_no || ""}`}><Eye className="w-3.5 h-3.5 ml-1" aria-hidden="true" /> הצג</Button>
+                    ) : (
+                      <span className="text-xs text-gray-400">אין PDF</span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -113,6 +119,8 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
           </CardContent>
         </Card>
       )}
+
+      <MavenPdfViewer doc={viewDoc} open={!!viewDoc} onOpenChange={(v) => { if (!v) setViewDoc(null); }} farmId={farmId} />
 
       <Dialog open={open} onOpenChange={(v) => { if (!issuing) setOpen(v); }}>
         <DialogContent className="max-w-lg" dir="rtl">

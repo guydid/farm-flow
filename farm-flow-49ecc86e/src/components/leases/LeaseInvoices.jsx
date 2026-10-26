@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Receipt, ExternalLink, FlaskConical, Check, Ban } from "lucide-react";
+import { Loader2, Receipt, FlaskConical, Check, Ban, Eye } from "lucide-react";
+import MavenPdfViewer from "@/components/common/MavenPdfViewer";
 import { apiFetch, METHODS, KINDS, BILLING_MODES, INVOICE_STATUS, money, fmtDate, todayIso } from "./leaseUtils";
 
 import { DateInput } from "@/components/ui/date-input";
@@ -14,6 +15,7 @@ const thisMonth = () => todayIso().slice(0, 7);
 
 export default function LeaseInvoices({ lease, farmId, invoices, payments, canWrite, onChanged }) {
   const [open, setOpen] = useState(false);
+  const [viewDoc, setViewDoc] = useState(null);
   const [period, setPeriod] = useState(thisMonth());
   const [includeRent, setIncludeRent] = useState(false);
   const [docType, setDocType] = useState("305");
@@ -87,8 +89,8 @@ export default function LeaseInvoices({ lease, farmId, invoices, payments, canWr
               <span className="text-gray-500 text-xs">{(inv.payment_ids || []).length} חיובים{inv.discount > 0 ? ` · זיכוי ${money(inv.discount)}` : ""}</span>
               <span className="font-semibold tabular-nums">{money(inv.total)}</span>
               {inv.maven?.test && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 inline-flex items-center gap-1"><FlaskConical className="w-3 h-3" /> בדיקה</span>}
-              {inv.maven?.pdf_original && <a href={inv.maven.pdf_original} target="_blank" rel="noreferrer" className="text-blue-600 text-xs inline-flex items-center gap-1">PDF <ExternalLink className="w-3 h-3" /></a>}
-              {inv.receipt?.pdf_original && <a href={inv.receipt.pdf_original} target="_blank" rel="noreferrer" className="text-blue-600 text-xs inline-flex items-center gap-1">קבלה <ExternalLink className="w-3 h-3" /></a>}
+              {inv.maven?.pdf_original && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewDoc({ ...inv.maven, doc_type_name: inv.maven.doc_type_name || (inv.doc_type === 320 ? "חשבונית מס/קבלה" : "חשבונית מס"), doc_no: inv.maven.doc_no ?? inv.number })}><Eye className="w-3.5 h-3.5 ml-1" aria-hidden="true" /> הצג</Button>}
+              {inv.receipt?.pdf_original && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewDoc({ ...inv.receipt, doc_type_name: "קבלה", doc_no: inv.receipt.doc_no })}><Eye className="w-3.5 h-3.5 ml-1" aria-hidden="true" /> קבלה</Button>}
               {inv.status === "paid" && <span className="text-xs text-gray-500">{fmtDate(inv.paid_date || inv.paid_at)}{inv.method ? ` · ${METHODS[inv.method]}` : ""}</span>}
               {canWrite && inv.status === "issued" && <Button size="sm" variant="outline" className="h-7 text-green-700 border-green-300" onClick={() => { setPayInv(inv); setPayForm({ paid_date: todayIso(), method: lease.payment_method || "transfer", reference: "", issue_receipt: !!inv.maven }); }} disabled={busy}><Check className="w-3.5 h-3.5 ml-1" /> התקבל תשלום</Button>}
               {canWrite && inv.status !== "cancelled" && (!inv.maven || inv.maven.test) && <Button size="sm" variant="ghost" className="h-7 text-gray-400" onClick={() => cancel(inv)} disabled={busy} title="בטל"><Ban className="w-3.5 h-3.5" /></Button>}
@@ -151,6 +153,7 @@ export default function LeaseInvoices({ lease, farmId, invoices, payments, canWr
           </DialogContent>
         </Dialog>
       )}
+      <MavenPdfViewer doc={viewDoc} open={!!viewDoc} onOpenChange={(v) => { if (!v) setViewDoc(null); }} farmId={farmId} />
     </div>
   );
 }

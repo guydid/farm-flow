@@ -5,6 +5,7 @@
 //   • סנכרון מוצרים ל-Maven כפריטים עם מק"ט משותף (FF-xxxxxxxx) — "קודים משותפים".
 //   • הפקת תעודת משלוח / חשבונית / חשבונית מס-קבלה מתוך תעודת שקילה.
 // ה-API של Maven: כל הקריאות POST+JSON, api_key בכותרת, test=1 לא שומר כלום.
+const { Readable } = require('stream');
 const MAVEN_HOST = 'app.invoice-maven.co.il';
 const DOC_TYPES = { 200: 'תעודת משלוח', 305: 'חשבונית מס', 320: 'חשבונית מס/קבלה', 10: 'הצעת מחיר', 100: 'הזמנה' };
 const ALLOWED_DOC_TYPES = new Set([200, 305, 320, 10, 100]);
@@ -331,6 +332,27 @@ function registerMavenRoutes(app, deps) {
     } catch (e) {
       console.error(`[maven] sync ${what} failed:`, e.message);
       res.status(422).json({ ok: false, error: e.message, code: e.code || null });
+    }
+  });
+
+  // PDF של מסמך שהופק ב-Maven, מוגש דרך השרת שלנו: מאפשר הצגה בתוך המערכת (iframe באותו origin),
+  // הורדה בשם קריא, ובלי לחשוף את הקישור המקורי. מותר רק לקישורים של Maven (לא proxy כללי).
+  const tokenFromQuery = (req, _res, next) => { if (!req.headers.authorization && req.query.token) req.headers.authorization = `Bearer ${req.query.token}`; next(); };
+  app.get('/api/integrations/maven/pdf', tokenFromQuery, authMiddleware, async (req, res) => {
+    const ctx = farmOf(req, res); if (!ctx) return;
+    let u; try { u = new URL(String(req.query.url || '')); } catch { return res.status(400).json({ error: 'קישור לא תקין' }); }
+    const hostOk = u.hostname === MAVEN_HOST || u.hostname.endsWith('.invoice-maven.co.il');
+    if (u.protocol !== 'https:' || !hostOk) return res.status(400).json({ error: 'מותר להציג רק קבצים של Maven' });
+    try {
+      const r = await fetch(u, { redirect: 'follow', signal: AbortSignal.timeout(30000) });
+      if (!r.ok || !r.body) return res.status(422).json({ error: `Maven החזיר ${r.status} עבור הקובץ` });
+      const name = String(req.query.name || 'maven-document').replace(/[^\w֐-׿.-]+/g, '_').slice(0, 80);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="document.pdf"; filename*=UTF-8''${encodeURIComponent(name)}.pdf`);
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      Readable.fromWeb(r.body).pipe(res);
+    } catch (e) {
+      res.status(422).json({ error: `לא ניתן להוריד את הקובץ מ-Maven: ${e.message}` });
     }
   });
 
