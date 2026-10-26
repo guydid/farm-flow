@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { localAuth } from '@/api/localClient';
 import { getBrand } from '@/lib/branding';
 import { Eye, EyeOff, Mail, Loader2, CheckCircle2, ArrowRight, Sprout, Bug, FileText, Users2 } from 'lucide-react';
+import AccessibilityMenu from "@/components/common/AccessibilityMenu";
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 const API_ROOT = BASE_URL.replace(/\/api$/, '');
@@ -199,6 +200,7 @@ export default function Login() {
       {/* טופס */}
       <div className="flex min-h-screen lg:min-h-0 items-center justify-center px-4 py-8">
         <div className="w-full max-w-md">
+          <div className="flex justify-end mb-2"><AccessibilityMenu variant="outline" className="bg-white" /></div>
           <div className="text-center mb-6 lg:hidden">
             <div className="flex justify-center mb-3"><Logo brand={brand} /></div>
             <h1 className="text-2xl font-bold text-gray-900">{brand?.name || 'Farm Flow'}</h1>
@@ -361,6 +363,9 @@ export default function Login() {
               </>
             )}
           </div>
+          <p className="text-center text-xs text-gray-500 mt-4">
+            <a href="/accessibility.html" className="underline hover:text-gray-800">הצהרת נגישות</a> · <a href="/terms.html" className="underline hover:text-gray-800">תנאי שימוש ופרטיות</a>
+          </p>
         </div>
       </div>
     </div>

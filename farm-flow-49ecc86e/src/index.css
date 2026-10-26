@@ -184,6 +184,21 @@ button:focus-visible {
   .skip-link:focus { top: 0.5rem; }
   /* מספרים בעמודות — ספרות בעלות רוחב אחיד */
   .tabular-nums, table, [data-numeric] { font-variant-numeric: tabular-nums; }
+  /* תפריט נגישות — מוחל כמחלקות על <html> (src/lib/a11y.js) */
+  html.a11y-font-1 { font-size: 112.5%; }
+  html.a11y-font-2 { font-size: 125%; }
+  html.a11y-font-3 { font-size: 140%; }
+  html.a11y-spacing body { line-height: 1.8; letter-spacing: 0.02em; word-spacing: 0.08em; }
+  html.a11y-links a, html.a11y-links [role="link"] { text-decoration: underline !important; text-underline-offset: 3px; text-decoration-thickness: 2px; }
+  html.a11y-contrast { filter: contrast(1.15); }
+  html.a11y-contrast body { --muted-foreground: 0 0% 25%; --border: 0 0% 55%; --input: 0 0% 45%; }
+  html.a11y-contrast .text-gray-400, html.a11y-contrast .text-gray-500, html.a11y-contrast .text-muted-foreground { color: #1f2937 !important; }
+  html.a11y-no-motion *, html.a11y-no-motion *::before, html.a11y-no-motion *::after {
+    animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+  }
+  /* ניגודיות AA (4.5:1) לטקסט אפור בהיר — gray-400 על לבן נכשל (2.5:1) */
+  .text-gray-400 { color: rgb(107 114 128); }
+
   /* משתמשים שביקשו להפחית תנועה */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {

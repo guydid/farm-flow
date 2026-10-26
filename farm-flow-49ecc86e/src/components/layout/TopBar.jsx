@@ -15,6 +15,7 @@ import NotificationPanel from "./NotificationPanel";
 import { useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { BrandMark } from "@/lib/branding";
+import AccessibilityMenu from "@/components/common/AccessibilityMenu";
 
 export default function TopBar({ 
   onMenuClick, 
@@ -69,6 +70,7 @@ export default function TopBar({
 
       {/* Left section (RTL) - Notifications + User */}
       <div className="flex items-center gap-1 lg:gap-3 flex-shrink-0">
+        <AccessibilityMenu className="h-9 w-9 lg:h-10 lg:w-10" />
         {/* Notifications */}
         <div className="relative">
           <Button
@@ -76,6 +78,8 @@ export default function TopBar({
             size="icon"
             onClick={() => setShowNotifications(!showNotifications)}
             className="relative h-9 w-9 lg:h-10 lg:w-10"
+            aria-label={notifications.length ? `התראות (${notifications.length})` : "התראות"}
+            aria-expanded={showNotifications}
           >
             <Bell className="h-4 w-4 lg:h-5 lg:w-5" />
             {notifications.length > 0 && (

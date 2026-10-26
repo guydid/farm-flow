@@ -492,8 +492,8 @@ export default function Layout({ children, currentPageName }) {
                       <div className="text-xs text-gray-500 truncate">{currentUser.email}</div>
                   </div>
                 </div>
-                <div className="px-3 pb-1 text-[10px] text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis opacity-0 group-hover:opacity-100 transition-opacity duration-300" title="גרסת המערכת">
-                  {formatVersion()}
+                <div className="px-3 pb-1 text-[10px] text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  <span title="גרסת המערכת">{formatVersion()}</span> · <a href="/accessibility.html" target="_blank" rel="noopener noreferrer" className="underline">נגישות</a>
                 </div>
               </div>
             )}
