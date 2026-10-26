@@ -35,6 +35,7 @@ gh secret list
 
 echo "== 4/4 דוחף ל-GitHub ועוקב אחרי הפריסה"
 git push origin main
-sleep 8
-gh run watch --exit-status || { echo "הריצה נכשלה. לוג: gh run view --log-failed"; exit 1; }
+sleep 10
+RUN_ID=$(gh run list --workflow deploy.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RUN_ID" --exit-status || { echo "הריצה נכשלה. לוג: gh run view $RUN_ID --log-failed"; exit 1; }
 echo "✔ הפריסה מ-GitHub פעילה. מעכשיו כל push ל-main נפרס אוטומטית."
