@@ -1,0 +1,83 @@
+# פריסה אוטומטית ל-VPS (Hetzner) בכל push ל-main, או ידנית מלשונית Actions.
+# הסודות נשארים בשרת (systemd Environment); ה-workflow רק מעלה קבצים ומפעיל מחדש.
+# Secrets נדרשים ב-GitHub: VPS_HOST, VPS_SSH_KEY (מפתח פרטי של המשתמש nitur), VPS_KNOWN_HOSTS.
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      REMOTE: nitur@${{ secrets.VPS_HOST }}
+      APP_DIR: /home/nitur/farm-flow
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # חותמת הגרסה ב-vite.config נגזרת מ-git
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: farm-flow-49ecc86e/package-lock.json
+
+      - name: Build frontend
+        working-directory: farm-flow-49ecc86e
+        env:
+          VITE_API_URL: /api
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          test -f dist/index.html
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes "$REMOTE" 'echo "ssh ok: $(hostname)"'
+
+      - name: Upload frontend
+        run: |
+          rsync -az --delete \
+            --exclude '.well-known' \
+            farm-flow-49ecc86e/dist/ "$REMOTE:$APP_DIR/frontend/"
+
+      - name: Upload backend
+        run: |
+          rsync -az \
+            --exclude 'node_modules' --exclude 'data' --exclude 'uploads' --exclude 'tessdata' \
+            --exclude '.env*' --exclude 'test_*' \
+            backend/ "$REMOTE:$APP_DIR/backend/"
+
+      - name: Install backend deps & restart
+        run: |
+          ssh -o BatchMode=yes "$REMOTE" bash -s <<'EOF'
+            set -e
+            cd /home/nitur/farm-flow/backend
+            npm install --omit=dev --no-audit --no-fund 2>&1 | tail -2
+            sudo -n systemctl restart farm-flow
+            for i in $(seq 1 15); do
+              sleep 2
+              if curl -sf http://127.0.0.1:3002/api/health >/dev/null; then echo "health ok after ${i}x2s"; exit 0; fi
+            done
+            echo "backend did not become healthy"; sudo -n systemctl status farm-flow --no-pager | tail -15; exit 1
+          EOF
+
+      - name: Verify public site
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://farm.nitur-ai.com/api/health)
+          echo "public health: $code"; test "$code" = "200"

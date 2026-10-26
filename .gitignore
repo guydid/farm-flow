@@ -58,3 +58,6 @@ client_secret/
 
 # deploy SSH password (local only)
 .deploy_pass
+
+# GitHub Actions deploy key (local only)
+.deploy_keys/
