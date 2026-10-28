@@ -57,7 +57,13 @@ const ENTITIES = {
   pesticide_prices:        'מחירון קנייה של המשק לחומרי הדברה — רשומה אחת לתכשיר: product_name, price (₪ ליחידה), unit (ליטר/מ"ל/ק"ג/גרם/יח\'), supplier, date',
   pesticide_stock:         'תנועות מלאי חומרי הדברה: type count (ספירה — קובעת יתרה) / purchase (קנייה) / adjustment (תיקון ±), product_name, quantity, unit, date, supplier, cost_per_unit, notes. היתרה מחושבת — בכלי pesticide_stock',
   pest_recommendations:    'המלצות הדברה מפיקוח מזיקים (status: pending/done/cancelled) — כתיבה רק דרך propose_pest_action / update_pest_action',
+  orders:                  'הזמנות רכש (direction=purchase, supplier_id) ומכירה (direction=sale, customer_id): order_number, status, expected_delivery_date, total_amount, history. יצירה — create_order',
+  order_items:             'שורות הזמנה (order_id): product_name, quantity, unit, unit_price, delivered_quantity (מחושב מתעודות המשלוח). הוספה — add_order_items',
+  delivery_notes:          'תעודות משלוח נכנסות (direction=in) / יוצאות (out): note_number, order_id, invoice_id, status expected/received/checked/disputed/invoiced, file_url. יצירה — create_delivery_note',
+  delivery_note_items:     'שורות תעודת משלוח (delivery_note_id, order_item_id): product_name, quantity, unit, unit_price, discrepancy_note, stock_movement_id',
 };
+// ישויות הרכש — הכתיבה דרך הכלים הייעודיים / הליבה ב-procurement.js (אימות, חישוב כמויות, סטטוסים, מלאי)
+const PROCUREMENT_ENTITIES = ['orders', 'order_items', 'delivery_notes', 'delivery_note_items'];
 // המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
 const READ_ONLY = new Set(['farms', 'pesticides', 'pest_recommendations']);
 // טבלאות המלאי/מחירון — נכתבות גם בטוקן "פיקוח מזיקים" (create_record/update_record מוגבלים אליהן), עם אימות
@@ -96,7 +102,9 @@ const KNOWN_FIELDS = {
 };
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice }) {
+module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
+  const knownFields = (entity) => KNOWN_FIELDS[entity] || (procurement && procurement.KNOWN_FIELDS[entity]) || [];
+  const agentBy = (ctx) => `סוכן: ${ctx.tokenName}`;
   db.exec(`
     CREATE TABLE IF NOT EXISTS mcp_tokens (
       id TEXT PRIMARY KEY,
@@ -255,6 +263,9 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       'Pest control: inspect a plot with pest_plot_context, then propose treatments with propose_pest_action. '
         + 'Proposals appear in the app as pending until a worker executes them in the field (only the app marks them done).',
       ctx.canWritePest ? 'This token may create and update pest control recommendations, pesticide prices (pesticide_prices) and stock movements (pesticide_stock). Use pesticide_stock (tool) for current balances.' : 'This token cannot write pest control recommendations.',
+      'Procurement & sales: orders (purchase from suppliers / sale to customers) and delivery notes (in/out). Read with list_open_orders, list_expected_deliveries, find_discrepancies; '
+        + (ctx.canWrite ? 'write with create_order, add_order_items, update_order_status, create_delivery_note (link to an order and/or invoice), update_delivery_note, match_invoice_to_delivery_notes. ' : '')
+        + 'A received delivery note linked to an order updates delivered_quantity and the order status automatically; incoming pesticides/inputs are added to pesticide_stock; outgoing notes link to weighing certificates of the same customer and date.',
     ].join('\n');
   }
 
@@ -340,7 +351,164 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         },
         annotations: { readOnlyHint: true },
       },
+      {
+        name: 'list_open_orders',
+        title: 'Open purchase / sale orders',
+        description: 'Orders not yet fully delivered or invoiced, with their lines, delivered and remaining quantities, fulfillment % and an overdue flag. Filter by direction, supplier, customer, status (comma-separated) and expected delivery date range.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            direction: { type: 'string', enum: ['purchase', 'sale'] },
+            supplier_id: { type: 'string' }, customer_id: { type: 'string' }, plot_id: { type: 'string' },
+            status: { type: 'string', description: 'Comma-separated statuses to include instead of the default open set (draft,ordered,confirmed,partially_delivered). E.g. "delivered,invoiced"' },
+            expected_from: { type: 'string', description: 'YYYY-MM-DD' }, expected_to: { type: 'string', description: 'YYYY-MM-DD' },
+            include_draft: { type: 'boolean', default: true },
+          },
+        },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: 'list_expected_deliveries',
+        title: 'Expected deliveries',
+        description: 'Deliveries expected in a date range (default today and tomorrow): open orders by expected_delivery_date, delivery notes with status expected, plus overdue orders and overdue expected notes.',
+        inputSchema: {
+          type: 'object',
+          properties: { from: { type: 'string', description: 'YYYY-MM-DD, default today' }, to: { type: 'string', description: 'YYYY-MM-DD, default tomorrow' }, direction: { type: 'string', enum: ['purchase', 'sale'] } },
+        },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: 'find_discrepancies',
+        title: 'Procurement discrepancies',
+        description: 'Quantity gaps (delivered vs ordered), price gaps (delivery note price vs order price or price list), delivery notes without an invoice after N days, items with a discrepancy note, and overdue orders.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            days_without_invoice: { type: 'integer', minimum: 0, maximum: 365, default: 14 },
+            price_tolerance_pct: { type: 'number', minimum: 0, default: 1, description: 'Ignore price differences below this percent' },
+            direction: { type: 'string', enum: ['purchase', 'sale'] },
+          },
+        },
+        annotations: { readOnlyHint: true },
+      },
     ];
+    if (ctx.canWrite && procurement) {
+      const orderItem = {
+        type: 'object',
+        properties: {
+          product_id: { type: 'string', description: 'Id from products (preferred)' },
+          product_name: { type: 'string', description: 'Free-text product when product_id is unknown; matched against products by name' },
+          quantity: { type: 'number', exclusiveMinimum: 0 },
+          unit: { type: 'string', description: 'ק"ג, ליטר, יח\', שתילים…' },
+          unit_price: { type: ['number', 'null'], minimum: 0 },
+          notes: { type: 'string' },
+        },
+        required: ['quantity'],
+      };
+      const noteItem = {
+        type: 'object',
+        properties: {
+          ...orderItem.properties,
+          order_item_id: { type: 'string', description: 'The order line this delivers. Omitted → matched by product_id / product_name' },
+          discrepancy_note: { type: 'string', description: 'Damage, shortage, wrong price…' },
+          stock_category: { type: 'string', enum: ['pesticide', 'input', 'none'], description: 'Force adding to (or keeping out of) pesticide_stock. Default: pesticides / input types are detected by name' },
+        },
+        required: ['quantity'],
+      };
+      const party = {
+        supplier_id: { type: 'string', description: 'Purchase: id from suppliers' }, supplier_name: { type: 'string', description: 'Purchase: supplier name when id unknown (matched by name)' },
+        customer_id: { type: 'string', description: 'Sale: id from customers' }, customer_name: { type: 'string', description: 'Sale: customer name when id unknown' },
+      };
+      tools.push(
+        {
+          name: 'create_order',
+          title: 'Create purchase / sale order',
+          description: 'Creates an order with its lines. direction purchase needs a supplier, sale needs a customer. order_number is generated (PO-0001 / SO-0001) unless given. Returns the order with item ids. Pass source + source_ref (e.g. WhatsApp message id) so the same message is not recorded twice.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              direction: { type: 'string', enum: ['purchase', 'sale'] }, ...party,
+              order_number: { type: 'string' }, order_date: { type: 'string', description: 'YYYY-MM-DD, default today' }, expected_delivery_date: { type: 'string', description: 'YYYY-MM-DD' },
+              status: { type: 'string', enum: ['draft', 'ordered', 'confirmed'], default: 'draft' },
+              plot_id: { type: 'string' }, contact_person: { type: 'string' },
+              source: { type: 'string', enum: ['whatsapp', 'email', 'phone', 'app', 'agent', 'other'], default: 'agent' }, source_ref: { type: 'string' },
+              notes: { type: 'string' }, vat_included: { type: 'boolean' },
+              items: { type: 'array', items: orderItem },
+            },
+            required: ['direction'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        {
+          name: 'add_order_items',
+          title: 'Add lines to an order',
+          inputSchema: { type: 'object', properties: { order_id: { type: 'string' }, items: { type: 'array', minItems: 1, items: orderItem } }, required: ['order_id', 'items'] },
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        {
+          name: 'update_order_status',
+          title: 'Update order status',
+          description: 'Sets the order status and records it in the order history. partially_delivered / delivered / invoiced are normally set automatically from delivery notes; use this for ordered, confirmed, cancelled or to fix a status. Other fields (expected_delivery_date, notes, contact_person…) can be patched with update_record on orders.',
+          inputSchema: {
+            type: 'object',
+            properties: { order_id: { type: 'string' }, status: { type: 'string', enum: procurement.ORDER_STATUSES }, note: { type: 'string', description: 'Reason, saved in the audit history' } },
+            required: ['order_id', 'status'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+        },
+        {
+          name: 'create_delivery_note',
+          title: 'Record a delivery note',
+          description: 'Records an incoming (in, from a supplier) or outgoing (out, to a customer) delivery note with its lines. order_id links it to an order: lines are matched to order lines, delivered_quantity and the order status update automatically. invoice_id links an existing invoice (status becomes invoiced). Incoming pesticides / inputs are added to stock; outgoing notes link to weighing certificates of the same customer on the same date. A future delivery_date creates an expected note.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              direction: { type: 'string', enum: ['in', 'out'], description: 'Derived from the order when order_id is given' }, ...party,
+              order_id: { type: 'string' }, invoice_id: { type: 'string' },
+              note_number: { type: 'string', description: 'The supplier\'s delivery note number' }, delivery_date: { type: 'string', description: 'YYYY-MM-DD, default today' },
+              driver_name: { type: 'string' }, vehicle: { type: 'string' }, received_by: { type: 'string' },
+              status: { type: 'string', enum: procurement.DN_STATUSES, description: 'Default received (expected when delivery_date is in the future)' },
+              file_url: { type: 'string', description: 'URL of the photographed note (uploaded via the app)' }, notes: { type: 'string' },
+              source: { type: 'string', enum: ['whatsapp', 'email', 'phone', 'app', 'agent', 'other'], default: 'agent' }, source_ref: { type: 'string' },
+              add_to_stock: { type: 'boolean', description: 'Incoming: add every line to pesticide_stock, not only detected pesticides / inputs' },
+              weighing_certificate_ids: { type: 'array', items: { type: 'string' }, description: 'Outgoing: explicit weighing certificates to link' },
+              items: { type: 'array', items: noteItem },
+            },
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        {
+          name: 'update_delivery_note',
+          title: 'Update a delivery note',
+          description: 'Patches fields, changes status (recorded in history), links an order or invoice, or replaces the lines (items). Linked orders are recomputed.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              delivery_note_id: { type: 'string' },
+              status: { type: 'string', enum: procurement.DN_STATUSES }, status_note: { type: 'string' },
+              order_id: { type: ['string', 'null'] }, invoice_id: { type: ['string', 'null'] },
+              note_number: { type: 'string' }, delivery_date: { type: 'string' }, driver_name: { type: 'string' }, vehicle: { type: 'string' }, received_by: { type: 'string' },
+              file_url: { type: 'string' }, notes: { type: 'string' }, ...party,
+              items: { type: 'array', items: noteItem, description: 'Replaces all lines' },
+              weighing_certificate_ids: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['delivery_note_id'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+        },
+        {
+          name: 'match_invoice_to_delivery_notes',
+          title: 'Match an invoice to delivery notes',
+          description: 'Links a supplier invoice (invoices) to incoming delivery notes. With delivery_note_ids: links them. Without: finds the supplier\'s unbilled notes before the invoice date whose totals add up to the invoice total (with or without VAT) and links them when exactly one combination fits; otherwise returns the candidates.',
+          inputSchema: {
+            type: 'object',
+            properties: { invoice_id: { type: 'string' }, delivery_note_ids: { type: 'array', items: { type: 'string' } }, tolerance: { type: 'number', minimum: 0, default: 1, description: '₪ tolerance on the total' }, window_days: { type: 'integer', minimum: 1, maximum: 365, default: 90 } },
+            required: ['invoice_id'],
+          },
+          annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+        },
+      );
+    }
     if (ctx.canWritePest) {
       const pesticideItem = {
         type: 'object',
@@ -695,8 +863,50 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
       .run(uuidv4(), null, farmId, title, body, type, null, NOW());
   }
 
+  // ── רכש: create_record / update_record על ישויות הרכש עוברים דרך הליבה ──
+  function procurementCreate(ctx, entity, d) {
+    if (!procurement) throw new Error('procurement module unavailable');
+    const by = agentBy(ctx);
+    const src = { source: 'agent', ...d };
+    let out;
+    if (entity === 'orders') out = procurement.createOrder(ctx.farmId, by, src);
+    else if (entity === 'delivery_notes') out = procurement.createDeliveryNote(ctx.farmId, by, src).delivery_note;
+    else if (entity === 'order_items') { if (!d.order_id) throw new Error('order_id is required'); out = procurement.addOrderItems(ctx.farmId, by, d.order_id, [d]); out = out.order.items.find(i => i.id === out.added_item_ids[0]); }
+    else { if (!d.delivery_note_id) throw new Error('delivery_note_id is required'); out = procurement.addDeliveryNoteItems(ctx.farmId, by, d.delivery_note_id, [d]).delivery_note; }
+    console.log(`[MCP] token ${ctx.tokenId} created ${entity}/${out?.id}`);
+    return out;
+  }
+  function procurementUpdate(ctx, entity, id, existing, d) {
+    if (!procurement) throw new Error('procurement module unavailable');
+    const by = agentBy(ctx);
+    if (entity === 'orders') return procurement.updateOrder(ctx.farmId, by, id, d);
+    if (entity === 'delivery_notes') return procurement.updateDeliveryNote(ctx.farmId, by, id, d).delivery_note;
+    // שורות: מיזוג שדות מותרים ואז חישוב מחדש של ההזמנה
+    const allowed = ['product_id', 'product_name', 'quantity', 'unit', 'unit_price', 'notes', 'discrepancy_note', 'order_item_id', 'stock_category'];
+    const patch = {}; for (const k of allowed) if (d[k] !== undefined) patch[k] = d[k];
+    if (patch.quantity !== undefined && !(Number(patch.quantity) > 0)) throw new Error('quantity must be a positive number');
+    if (patch.unit_price !== undefined && patch.unit_price !== null && !(Number(patch.unit_price) >= 0)) throw new Error('unit_price must be a non-negative number or null');
+    const updated = { ...existing, ...patch, _by: by };
+    ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
+    db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE entity_type = ? AND id = ?').run(JSON.stringify(updated), NOW(), entity, id);
+    const orderId = entity === 'order_items' ? existing.order_id : procurement.getRow('delivery_notes', existing.delivery_note_id, ctx.farmId)?.order_id;
+    if (orderId) procurement.recomputeOrder(ctx.farmId, by, orderId, { note: `עודכנה שורה (${entity})` });
+    console.log(`[MCP] token ${ctx.tokenId} updated ${entity}/${id}`);
+    return formatEntity(db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id));
+  }
+  const needProcurementWrite = (ctx) => { if (!ctx.canWrite) throw new Error('This token cannot write orders / delivery notes (requires full write access)'); if (!procurement) throw new Error('procurement module unavailable'); };
+
   function runTool(ctx, name, args) {
     switch (name) {
+      case 'list_open_orders': { if (!procurement) throw new Error('procurement module unavailable'); const orders = procurement.listOpenOrders(ctx.farmId, args || {}); return { total: orders.length, orders: clip(orders) }; }
+      case 'list_expected_deliveries': { if (!procurement) throw new Error('procurement module unavailable'); return clip(procurement.listExpectedDeliveries(ctx.farmId, args || {})); }
+      case 'find_discrepancies': { if (!procurement) throw new Error('procurement module unavailable'); return clip(procurement.findDiscrepancies(ctx.farmId, args || {})); }
+      case 'create_order': { needProcurementWrite(ctx); const o = procurement.createOrder(ctx.farmId, agentBy(ctx), { source: 'agent', ...args }); console.log(`[MCP] token ${ctx.tokenId} created orders/${o.id}`); return clip(o); }
+      case 'add_order_items': { needProcurementWrite(ctx); return clip(procurement.addOrderItems(ctx.farmId, agentBy(ctx), args.order_id, args.items)); }
+      case 'update_order_status': { needProcurementWrite(ctx); return clip(procurement.updateOrderStatus(ctx.farmId, agentBy(ctx), args.order_id, args.status, args.note)); }
+      case 'create_delivery_note': { needProcurementWrite(ctx); const r = procurement.createDeliveryNote(ctx.farmId, agentBy(ctx), { source: 'agent', ...args }); console.log(`[MCP] token ${ctx.tokenId} created delivery_notes/${r.delivery_note.id}`); return clip(r); }
+      case 'update_delivery_note': { needProcurementWrite(ctx); const { delivery_note_id, ...patch } = args; return clip(procurement.updateDeliveryNote(ctx.farmId, agentBy(ctx), delivery_note_id, patch)); }
+      case 'match_invoice_to_delivery_notes': { needProcurementWrite(ctx); return clip(procurement.matchInvoiceToDeliveryNotes(ctx.farmId, agentBy(ctx), args)); }
       case 'farm_overview': {
         const farmRow = db.prepare("SELECT * FROM entities WHERE entity_type = 'farms' AND id = ?").get(ctx.farmId);
         const counts = Object.fromEntries(
@@ -723,12 +933,12 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           }
         }
         const inferred = Object.entries(fields).map(([k, f]) => ({ field: k, types: [...f.types], present_in: f.seen, example: f.example }));
-        const known = (KNOWN_FIELDS[args.entity] || []).filter(k => !fields[k.field]);
+        const known = knownFields(args.entity).filter(k => !fields[k.field]);
         return {
           entity: args.entity,
           description: ENTITIES[args.entity],
           sampled_records: r.body.length,
-          fields: [...inferred.map(f => ({ ...f, ...((KNOWN_FIELDS[args.entity] || []).find(k => k.field === f.field) || {}), types: f.types })), ...known],
+          fields: [...inferred.map(f => ({ ...f, ...(knownFields(args.entity).find(k => k.field === f.field) || {}), types: f.types })), ...known],
         };
       }
 
@@ -777,6 +987,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
         checkEntity(args.entity, { write: true });
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
         if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
+        if (PROCUREMENT_ENTITIES.includes(args.entity)) return procurementCreate(ctx, args.entity, args.data);
         const id = uuidv4();
         const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data)
           : args.entity === 'employee_events' ? validateEmployeeEvent(ctx, args.data) : args.data), _by: `סוכן: ${ctx.tokenName}` };
@@ -800,6 +1011,7 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
           if (args.data.product_name !== undefined && String(args.data.product_name).trim() !== existing.product_name) throw new Error('product_name of a price record cannot be changed; create a record for the other product');
           return savePriceRecord(ctx, { ...existing, ...args.data, product_name: existing.product_name });
         }
+        if (PROCUREMENT_ENTITIES.includes(args.entity)) return procurementUpdate(ctx, args.entity, row.id, existing, args.data);
         let updated = { ...existing, ...args.data, _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
         if (args.entity === 'employee_events') updated = { ...validateEmployeeEvent(ctx, updated), created_by: existing.created_by || '' };

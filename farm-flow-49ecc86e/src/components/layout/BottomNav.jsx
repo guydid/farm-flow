@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Sprout, Map, MoreHorizontal, Plus, Users2,
   SlidersHorizontal, Layers, Truck, Settings, X, ChevronRight,
   Scissors, ClipboardList, Leaf, Activity, Scale, FileText, Building2, Camera, Clock, HardHat,
-  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug, KeyRound
+  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug, KeyRound, ShoppingCart
 } from "lucide-react";
 
 // ─── Navigation items ───────────────────────────────────────────────────────
@@ -26,6 +26,7 @@ const moreNav = [
   { name: "יריעות",           icon: Layers,            path: "Sheets" },
   { name: "שקילה",            icon: Scale,             path: "WeighingCertificates" },
   { name: "רכבים",            icon: Truck,             path: "Vehicles" },
+  { name: "רכש",              icon: ShoppingCart,      path: "Procurement" },
   { name: "חשבוניות",         icon: FileText,          path: "Invoices" },
   { name: "ספקים",             icon: Building2,         path: "Suppliers" },
   { name: "שכירויות",          icon: KeyRound,          path: "Leases" },
@@ -34,6 +35,7 @@ const moreNav = [
 
 const quickActions = [
   { name: "סרוק חשבונית",   icon: Camera,        path: "Invoices",             param: "?scan=true",   color: "bg-rose-500" },
+  { name: "תעודת משלוח",    icon: ShoppingCart,  path: "Procurement",          param: "?tab=notes&create=note", color: "bg-indigo-500" },
   { name: "המלצת הדברה",    icon: Bug,           path: "PestControl",          param: "?create=true", color: "bg-emerald-600" },
   { name: "מזרע חדש",       icon: Sprout,        path: "Seedings",             param: "?create=true", color: "bg-green-500" },
   { name: "הוסף קטיף",     icon: Scissors,      path: "Seedings",             param: "",            color: "bg-amber-500" },

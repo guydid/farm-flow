@@ -30,6 +30,10 @@ jobs:
           cache: npm
           cache-dependency-path: farm-flow-49ecc86e/package-lock.json
 
+      # בדיקות שרת ללא תלויות (node:sqlite המובנה) — פריסה נעצרת אם הן נכשלות
+      - name: Backend tests
+        run: node --test backend/procurement.test.js
+
       - name: Build frontend
         working-directory: farm-flow-49ecc86e
         env:
@@ -60,7 +64,7 @@ jobs:
         run: |
           rsync -az \
             --exclude 'node_modules' --exclude 'data' --exclude 'uploads' --exclude 'tessdata' \
-            --exclude '.env*' --exclude 'test_*' \
+            --exclude '.env*' --exclude 'test_*' --exclude '*.test.js' \
             backend/ "$REMOTE:$APP_DIR/backend/"
 
       - name: Install backend deps & restart

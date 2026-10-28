@@ -50,3 +50,10 @@ export const AttendanceRecord = createEntity('attendance_records');
 // not synced from the clock (see components/attendance/TempWorkersTab.jsx).
 export const TempWorkerGroup = createEntity('temp_worker_groups');
 export const PesticideStock = createEntity('pesticide_stock');
+
+// רכש ומכירות: הזמנות ותעודות משלוח (backend/procurement.js). יצירה/עדכון דרך /api/procurement/*,
+// הרשימות דרך ה-CRUD הגנרי.
+export const Order = createEntity('orders');
+export const OrderItem = createEntity('order_items');
+export const DeliveryNote = createEntity('delivery_notes');
+export const DeliveryNoteItem = createEntity('delivery_note_items');

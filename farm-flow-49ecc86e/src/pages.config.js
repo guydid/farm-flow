@@ -29,6 +29,7 @@ const Invoices = lazy(() => import('./pages/Invoices'));
 const PestControl = lazy(() => import('./pages/PestControl'));
 const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'));
 const Attendance = lazy(() => import('./pages/Attendance'));
+const Procurement = lazy(() => import('./pages/Procurement'));
 
 
 export const PAGES = {
@@ -58,6 +59,7 @@ export const PAGES = {
     "InvoiceDetail": InvoiceDetail,
     "Attendance": Attendance,
     "Leases": Leases,
+    "Procurement": Procurement,
 }
 
 export const pagesConfig = {

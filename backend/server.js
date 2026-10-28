@@ -4718,7 +4718,9 @@ app.put('/api/pesticide-prices', authMiddleware, (req, res) => {
   }
 });
 
-require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice });
+// רכש ומכירות: הזמנות ותעודות משלוח (procurement.js). נרשם לפני הראוטים הגנריים /api/:entity
+const procurement = require('./procurement').registerProcurementRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4 });
+require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
