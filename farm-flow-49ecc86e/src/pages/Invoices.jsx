@@ -385,6 +385,34 @@ export default function Invoices() {
     });
   };
   const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
+  // לחיצה ארוכה על מסמך (כ-450ms, בלי גרירה) נכנסת למצב בחירה ומסמנת אותו — כמו בגלריית התמונות בטלפון.
+  // ה-click שמגיע אחרי לחיצה ארוכה נבלע, כדי שלא ייפתח המסמך / יבוטל הסימון.
+  const longPress = useRef({ timer: null, fired: false, x: 0, y: 0 });
+  const lpStart = (id) => (e) => {
+    if (selectMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const lp = longPress.current;
+    clearTimeout(lp.timer); lp.fired = false; lp.x = e.clientX; lp.y = e.clientY;
+    lp.timer = setTimeout(() => {
+      lp.timer = null; lp.fired = true;
+      setSelectMode(true); setSelected(new Set([id]));
+      try { navigator.vibrate?.(30); } catch { /* לא נתמך */ }
+    }, 450);
+  };
+  const lpMove = (e) => {
+    const lp = longPress.current;
+    if (lp.timer && (Math.abs(e.clientX - lp.x) > 10 || Math.abs(e.clientY - lp.y) > 10)) { clearTimeout(lp.timer); lp.timer = null; }
+  };
+  const lpEnd = () => { const lp = longPress.current; clearTimeout(lp.timer); lp.timer = null; };
+  const lpConsumeClick = (e) => {
+    const lp = longPress.current;
+    if (!lp.fired) return false;
+    lp.fired = false; e.preventDefault(); e.stopPropagation(); return true;
+  };
+  const lpProps = (id) => ({
+    onPointerDown: lpStart(id), onPointerMove: lpMove, onPointerUp: lpEnd, onPointerLeave: lpEnd, onPointerCancel: lpEnd,
+    // תפריט ההקשר של הדפדפן בלחיצה ארוכה על תמונה (אנדרואיד) — נחסם רק בזמן לחיצה שלנו
+    onContextMenu: (e) => { const lp = longPress.current; if (lp.timer || lp.fired) e.preventDefault(); },
+  });
   const allFilteredSelected = filtered.length > 0 && filtered.every(inv => selected.has(inv.id));
   const toggleSelectAll = () => {
     setSelected(allFilteredSelected ? new Set() : new Set(filtered.map(inv => inv.id)));
@@ -564,7 +592,7 @@ export default function Invoices() {
                   <X className="w-4 h-4" /> בטל בחירה
                 </Button>
               ) : (
-                <Button onClick={() => setSelectMode(true)} variant="outline" className="flex items-center gap-1.5">
+                <Button onClick={() => setSelectMode(true)} variant="outline" className="flex items-center gap-1.5" title="או לחיצה ארוכה על מסמך">
                   <CheckSquare className="w-4 h-4" /> בחר
                 </Button>
               )
@@ -683,8 +711,9 @@ export default function Invoices() {
                 return (
                   <div
                     key={inv.id}
-                    onClick={() => (selectMode ? toggleSelect(inv.id) : setLightbox(inv))}
-                    className={`group relative rounded-xl border bg-white overflow-hidden cursor-pointer transition-shadow hover:shadow-md ${isSel ? 'ring-2 ring-indigo-500' : ''}`}
+                    {...lpProps(inv.id)}
+                    onClick={(e) => { if (lpConsumeClick(e)) return; if (selectMode) toggleSelect(inv.id); else setLightbox(inv); }}
+                    className={`group relative rounded-xl border bg-white overflow-hidden cursor-pointer transition-shadow hover:shadow-md select-none [-webkit-touch-callout:none] ${isSel ? 'ring-2 ring-indigo-500' : ''}`}
                   >
                     <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center overflow-hidden">
                       {src && !thumbErr.has(inv.id) ? (
@@ -824,9 +853,9 @@ export default function Invoices() {
                 </Card>
               );
               return selectMode ? (
-                <div key={inv.id} onClick={() => toggleSelect(inv.id)} className="cursor-pointer">{cardInner}</div>
+                <div key={inv.id} onClick={() => toggleSelect(inv.id)} className="cursor-pointer select-none">{cardInner}</div>
               ) : (
-                <Link key={inv.id} to={`${createPageUrl('InvoiceDetail')}?id=${inv.id}`}>{cardInner}</Link>
+                <Link key={inv.id} to={`${createPageUrl('InvoiceDetail')}?id=${inv.id}`} {...lpProps(inv.id)} onClick={lpConsumeClick} className="block select-none [-webkit-touch-callout:none]">{cardInner}</Link>
               );
             })}
               </div>
