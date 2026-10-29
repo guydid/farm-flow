@@ -188,8 +188,11 @@ export default function InvoiceDetail() {
     return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>;
   }
 
-  const previewUrl = fileUrlWithToken(invoice.file_url);
-  const isPdf = invoice.file_name && /\.pdf$/i.test(invoice.file_name);
+  // עדיפות לשם הקובץ מול השרת הנוכחי — file_url שנשמר עם דומיין ישן (לפני ההגירה) לא יישבר
+  const previewUrl = invoice.file_name
+    ? `${BASE_URL.replace(/\/api$/, '')}/uploads/${encodeURIComponent(invoice.file_name)}?token=${encodeURIComponent(getToken() || '')}`
+    : fileUrlWithToken(invoice.file_url);
+  const isPdf = /\.pdf$/i.test(invoice.file_name || String(invoice.file_url || '').split('?')[0]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">

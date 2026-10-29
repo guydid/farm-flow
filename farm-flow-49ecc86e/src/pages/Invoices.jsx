@@ -74,6 +74,10 @@ export default function Invoices() {
     try { return localStorage.getItem('invoices_view') === 'gallery' ? 'gallery' : 'list'; } catch { return 'list'; }
   });
   const [lightbox, setLightbox] = useState(null); // החשבונית שמוצגת בתצוגה מוגדלת
+  // ממוזערות שנכשלו (PDF בלי pdftoppm בשרת / קובץ חסר) — מציגים אייקון ברשת, ואת הקובץ עצמו בתצוגה המוגדלת
+  const [thumbErr, setThumbErr] = useState(() => new Set());
+  const markThumbErr = (id) => setThumbErr(prev => { if (prev.has(id)) return prev; const n = new Set(prev); n.add(id); return n; });
+  const isPdfFile = (inv) => /\.pdf$/i.test(inv?.file_name || inv?.file_url || '');
   const [collapsedMonths, setCollapsedMonths] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('invoices_collapsed_months') || '[]')); } catch { return new Set(); }
   });
@@ -652,16 +656,21 @@ export default function Invoices() {
                     className={`group relative rounded-xl border bg-white overflow-hidden cursor-pointer transition-shadow hover:shadow-md ${isSel ? 'ring-2 ring-indigo-500' : ''}`}
                   >
                     <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center overflow-hidden">
-                      {src ? (
+                      {src && !thumbErr.has(inv.id) ? (
                         <img
                           src={src}
                           alt={inv.supplier_name || 'מסמך'}
                           loading="lazy"
                           className="w-full h-full object-cover object-top"
-                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          onError={() => markThumbErr(inv.id)}
                         />
                       ) : (
-                        <FileText className="w-10 h-10 text-gray-300" />
+                        <div className="flex flex-col items-center gap-1 text-gray-400 px-2 text-center">
+                          <FileText className="w-10 h-10 text-gray-300" />
+                          <span className="text-[10px] leading-tight">
+                            {!src ? 'אין קובץ מצורף' : isPdfFile(inv) ? 'PDF · ללא תצוגה מקדימה' : 'ללא תצוגה מקדימה'}
+                          </span>
+                        </div>
                       )}
                     </div>
 
@@ -926,13 +935,31 @@ export default function Invoices() {
             </button>
           </div>
           <div className="flex-1 overflow-auto p-3 flex items-start justify-center">
-            {thumbUrl(lightbox, 1200) ? (
+            {thumbUrl(lightbox, 1200) && !thumbErr.has(lightbox.id) ? (
               <img
                 src={thumbUrl(lightbox, 1200)}
                 alt={lightbox.supplier_name || 'מסמך'}
                 className="max-w-full rounded-lg bg-white"
                 onClick={e => e.stopPropagation()}
+                onError={() => markThumbErr(lightbox.id)}
               />
+            ) : fileUrl(lightbox) ? (
+              // הממוזערת לא זמינה — מציגים את הקובץ המקורי עצמו (PDF במסגרת, תמונה ישירות)
+              isPdfFile(lightbox) ? (
+                <iframe
+                  src={fileUrl(lightbox)}
+                  title={lightbox.supplier_name || 'מסמך'}
+                  className="w-full h-[78vh] rounded-lg bg-white"
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <img
+                  src={fileUrl(lightbox)}
+                  alt={lightbox.supplier_name || 'מסמך'}
+                  className="max-w-full rounded-lg bg-white"
+                  onClick={e => e.stopPropagation()}
+                />
+              )
             ) : (
               <p className="text-white/70 text-sm mt-8">אין קובץ מצורף לחשבונית זו</p>
             )}

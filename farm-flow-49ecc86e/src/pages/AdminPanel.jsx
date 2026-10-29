@@ -311,6 +311,38 @@ export default function AdminPanel() {
                   <div className="flex justify-between"><span className="text-gray-500 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> פעילות</span><span className="font-medium">{formatUptime(serverStatus.uptime_seconds)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">עומס (1/5/15ד')</span><span className="font-medium font-mono text-xs">{(serverStatus.load_avg || []).join(' · ') || '—'}</span></div>
                 </div>
+                {serverStatus.pdf_renderer === false && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 space-y-1" role="alert">
+                    <p className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> pdftoppm לא מותקן בשרת — חשבוניות PDF מוצגות בגלריה בלי תצוגה מקדימה</p>
+                    <p>הקבצים עצמם קיימים ונפתחים. להתקנה (כ-root): <code dir="ltr" className="bg-white/70 rounded px-1">apt-get install -y poppler-utils</code> ואז רענון הדף.</p>
+                  </div>
+                )}
+                {serverStatus.invoice_files && !serverStatus.invoice_files.error && (
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">קבצי חשבוניות</span>
+                      <span className="font-medium">
+                        {serverStatus.invoice_files.with_file} עם קובץ · {serverStatus.invoice_files.without_file} בלי קובץ
+                        {serverStatus.invoice_files.missing_on_disk > 0 && <span className="text-red-600"> · {serverStatus.invoice_files.missing_on_disk} הקובץ חסר בדיסק</span>}
+                      </span>
+                    </div>
+                    {serverStatus.invoice_files.missing_on_disk > 0 && (
+                      <details className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-800">
+                        <summary className="cursor-pointer font-semibold">חשבוניות שהקובץ שלהן לא נמצא בשרת ({serverStatus.invoice_files.missing_on_disk})</summary>
+                        <ul className="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
+                          {serverStatus.invoice_files.missing.map(m => (
+                            <li key={m.id} className="flex flex-wrap gap-x-2">
+                              <a href={`/invoicedetail?id=${m.id}`} className="underline">{m.supplier_name || 'ללא ספק'}</a>
+                              <span>{m.date || ''}</span>
+                              <span className="font-mono text-[10px] text-red-600/80 break-all" dir="ltr">{m.file_name}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-1 text-red-700/80">הרשומות קיימות אך הקובץ לא נמצא בשרת. שחזור מגיבוי ה-uploads של השרת הקודם, או סריקה מחדש.</p>
+                      </details>
+                    )}
+                  </div>
+                )}
                 <div className="pt-2 border-t flex items-center justify-between gap-2">
                   <span className="text-xs text-gray-400">ניקוי אוטומטי רץ יומית. קבצים מקושרים לחשבוניות/עובדים נשמרים תמיד.</span>
                   <Button variant="outline" size="sm" onClick={cleanupUploads} disabled={cleaningUploads} className="h-8 text-xs flex-shrink-0">

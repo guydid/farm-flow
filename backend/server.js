@@ -232,6 +232,17 @@ const THUMBS_DIR = path.join(UPLOADS_DIR, '.thumbs');
 fs.mkdirSync(THUMBS_DIR, { recursive: true });
 const THUMB_SIZES = [400, 1200]; // רשימת היתר — מונעת ייצור אינסופי של גדלים
 
+// pdftoppm (poppler-utils) הוא תלות מערכת, לא npm. בלעדיו כל חשבונית PDF מוצגת בגלריה
+// כקלף ריק — הקובץ עצמו קיים, רק הממוזערת לא נוצרת. נבדק בעלייה ומדווח בפאנל האדמין.
+let PDF_RENDERER_OK = null;
+function checkPdfRenderer() {
+  require('child_process').execFile('pdftoppm', ['-v'], { timeout: 5000 }, (err) => {
+    PDF_RENDERER_OK = !(err && err.code === 'ENOENT');
+    if (!PDF_RENDERER_OK) console.warn('[thumb] pdftoppm לא נמצא — תצוגות מקדימות של PDF לא ייווצרו. התקנה: apt-get install -y poppler-utils');
+  });
+}
+checkPdfRenderer();
+
 async function generateThumbnail(srcPath, outPath, width) {
   const ext = path.extname(srcPath).toLowerCase();
   if (ext === '.pdf') {
@@ -242,7 +253,10 @@ async function generateThumbnail(srcPath, outPath, width) {
         'pdftoppm',
         ['-jpeg', '-singlefile', '-f', '1', '-l', '1', '-scale-to', String(width), srcPath, prefix],
         { timeout: 30_000 },
-        (err) => (err ? reject(err) : resolve()),
+        (err) => {
+          if (err && err.code === 'ENOENT') { PDF_RENDERER_OK = false; err.reason = 'pdftoppm_missing'; }
+          return err ? reject(err) : resolve();
+        },
       );
     });
     return;
@@ -274,7 +288,7 @@ app.get('/api/files/thumb/:filename', async (req, res) => {
   } catch (err) {
     // PDF פגום / פורמט לא נתמך — הממשק נופל חזרה לאייקון גנרי
     console.warn('[thumb] failed for', name, String(err?.message || err).slice(0, 120));
-    res.status(415).json({ error: 'Cannot render preview' });
+    res.status(415).json({ error: 'Cannot render preview', reason: err?.reason || 'render_failed' });
   }
 });
 
@@ -3428,6 +3442,24 @@ app.get('/api/admin/server-status', authMiddleware, adminMiddleware, async (req,
     for (const f of files) { try { sz += fs.statSync(path.join(UPLOADS_DIR, f)).size; } catch { /* skip */ } }
     out.uploads = { count: files.length, size_bytes: sz };
   } catch { out.uploads = { count: 0, size_bytes: 0 }; }
+  // תצוגות מקדימות של PDF דורשות pdftoppm; ללא — הגלריה מראה קלפים ריקים
+  out.pdf_renderer = PDF_RENDERER_OK;
+  // חשבוניות שהרשומה שלהן מצביעה על קובץ שאינו קיים בדיסק (הגירה חלקית / מחיקה ידנית)
+  try {
+    const rows = db.prepare("SELECT id, farm_id, data FROM entities WHERE entity_type = 'invoices'").all();
+    const missing = [];
+    let withFile = 0, noFile = 0;
+    for (const r of rows) {
+      let d; try { d = JSON.parse(r.data || '{}'); } catch { continue; }
+      const fname = d.file_name || (d.file_url ? path.basename(String(d.file_url).split('?')[0]) : null);
+      if (!fname) { noFile++; continue; }
+      withFile++;
+      if (!fs.existsSync(path.join(UPLOADS_DIR, fname))) {
+        missing.push({ id: r.id, farm_id: r.farm_id, supplier_name: d.supplier_name || null, date: d.date || null, total: d.total ?? null, file_name: fname, source: d.source || null });
+      }
+    }
+    out.invoice_files = { total: rows.length, with_file: withFile, without_file: noFile, missing_on_disk: missing.length, missing: missing.slice(0, 50) };
+  } catch (e) { out.invoice_files = { error: e.message }; }
   res.json(out);
 });
 
