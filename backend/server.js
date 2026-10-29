@@ -2222,6 +2222,54 @@ app.post('/api/gmail/sync', authMiddleware, async (req, res) => {
 });
 
 // POST /api/invoices/:id/not-invoice — הקובץ אינו חשבונית: מוחק, רושם tombstone ולומד כלל
+// POST /api/invoices/:id/mark-sent — סימון ידני "נשלח לחשבונות" כשהמסמך הועבר בדרך אחרת
+// (וואטסאפ, מייל מתיבה אחרת, נמסר ביד, הספק שלח ישירות). לא שולח כלום — רק מתעד.
+// body: { via: 'whatsapp'|'email'|'hand'|'supplier'|'other', sent_at?: 'YYYY-MM-DD', note?: string }
+// POST /api/invoices/:id/unmark-sent — ביטול הסימון (ידני או אוטומטי).
+const SENT_VIA_LABELS = { whatsapp: 'וואטסאפ', email: 'מייל (מתיבה אחרת)', hand: 'נמסר ביד', supplier: 'הספק שלח ישירות', other: 'מקור אחר' };
+function loadInvoiceForWrite(req, res) {
+  const user = getUser(req.user.id);
+  if (!user?.current_farm_id) { res.status(400).json({ error: 'משתמש ללא חוות ברירת מחדל' }); return null; }
+  const farmId = user.current_farm_id;
+  const row = db.prepare("SELECT * FROM entities WHERE entity_type='invoices' AND id=?").get(req.params.id);
+  if (!row) { res.status(404).json({ error: 'החשבונית לא נמצאה' }); return null; }
+  if (row.farm_id !== farmId) { res.status(403).json({ error: 'Forbidden' }); return null; }
+  const member = getFarmMember(farmId, req.user.id);
+  if (member && member.role === 'viewer') { res.status(403).json({ error: 'משתמש בתפקיד צופה — אין הרשאה' }); return null; }
+  let inv = {};
+  try { inv = JSON.parse(row.data || '{}'); } catch { inv = {}; }
+  return { farmId, inv, user };
+}
+app.post('/api/invoices/:id/mark-sent', authMiddleware, (req, res) => {
+  const ctx = loadInvoiceForWrite(req, res);
+  if (!ctx) return;
+  const b = req.body || {};
+  const via = SENT_VIA_LABELS[b.via] ? b.via : 'other';
+  const sentAt = /^\d{4}-\d{2}-\d{2}$/.test(String(b.sent_at || '')) ? `${b.sent_at}T12:00:00.000Z` : NOW();
+  const note = String(b.note || '').trim().slice(0, 300);
+  const updated = {
+    ...ctx.inv,
+    sent_to_bookkeeper_at: sentAt,
+    sent_to: note || SENT_VIA_LABELS[via],
+    sent_via: via,
+    sent_manually: true,
+    sent_marked_by: ctx.user.full_name || ctx.user.email || null,
+    status: 'sent',
+  };
+  db.prepare("UPDATE entities SET data=?, updated_at=? WHERE entity_type='invoices' AND id=?")
+    .run(JSON.stringify(updated), NOW(), req.params.id);
+  res.json({ success: true, sent_to_bookkeeper_at: sentAt, sent_via: via, sent_to: updated.sent_to });
+});
+app.post('/api/invoices/:id/unmark-sent', authMiddleware, (req, res) => {
+  const ctx = loadInvoiceForWrite(req, res);
+  if (!ctx) return;
+  const { sent_to_bookkeeper_at, sent_to, sent_via, sent_manually, sent_marked_by, ...rest } = ctx.inv; // eslint-disable-line no-unused-vars
+  const updated = { ...rest, status: rest.status === 'sent' ? (rest.extracted_raw ? 'reviewed' : 'pending') : rest.status };
+  db.prepare("UPDATE entities SET data=?, updated_at=? WHERE entity_type='invoices' AND id=?")
+    .run(JSON.stringify(updated), NOW(), req.params.id);
+  res.json({ success: true });
+});
+
 app.post('/api/invoices/:id/not-invoice', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
   if (!user?.current_farm_id) return res.status(400).json({ error: 'משתמש ללא חוות ברירת מחדל' });

@@ -19,10 +19,15 @@ import {
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
 import PageHeader from "@/components/common/PageHeader";
+import { Label } from '@/components/ui/label';
+import { DateInput } from '@/components/ui/date-input';
 // Lazy — the scanner (perspective/filters) only loads when the user scans an image
 const ScanDialog = lazy(() => import('@/components/invoices/ScanDialog'));
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+
+const SENT_VIA_LABEL = { whatsapp: 'וואטסאפ', email: 'מייל מתיבה אחרת', hand: 'נמסר ביד', supplier: 'הספק שלח ישירות', other: 'מקור אחר' };
+const SENT_VIA_SHORT = { whatsapp: 'וואטסאפ', email: 'מייל', hand: 'ביד', supplier: 'ע״י הספק' };
 
 const STATUS_LABEL = {
   pending: 'ממתין לבדיקה',
@@ -68,6 +73,9 @@ export default function Invoices() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // סימון ידני "נשלח לחשבונות" — למסמכים שהועברו בוואטסאפ / מייל אחר / ביד
+  const [markSentOpen, setMarkSentOpen] = useState(false);
+  const [markSentForm, setMarkSentForm] = useState({ via: 'whatsapp', sent_at: new Date().toISOString().slice(0, 10), note: '' });
   const [scanFiles, setScanFiles] = useState(null); // תמונות שנבחרו → מסך הסורק
   const [dupPrompt, setDupPrompt] = useState(null); // { existing, reason, files } — הסריקה זוהתה ככפילות
   const [view, setView] = useState(() => {
@@ -448,6 +456,29 @@ export default function Invoices() {
     await load();
   };
 
+  const bulkMarkSent = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try {
+        const res = await fetch(`${BASE_URL}/invoices/${id}/mark-sent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+          body: JSON.stringify(markSentForm),
+        });
+        if (!res.ok) throw new Error();
+        ok++;
+      } catch { fail++; }
+    }
+    setBulkBusy(false);
+    setMarkSentOpen(false);
+    toast({ title: `${ok} סומנו כנשלחו לחשבונות`, description: fail ? `${fail} נכשלו` : `דרך: ${SENT_VIA_LABEL[markSentForm.via]}`, variant: fail ? 'destructive' : undefined });
+    exitSelect();
+    await load();
+  };
+
   const bulkSend = async () => {
     const ids = [...selected];
     if (!ids.length) return;
@@ -604,8 +635,8 @@ export default function Invoices() {
                   <SelectItem value="approved">{STATUS_LABEL.approved}</SelectItem>
                   <SelectItem value="rejected">{STATUS_LABEL.rejected}</SelectItem>
                   <SelectItem value="sent">{STATUS_LABEL.sent}</SelectItem>
-                  <SelectItem value="sent_mail">✉ נשלח במייל</SelectItem>
-                  <SelectItem value="unsent_mail">✉ טרם נשלח במייל</SelectItem>
+                  <SelectItem value="sent_mail">✉ נשלח לחשבונות</SelectItem>
+                  <SelectItem value="unsent_mail">✉ טרם נשלח לחשבונות</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
@@ -683,8 +714,8 @@ export default function Invoices() {
                       {STATUS_LABEL[inv.status || 'pending']}
                     </Badge>
                     {inv.sent_to_bookkeeper_at && (
-                      <Badge className={`absolute bottom-2 left-2 text-xs shadow ${SENT_BADGE_CLASS}`} title={`נשלח אל ${inv.sent_to || ''} · ${inv.sent_to_bookkeeper_at.slice(0, 10)}`}>
-                        <Mail className="w-3 h-3 ml-1" />נשלח
+                      <Badge className={`absolute bottom-2 left-2 text-xs shadow ${SENT_BADGE_CLASS}`} title={`${inv.sent_manually ? 'סומן ידנית · ' : ''}נשלח אל ${inv.sent_to || ''} · ${inv.sent_to_bookkeeper_at.slice(0, 10)}`}>
+                        {inv.sent_manually ? <CheckSquare className="w-3 h-3 ml-1" /> : <Mail className="w-3 h-3 ml-1" />}נשלח{inv.sent_via && inv.sent_via !== 'other' ? ` · ${SENT_VIA_SHORT[inv.sent_via] || ''}` : ''}
                       </Badge>
                     )}
 
@@ -764,8 +795,8 @@ export default function Invoices() {
                           <Badge className={`text-xs ${STATUS_COLOR[status]}`}>{STATUS_LABEL[status]}</Badge>
                           {inv.source === 'gmail' && <Badge variant="outline" className="text-xs"><Mail className="w-3 h-3 ml-1" />{SOURCE_LABEL[inv.source]}</Badge>}
                           {inv.sent_to_bookkeeper_at && (
-                            <Badge className={`text-xs ${SENT_BADGE_CLASS}`} title={`נשלח אל ${inv.sent_to || ''}`}>
-                              <Mail className="w-3 h-3 ml-1" />נשלח {inv.sent_to_bookkeeper_at.slice(8, 10)}/{inv.sent_to_bookkeeper_at.slice(5, 7)}
+                            <Badge className={`text-xs ${SENT_BADGE_CLASS}`} title={`${inv.sent_manually ? 'סומן ידנית · ' : ''}נשלח אל ${inv.sent_to || ''}`}>
+                              {inv.sent_manually ? <CheckSquare className="w-3 h-3 ml-1" /> : <Mail className="w-3 h-3 ml-1" />}נשלח {inv.sent_to_bookkeeper_at.slice(8, 10)}/{inv.sent_to_bookkeeper_at.slice(5, 7)}{inv.sent_via && inv.sent_via !== 'other' ? ` · ${SENT_VIA_SHORT[inv.sent_via] || ''}` : ''}
                             </Badge>
                           )}
                         </div>
@@ -891,6 +922,9 @@ export default function Invoices() {
             <Button onClick={bulkSend} disabled={bulkBusy} size="sm" className="flex items-center gap-1.5">
               {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} שלח מסומנים
             </Button>
+            <Button onClick={() => setMarkSentOpen(true)} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5" title="המסמכים הועברו לחשבונות בדרך אחרת — רק סימון, בלי שליחה">
+              <CheckSquare className="w-4 h-4" /> סמן כנשלח
+            </Button>
             <Button onClick={bulkNotInvoice} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5">
               <Ban className="w-4 h-4" /> לא חשבוניות
             </Button>
@@ -900,6 +934,37 @@ export default function Invoices() {
           </div>
         </div>
       )}
+
+      {/* סימון ידני כנשלח — המסמך הועבר לחשבונות ממקור אחר */}
+      <Dialog open={markSentOpen} onOpenChange={setMarkSentOpen}>
+        <DialogContent dir="rtl" className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>סימון כנשלח לחשבונות</DialogTitle>
+            <DialogDescription>{selected.size} מסמכים יסומנו כנשלחו. לא נשלח שום דבר — רק תיעוד שהמסמך כבר אצל מנהלת החשבונות.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="ms-via">איך הועבר</Label>
+              <Select value={markSentForm.via} onValueChange={(v) => setMarkSentForm(f => ({ ...f, via: v }))}>
+                <SelectTrigger id="ms-via"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(SENT_VIA_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ms-date">תאריך העברה</Label>
+              <DateInput id="ms-date" value={markSentForm.sent_at} onChange={(v) => setMarkSentForm(f => ({ ...f, sent_at: v }))} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="ms-note">הערה (לא חובה)</Label>
+              <Input id="ms-note" value={markSentForm.note} onChange={(e) => setMarkSentForm(f => ({ ...f, note: e.target.value }))} placeholder="למשל: נשלח לרו״ח בוואטסאפ עם כל חשבוניות אוקטובר" maxLength={300} />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setMarkSentOpen(false)}>ביטול</Button>
+            <Button onClick={bulkMarkSent} disabled={bulkBusy}>{bulkBusy ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <CheckSquare className="w-4 h-4 ml-1" />} סמן {selected.size} כנשלחו</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* תצוגה מוגדלת — JPEG של עמוד 1 (גם ל-PDF), כדי שגם בנייד לא צריך להוריד את הקובץ המלא */}
       {lightbox && (

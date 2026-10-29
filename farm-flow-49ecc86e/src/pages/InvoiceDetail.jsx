@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowRight, Loader2, Save, Trash2, CheckCircle2, XCircle,
-  Mail, Upload, FileText, ExternalLink, Plus, X, Send
+  Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -20,6 +20,7 @@ import SupplierPicker from '@/components/invoices/SupplierPicker';
 
 import { DateInput } from "@/components/ui/date-input";
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const SENT_VIA_LABEL = { whatsapp: 'וואטסאפ', email: 'מייל מתיבה אחרת', hand: 'נמסר ביד', supplier: 'הספק שלח ישירות', other: 'מקור אחר' };
 
 const STATUS_OPTIONS = [
   { value: 'pending', label: 'ממתין לבדיקה' },
@@ -49,6 +50,10 @@ export default function InvoiceDetail() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sendOpen, setSendOpen] = useState(false);
+  // סימון ידני "נשלח לחשבונות" (וואטסאפ / מייל אחר / ביד) — תיעוד בלבד, בלי שליחה
+  const [markOpen, setMarkOpen] = useState(false);
+  const [markForm, setMarkForm] = useState({ via: 'whatsapp', sent_at: new Date().toISOString().slice(0, 10), note: '' });
+  const [marking, setMarking] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendTo, setSendTo] = useState('');
   const [sendCc, setSendCc] = useState('');
@@ -142,6 +147,33 @@ export default function InvoiceDetail() {
     }
   };
 
+  const markSent = async () => {
+    setMarking(true);
+    try {
+      const res = await fetch(`${BASE_URL}/invoices/${id}/mark-sent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` }, body: JSON.stringify(markForm),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
+      toast({ title: 'סומן כנשלח לחשבונות', description: SENT_VIA_LABEL[data.sent_via] });
+      setMarkOpen(false);
+      load();
+    } catch (e) { toast({ title: 'הסימון נכשל', description: e.message, variant: 'destructive' }); }
+    finally { setMarking(false); }
+  };
+  const unmarkSent = async () => {
+    if (!window.confirm('לבטל את הסימון "נשלח לחשבונות"? המסמך יחזור להופיע כטרם נשלח.')) return;
+    setMarking(true);
+    try {
+      const res = await fetch(`${BASE_URL}/invoices/${id}/unmark-sent`, { method: 'POST', headers: { Authorization: `Bearer ${getToken()}` } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
+      toast({ title: 'הסימון בוטל' });
+      load();
+    } catch (e) { toast({ title: 'הביטול נכשל', description: e.message, variant: 'destructive' }); }
+    finally { setMarking(false); }
+  };
+
   const openSendDialog = async () => {
     // טען כתובת ברירת מחדל מההגדרות (נופל לכתובת אליה כבר נשלח בעבר)
     try {
@@ -212,8 +244,12 @@ export default function InvoiceDetail() {
             {invoice.sent_to_bookkeeper_at && (
               <div className="flex items-center gap-2 flex-wrap mt-1">
                 <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
-                  <Mail className="w-3 h-3 ml-1" />נשלח אל {invoice.sent_to} · {invoice.sent_to_bookkeeper_at.slice(0, 10)}
+                  {invoice.sent_manually ? <CheckSquare className="w-3 h-3 ml-1" /> : <Mail className="w-3 h-3 ml-1" />}
+                  {invoice.sent_manually ? `סומן כנשלח · ${SENT_VIA_LABEL[invoice.sent_via] || 'מקור אחר'}${invoice.sent_to && invoice.sent_to !== SENT_VIA_LABEL[invoice.sent_via] ? ` · ${invoice.sent_to}` : ''}` : `נשלח אל ${invoice.sent_to}`} · {invoice.sent_to_bookkeeper_at.slice(0, 10)}
                 </Badge>
+                <button type="button" onClick={unmarkSent} disabled={marking} className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1">
+                  <Undo2 className="w-3 h-3" /> בטל סימון
+                </button>
                 {invoice.pdf_url && (
                   <a href={fileUrlWithToken(invoice.pdf_url)} target="_blank" rel="noopener noreferrer"
                      className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
@@ -406,12 +442,48 @@ export default function InvoiceDetail() {
           <Button onClick={openSendDialog} variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50">
             <Send className="w-4 h-4 ml-1" /> {invoice.sent_to_bookkeeper_at ? 'שלח שוב' : 'שלח לחשבונות'}
           </Button>
+          {!invoice.sent_to_bookkeeper_at && (
+            <Button onClick={() => setMarkOpen(true)} variant="outline" title="המסמך הועבר לחשבונות בדרך אחרת — רק סימון, בלי שליחה">
+              <CheckSquare className="w-4 h-4 ml-1" /> סמן כנשלח
+            </Button>
+          )}
           {form.status !== 'approved' && (
             <Button onClick={approve} variant="outline" className="text-green-700 border-green-300 hover:bg-green-50">
               <CheckCircle2 className="w-4 h-4 ml-1" /> אישור
             </Button>
           )}
         </div>
+
+        {/* סימון ידני כנשלח — הועבר לחשבונות ממקור אחר */}
+        <Dialog open={markOpen} onOpenChange={setMarkOpen}>
+          <DialogContent dir="rtl" className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>סימון כנשלח לחשבונות</DialogTitle>
+              <DialogDescription>לא נשלח שום דבר — רק תיעוד שהמסמך כבר אצל מנהלת החשבונות.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="mk-via">איך הועבר</Label>
+                <Select value={markForm.via} onValueChange={(v) => setMarkForm(f => ({ ...f, via: v }))}>
+                  <SelectTrigger id="mk-via"><SelectValue /></SelectTrigger>
+                  <SelectContent>{Object.entries(SENT_VIA_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="mk-date">תאריך העברה</Label>
+                <DateInput id="mk-date" value={markForm.sent_at} onChange={(v) => setMarkForm(f => ({ ...f, sent_at: v }))} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="mk-note">הערה (לא חובה)</Label>
+                <Input id="mk-note" value={markForm.note} onChange={(e) => setMarkForm(f => ({ ...f, note: e.target.value }))} placeholder="למשל: נשלח לרו״ח בוואטסאפ" maxLength={300} />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setMarkOpen(false)}>ביטול</Button>
+              <Button onClick={markSent} disabled={marking}>{marking ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <CheckSquare className="w-4 h-4 ml-1" />} סמן כנשלח</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* דיאלוג שליחה למנהלת החשבונות */}
         <Dialog open={sendOpen} onOpenChange={setSendOpen}>
