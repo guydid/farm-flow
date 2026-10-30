@@ -56,7 +56,7 @@ function fmtCurrency(n, c) {
   return `${sign}${Number(n).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function Invoices() {
+export default function Invoices({ embedded = false }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
@@ -540,8 +540,8 @@ export default function Invoices() {
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
-      <div className="max-w-screen-2xl mx-auto">
+    <div className={embedded ? "" : "p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen"} dir="rtl">
+      <div className={embedded ? "" : "max-w-screen-2xl mx-auto"}>
         {/* Header */}
         {syncStatus?.syncing && (
           <div className="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-100 space-y-2">
@@ -566,7 +566,9 @@ export default function Invoices() {
         )}
 
         <PageHeader
-          icon={FileText}
+          icon={embedded ? undefined : FileText}
+          compact={embedded}
+          level={embedded ? 2 : 1}
           title="חשבוניות ספקים"
           subtitle={`${filtered.length} מתוך ${invoices.length} חשבוניות`}
           actions={<>

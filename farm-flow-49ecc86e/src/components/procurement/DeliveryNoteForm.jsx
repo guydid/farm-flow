@@ -92,9 +92,9 @@ export default function DeliveryNoteForm({ open, onOpenChange, farmId, note, ord
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           {!editing && !order && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="inline-flex w-full gap-1 rounded-xl bg-muted p-1" role="group" aria-label="סוג התעודה">
               {Object.entries(DN_DIRECTIONS).map(([k, l]) => (
-                <button type="button" key={k} onClick={() => set({ direction: k, order_id: "", supplier_id: "", customer_id: "", items: [emptyItem()] })} className={`rounded-lg border p-2 text-sm font-medium ${form.direction === k ? "border-primary bg-primary/10" : "hover:bg-accent"}`} aria-pressed={form.direction === k}>תעודה {l}</button>
+                <button type="button" key={k} onClick={() => set({ direction: k, order_id: "", supplier_id: "", customer_id: "", items: [emptyItem()] })} className={`flex-1 min-h-10 rounded-lg px-3 text-sm transition-colors ${form.direction === k ? "bg-background text-foreground font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground font-medium"}`} aria-pressed={form.direction === k}>תעודה {l}</button>
               ))}
             </div>
           )}
@@ -141,18 +141,18 @@ export default function DeliveryNoteForm({ open, onOpenChange, farmId, note, ord
             <div className="space-y-1 sm:col-span-2">
               <Label>צילום התעודה</Label>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-1.5 rounded-md border px-3 h-9 text-sm cursor-pointer hover:bg-accent">
+                <label className="inline-flex items-center gap-1.5 rounded-md border px-3 h-10 md:h-9 text-sm cursor-pointer hover:bg-accent focus-within:ring-2 focus-within:ring-ring">
                   {uploading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Camera className="w-4 h-4" aria-hidden="true" />} צלם
                   <input type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => uploadPhoto(e.target.files?.[0])} />
                 </label>
-                <label className="inline-flex items-center gap-1.5 rounded-md border px-3 h-9 text-sm cursor-pointer hover:bg-accent">
+                <label className="inline-flex items-center gap-1.5 rounded-md border px-3 h-10 md:h-9 text-sm cursor-pointer hover:bg-accent focus-within:ring-2 focus-within:ring-ring">
                   <Upload className="w-4 h-4" aria-hidden="true" /> העלה קובץ
                   <input type="file" className="hidden" accept="image/*,.pdf" onChange={(e) => uploadPhoto(e.target.files?.[0])} />
                 </label>
                 {form.file_url && (
                   <span className="inline-flex items-center gap-1 text-sm">
                     <a href={fileHref(form.file_url)} target="_blank" rel="noreferrer" className="text-primary inline-flex items-center gap-1 underline"><FileText className="w-4 h-4" aria-hidden="true" /> צורף</a>
-                    <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => set({ file_url: "" })} aria-label="הסר קובץ"><X className="w-4 h-4" aria-hidden="true" /></button>
+                    <button type="button" className="p-2 -m-1 rounded-md text-muted-foreground hover:text-destructive" onClick={() => set({ file_url: "" })} aria-label="הסר קובץ"><X className="w-4 h-4" aria-hidden="true" /></button>
                   </span>
                 )}
               </div>

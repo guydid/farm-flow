@@ -15,21 +15,23 @@ export async function apiFetch(path, options = {}) {
 
 export const DIRECTIONS = { purchase: "רכש", sale: "מכירה" };
 export const DN_DIRECTIONS = { in: "נכנסת", out: "יוצאת" };
+// צבע אחד = משמעות אחת, בכל הישויות: אפור = טיוטה/סגור, כחול = פתוח/בדרך, ענבר = ממתין לטיפול,
+// ירוק = הושלם, אדום = בעיה. האינדיגו (צבע המותג) שמור לפעולות בלבד.
 export const ORDER_STATUS = {
-  draft: { label: "טיוטה", cls: "bg-gray-100 text-gray-700" },
-  ordered: { label: "הוזמן", cls: "bg-blue-100 text-blue-800" },
-  confirmed: { label: "אושר", cls: "bg-indigo-100 text-indigo-800" },
-  partially_delivered: { label: "סופק חלקית", cls: "bg-amber-100 text-amber-800" },
-  delivered: { label: "סופק", cls: "bg-green-100 text-green-800" },
-  invoiced: { label: "חויב", cls: "bg-emerald-100 text-emerald-800" },
-  cancelled: { label: "בוטל", cls: "bg-red-100 text-red-700" },
+  draft: { label: "טיוטה", cls: "bg-muted text-muted-foreground" },
+  ordered: { label: "הוזמן", cls: "bg-blue-50 text-blue-800" },
+  confirmed: { label: "אושר", cls: "bg-blue-100 text-blue-900" },
+  partially_delivered: { label: "סופק חלקית", cls: "bg-amber-100 text-amber-900" },
+  delivered: { label: "סופק", cls: "bg-green-100 text-green-900" },
+  invoiced: { label: "חויב", cls: "bg-slate-200 text-slate-800" },
+  cancelled: { label: "בוטל", cls: "bg-red-100 text-red-800" },
 };
 export const DN_STATUS = {
-  expected: { label: "צפויה", cls: "bg-blue-100 text-blue-800" },
-  received: { label: "נקלטה", cls: "bg-amber-100 text-amber-800" },
-  checked: { label: "נבדקה", cls: "bg-green-100 text-green-800" },
-  disputed: { label: "במחלוקת", cls: "bg-red-100 text-red-700" },
-  invoiced: { label: "חויבה", cls: "bg-emerald-100 text-emerald-800" },
+  expected: { label: "צפויה", cls: "bg-blue-50 text-blue-800" },
+  received: { label: "נקלטה", cls: "bg-amber-100 text-amber-900" },
+  checked: { label: "נבדקה", cls: "bg-green-100 text-green-900" },
+  disputed: { label: "במחלוקת", cls: "bg-red-100 text-red-800" },
+  invoiced: { label: "חויבה", cls: "bg-slate-200 text-slate-800" },
 };
 export const SOURCES = { app: "אפליקציה", whatsapp: "WhatsApp", email: "מייל", phone: "טלפון", agent: "סוכן AI", other: "אחר" };
 export const UNITS = ["יח'", "ק\"ג", "ליטר", "שק", "קרטון", "משטח", "שתילים", "מ\"ל", "גרם", "גליל", "טון"];

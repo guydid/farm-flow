@@ -60,9 +60,9 @@ export default function OrderForm({ open, onOpenChange, farmId, order, direction
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           {!editing && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="inline-flex w-full gap-1 rounded-xl bg-muted p-1" role="group" aria-label="סוג ההזמנה">
               {Object.entries(DIRECTIONS).map(([k, l]) => (
-                <button type="button" key={k} onClick={() => set({ direction: k, supplier_id: "", customer_id: "" })} className={`rounded-lg border p-2 text-sm font-medium ${form.direction === k ? "border-primary bg-primary/10" : "hover:bg-accent"}`} aria-pressed={form.direction === k}>{l}</button>
+                <button type="button" key={k} onClick={() => set({ direction: k, supplier_id: "", customer_id: "" })} className={`flex-1 min-h-10 rounded-lg px-3 text-sm transition-colors ${form.direction === k ? "bg-background text-foreground font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground font-medium"}`} aria-pressed={form.direction === k}>הזמנת {l}</button>
               ))}
             </div>
           )}

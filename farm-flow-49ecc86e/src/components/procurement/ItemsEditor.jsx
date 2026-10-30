@@ -26,7 +26,7 @@ export default function ItemsEditor({ items, onChange, products = [], withDiscre
 
   return (
     <div className="space-y-2">
-      <div className="hidden sm:grid grid-cols-[1fr_5rem_5.5rem_6rem_1fr_2rem] gap-2 text-[11px] text-muted-foreground px-1">
+      <div className="hidden sm:grid grid-cols-[1fr_5rem_5.5rem_6rem_1fr_2rem] gap-2 text-xs text-muted-foreground px-1">
         <span>מוצר</span><span>כמות</span><span>יחידה</span><span>מחיר ליח'</span><span>{withDiscrepancy ? "הערת פער" : "הערה"}</span><span />
       </div>
       {items.map((it, i) => (
@@ -45,7 +45,7 @@ export default function ItemsEditor({ items, onChange, products = [], withDiscre
           </div>
           <div>
             <Input className="h-9" type="number" inputMode="decimal" min="0" step="any" value={it.quantity} onChange={(e) => set(i, { quantity: e.target.value })} placeholder="כמות" disabled={disabled} aria-label="כמות" />
-            {it.remaining !== undefined && <div className="text-[10px] text-muted-foreground mt-0.5">נותר להזמנה: {it.remaining}</div>}
+            {it.remaining !== undefined && <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">נותר: {it.remaining}</div>}
           </div>
           <Select value={UNITS.includes(it.unit) ? it.unit : "__other__"} onValueChange={(v) => set(i, { unit: v === "__other__" ? it.unit : v })} disabled={disabled}>
             <SelectTrigger className="h-9 text-xs" aria-label="יחידה"><SelectValue /></SelectTrigger>

@@ -8,7 +8,7 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { apiFetch, DN_DIRECTIONS, DN_STATUS, SOURCES, money, fmtDate, fileHref, isImage } from "./procurementUtils";
 
-const Status = ({ value }) => { const s = DN_STATUS[value] || { label: value, cls: "bg-gray-100 text-gray-700" }; return <Badge className={`${s.cls} border-0`}>{s.label}</Badge>; };
+const Status = ({ value }) => { const s = DN_STATUS[value] || { label: value, cls: "bg-muted text-muted-foreground" }; return <Badge className={`${s.cls} border-0 font-medium`}>{s.label}</Badge>; };
 
 /** כרטיס תעודת משלוח: פרטים, צילום, שורות מול ההזמנה, קישור חשבונית, סטטוס והיסטוריה. */
 export default function DeliveryNoteDetail({ open, onClose, noteId, farmId, canWrite, invoices = [], onEdit, onOpenOrder, onChanged }) {
@@ -83,7 +83,7 @@ export default function DeliveryNoteDetail({ open, onClose, noteId, farmId, canW
                   </Select>
                 ) : linkedInvoice || note.invoice_id ? <span>{linkedInvoice?.invoice_number ? `מס' ${linkedInvoice.invoice_number}` : "מקושרת"}</span> : <span className="text-muted-foreground">ללא</span>}
                 {note.invoice_id && <Link to={`${createPageUrl("InvoiceDetail")}?id=${note.invoice_id}`} className="text-xs text-primary inline-flex items-center gap-1"><Link2 className="w-3 h-3" aria-hidden="true" /> פתח חשבונית</Link>}
-                {matchInfo && <div className="text-[11px] text-muted-foreground">{matchInfo}</div>}
+                {matchInfo && <div className="text-xs text-muted-foreground">{matchInfo}</div>}
               </div>
               <div className="rounded-lg border p-3 space-y-2">
                 <div className="text-xs text-muted-foreground">סטטוס</div>
@@ -122,7 +122,7 @@ export default function DeliveryNoteDetail({ open, onClose, noteId, farmId, canW
                       const priceDiff = it.order_unit_price != null && it.unit_price != null && Number(it.unit_price) !== Number(it.order_unit_price);
                       return (
                         <tr key={it.id} className="border-t">
-                          <td className="p-2">{it.product_name}{it.not_in_order && <span className="ms-1 text-[10px] text-amber-700">לא בהזמנה</span>}{it.stock_movement_id && <span className="ms-1 text-[10px] text-emerald-700">במלאי</span>}</td>
+                          <td className="p-2">{it.product_name}{it.not_in_order && <span className="ms-1 text-xs text-amber-800">· לא בהזמנה</span>}{it.stock_movement_id && <span className="ms-1 text-xs text-green-800">· נכנס למלאי</span>}</td>
                           <td className={`p-2 text-center tabular-nums ${qtyDiff ? "text-amber-700 font-semibold" : ""}`}>{it.quantity} {it.unit}</td>
                           <td className="p-2 text-center tabular-nums text-muted-foreground">{it.ordered_quantity ?? "—"}</td>
                           <td className={`p-2 text-center tabular-nums ${priceDiff ? "text-amber-700 font-semibold" : ""}`}>{money(it.unit_price)}</td>

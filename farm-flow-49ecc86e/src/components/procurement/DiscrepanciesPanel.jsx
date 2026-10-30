@@ -32,7 +32,7 @@ export default function DiscrepanciesPanel({ farmId, direction, onOpenOrder, onO
   };
   useEffect(() => { load(); }, [farmId, direction, days, refreshKey]);
 
-  const row = (key, onClick, content) => <li key={key}><button type="button" onClick={onClick} className="w-full text-right rounded-md border p-2 hover:bg-accent flex flex-wrap items-center gap-x-2 gap-y-0.5">{content}</button></li>;
+  const row = (key, onClick, content) => <li key={key}><button type="button" onClick={onClick} className="w-full text-start rounded-md border p-2 min-h-11 hover:bg-accent flex flex-wrap items-center gap-x-2 gap-y-0.5">{content}</button></li>;
 
   return (
     <div className="space-y-3">
@@ -72,7 +72,7 @@ export default function DiscrepanciesPanel({ farmId, direction, onOpenOrder, onO
             </>)} />
         </div>
       )}
-      {direction && <p className="text-[11px] text-muted-foreground">מוצגים פערי {DIRECTIONS[direction]} בלבד.</p>}
+      {direction && <p className="text-xs text-muted-foreground">מוצגים פערי {DIRECTIONS[direction]} בלבד.</p>}
     </div>
   );
 }

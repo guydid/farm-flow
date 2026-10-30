@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, PackagePlus, Pencil, FileText, History, MapPin, Phone } from "lucide-react";
+import { Loader2, PackagePlus, Pencil, FileText, History, MapPin, Phone, Camera } from "lucide-react";
 import { apiFetch, DIRECTIONS, ORDER_STATUS, DN_STATUS, SOURCES, money, fmtDate, fileHref } from "./procurementUtils";
 
-const Status = ({ map, value }) => { const s = map[value] || { label: value, cls: "bg-gray-100 text-gray-700" }; return <Badge className={`${s.cls} border-0`}>{s.label}</Badge>; };
+const Status = ({ map, value }) => { const s = map[value] || { label: value, cls: "bg-muted text-muted-foreground" }; return <Badge className={`${s.cls} border-0 font-medium`}>{s.label}</Badge>; };
 
 /** כרטיס הזמנה: שורות עם התקדמות אספקה, תעודות המשלוח שלה, שינוי סטטוס והיסטוריה. */
 export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, plots = [], onEdit, onReceive, onOpenNote, onChanged }) {
@@ -16,6 +18,8 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [cancelAsk, setCancelAsk] = useState(false); // ביטול הזמנה — אישור + סיבה בתוך הממשק, לא ב-prompt של הדפדפן
+  const [cancelNote, setCancelNote] = useState("");
   const qs = `?farm_id=${encodeURIComponent(farmId)}`;
 
   const load = async () => {
@@ -26,9 +30,10 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
   };
   useEffect(() => { if (open) load(); else setOrder(null); }, [open, orderId]);
 
-  const changeStatus = async (status) => {
+  const changeStatus = async (status, note = "") => {
     if (!order || status === order.status) return;
-    const note = status === "cancelled" ? window.prompt("סיבת הביטול (אופציונלי):") ?? "" : "";
+    if (status === "cancelled" && !cancelAsk) { setCancelNote(""); setCancelAsk(true); return; }
+    setCancelAsk(false);
     setBusy(true); setError(null);
     try { setOrder(await apiFetch(`/procurement/orders/${order.id}/status${qs}`, { method: "POST", body: JSON.stringify({ status, note }) })); onChanged?.(); }
     catch (e) { setError(e.data?.error || e.message); } finally { setBusy(false); }
@@ -80,7 +85,7 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
                     <SelectContent>{Object.entries(ORDER_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}</SelectContent>
                   </Select>
                 ) : <Status map={ORDER_STATUS} value={order.status} />}
-                <div className="text-[11px] text-muted-foreground">סופק חלקית / סופק / חויב נקבעים אוטומטית מהתעודות</div>
+                <div className="text-xs text-muted-foreground">סופק חלקית, סופק וחויב נקבעים מהתעודות</div>
               </div>
             </div>
 
@@ -103,7 +108,7 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
                       const rem = Number(it.quantity) - Number(it.delivered_quantity || 0);
                       return (
                         <tr key={it.id} className="border-t">
-                          <td className="p-2">{it.product_name}{it.notes && <div className="text-[11px] text-muted-foreground">{it.notes}</div>}</td>
+                          <td className="p-2">{it.product_name}{it.notes && <div className="text-xs text-muted-foreground">{it.notes}</div>}</td>
                           <td className="p-2 text-center tabular-nums">{it.quantity} {it.unit}</td>
                           <td className={`p-2 text-center tabular-nums ${Number(it.delivered_quantity) > Number(it.quantity) ? "text-amber-700 font-semibold" : ""}`}>{it.delivered_quantity || 0}</td>
                           <td className={`p-2 text-center tabular-nums ${rem > 0 ? "" : "text-green-700"}`}>{rem > 0 ? rem : "✓"}</td>
@@ -123,15 +128,20 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
               {order.delivery_notes.length === 0 ? <p className="text-sm text-muted-foreground">עדיין לא נקלטו תעודות להזמנה זו.</p> : (
                 <ul className="space-y-1">
                   {order.delivery_notes.map((n) => (
-                    <li key={n.id}>
-                      <button type="button" onClick={() => onOpenNote?.(n)} className="w-full text-right rounded-lg border p-2 hover:bg-accent flex flex-wrap items-center gap-2 text-sm">
-                        <FileText className="w-4 h-4 text-primary shrink-0" aria-hidden="true" />
-                        <span className="font-medium">{n.note_number}</span>
+                    <li key={n.id} className="flex items-stretch gap-1">
+                      <button type="button" onClick={() => onOpenNote?.(n)} className="flex-1 min-w-0 text-start rounded-lg border p-2 min-h-11 hover:bg-accent flex flex-wrap items-center gap-2 text-sm">
+                        <FileText className="w-4 h-4 text-muted-foreground shrink-0" aria-hidden="true" />
+                        <span className="font-medium tabular-nums">{n.note_number}</span>
                         <span className="text-muted-foreground">{fmtDate(n.delivery_date)}</span>
                         <Status map={DN_STATUS} value={n.status} />
                         <span className="text-xs text-muted-foreground">{n.items.length} שורות · {money(n.total_amount)}</span>
-                        {n.file_url && <a href={fileHref(n.file_url)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="ms-auto text-xs text-primary underline">צילום</a>}
                       </button>
+                      {n.file_url && (
+                        <a href={fileHref(n.file_url)} target="_blank" rel="noreferrer" aria-label={`צילום תעודת משלוח ${n.note_number}`} title="צילום התעודה"
+                           className="flex w-11 items-center justify-center rounded-lg border text-muted-foreground hover:bg-accent hover:text-foreground">
+                          <Camera className="w-4 h-4" aria-hidden="true" />
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -156,6 +166,24 @@ export default function OrderDetail({ open, onClose, orderId, farmId, canWrite, 
           </>
         )}
       </DialogContent>
+
+      {/* אישור ביטול — פעולה שקשה לבטל מקבלת אזהרה, סיבה וכפתור "חזרה" */}
+      <Dialog open={cancelAsk} onOpenChange={(v) => { if (!v) setCancelAsk(false); }}>
+        <DialogContent className="sm:max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle>לבטל את הזמנה {order?.order_number}?</DialogTitle>
+            <DialogDescription>ההזמנה תסומן כבוטלה ותצא מרשימת ההזמנות הפתוחות. אפשר להחזיר אותה לטיוטה בהמשך.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label htmlFor="cancel-note">סיבת הביטול (לא חובה)</Label>
+            <Textarea id="cancel-note" rows={2} value={cancelNote} onChange={(e) => setCancelNote(e.target.value)} placeholder="למשל: הספק לא יכול לספק במועד" />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setCancelAsk(false)}>חזרה</Button>
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => changeStatus("cancelled", cancelNote.trim())}>בטל הזמנה</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

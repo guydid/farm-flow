@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
  *  - actions     כפתורים בצד שמאל (RTL)
  *  - children    שורה נוספת מתחת (פילטרים, טאבים)
  */
-export default function PageHeader({ title, subtitle, icon: Icon, backTo, backLabel = "חזרה", actions, className, children, compact = false }) {
+export default function PageHeader({ title, subtitle, icon: Icon, backTo, backLabel = "חזרה", actions, className, children, compact = false, level = 1 }) {
+  const Heading = level === 2 ? "h2" : "h1"; // level 2 — עמוד המוטמע בתוך עמוד אחר (יש כבר h1 מעליו)
   return (
     <header className={cn("mb-4 lg:mb-6", className)}>
       {backTo && (
@@ -29,7 +30,7 @@ export default function PageHeader({ title, subtitle, icon: Icon, backTo, backLa
             </span>
           )}
           <div className="min-w-0">
-            <h1 className={cn("font-bold text-foreground leading-tight truncate", compact ? "text-lg lg:text-xl" : "text-xl lg:text-2xl")}>{title}</h1>
+            <Heading className={cn("font-bold text-foreground leading-tight truncate", compact ? "text-lg lg:text-xl" : "text-xl lg:text-2xl")}>{title}</Heading>
             {subtitle && <p className="text-sm text-muted-foreground mt-0.5 truncate">{subtitle}</p>}
           </div>
         </div>
