@@ -20,12 +20,22 @@ async function apiFetch(path, options = {}) {
 }
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" }); } catch { return iso; } };
 const money = (n) => `₪${(Number(n) || 0).toLocaleString("he-IL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const NOTE_DOC_TYPES = { 200: "תעודת משלוח", 305: "חשבונית מס", 320: "חשבונית מס/קבלה" };
 
 /**
- * כרטיס "מסמכים ב-Invoice Maven" בעמוד תעודת שקילה: מציג מסמכים שהופקו ומאפשר להפיק
- * תעודת משלוח / חשבונית / חשבונית מס-קבלה. מוצג רק כשהאינטגרציה מופעלת במשק.
+ * מסמכים ב-Invoice Maven — מתוך תעודת שקילה (certificate) או תעודת משלוח יוצאת של מודול הרכש (deliveryNote).
+ * מציג את המסמכים שהופקו ומאפשר להפיק תעודת משלוח / חשבונית / חשבונית מס-קבלה. מוצג רק כשהאינטגרציה מופעלת במשק.
+ *   compact  — כפתור בלבד (בלי רשימה)
+ *   embedded — קטע בתוך דיאלוג (מסגרת קלה במקום Card)
+ *   canIssue — false: רק רשימת המסמכים, בלי כפתור הפקה (צופים)
  */
-export default function MavenDocumentsCard({ certificate, farmId, itemCount, onIssued, compact = false }) {
+export default function MavenDocumentsCard({ certificate, deliveryNote, farmId, itemCount, onIssued, compact = false, embedded = false, canIssue = true }) {
+  const subject = deliveryNote || certificate;
+  const isNote = !!deliveryNote;
+  const api = isNote
+    ? { preview: "/integrations/maven/note-preview", issue: "/integrations/maven/note-document", param: "delivery_note_id", about: "המסמך ייבנה משורות תעודת המשלוח והלקוח שלה." }
+    : { preview: "/integrations/maven/document-preview", issue: "/integrations/maven/document", param: "certificate_id", about: "המסמך ייבנה מפריטי תעודת השקילה והלקוח שלה." };
+
   const [cfg, setCfg] = useState(null);
   const [open, setOpen] = useState(false);
   const [docType, setDocType] = useState("200");
@@ -47,28 +57,29 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
   }, [farmId]);
 
   useEffect(() => {
-    if (!open || !certificate?.id) return;
+    if (!open || !subject?.id) return;
     setLoadingPreview(true); setError(null); setExisting(null);
-    apiFetch(`/integrations/maven/document-preview${farmQs}&certificate_id=${encodeURIComponent(certificate.id)}&doc_type=${docType}&no_vat=${noVat ? 1 : 0}`)
+    apiFetch(`${api.preview}${farmQs}&${api.param}=${encodeURIComponent(subject.id)}&doc_type=${docType}&no_vat=${noVat ? 1 : 0}`)
       .then(setPreview)
       .catch((e) => setError(e.data?.error || e.message))
       .finally(() => setLoadingPreview(false));
-  }, [open, docType, noVat, certificate?.id]);
+  }, [open, docType, noVat, subject?.id]);
 
   if (!cfg?.enabled) return null;
 
-  const issued = Array.isArray(certificate?.maven_documents) ? certificate.maven_documents : [];
-  const docTypes = cfg.doc_types || { 200: "תעודת משלוח", 305: "חשבונית מס", 320: "חשבונית מס/קבלה" };
+  const issued = Array.isArray(subject?.maven_documents) ? subject.maven_documents : [];
+  const docTypes = isNote ? NOTE_DOC_TYPES : (cfg.doc_types || NOTE_DOC_TYPES);
+  const invoiceWithoutPrices = isNote && docType !== "200" && (preview?.unpriced_lines || 0) > 0;
 
   const issue = async (force = false) => {
     setIssuing(true); setError(null);
     try {
-      const d = await apiFetch(`/integrations/maven/document${farmQs}`, {
+      const d = await apiFetch(`${api.issue}${farmQs}`, {
         method: "POST",
-        body: JSON.stringify({ certificate_id: certificate.id, doc_type: Number(docType), send_to_customer: sendEmail, remarks, no_vat: noVat, force }),
+        body: JSON.stringify({ [api.param]: subject.id, doc_type: Number(docType), send_to_customer: sendEmail, remarks, no_vat: noVat, force }),
       });
       setOpen(false); setRemarks(""); setExisting(null);
-      onIssued?.(d.document, d.warnings || []);
+      onIssued?.(d.document, d.warnings || [], d.status);
       if (d.document?.pdf_original) setViewDoc(d.document); // הצגת המסמך מיד לאחר ההפקה
     } catch (e) {
       if (e.status === 409 && e.data?.existing) setExisting(e.data.existing);
@@ -76,59 +87,67 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
     } finally { setIssuing(false); }
   };
 
-  const trigger = (
-    <Button variant={compact ? "outline" : "default"} size={compact ? "sm" : "default"} onClick={() => setOpen(true)} disabled={!itemCount} className={compact ? "" : "bg-indigo-600 hover:bg-indigo-700 text-white"}>
-      <FileText className="w-4 h-4 ml-2" /> הפק מסמך ב-Maven
+  const trigger = canIssue ? (
+    <Button variant={compact || embedded ? "outline" : "default"} size={compact || embedded ? "sm" : "default"} onClick={() => setOpen(true)} disabled={!itemCount}>
+      <FileText className="w-4 h-4 ml-2" aria-hidden="true" /> הפק מסמך ב-Maven
     </Button>
+  ) : null;
+  const testBadge = cfg.test_mode ? <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 inline-flex items-center gap-1"><FlaskConical className="w-3 h-3" aria-hidden="true" /> מצב בדיקה</span> : null;
+  const list = issued.length === 0 ? (
+    <p className="text-sm text-muted-foreground">{itemCount ? "טרם הופק מסמך לתעודה זו." : "הוסף שורות לתעודה כדי להפיק מסמך."}</p>
+  ) : (
+    <ul className="divide-y">
+      {issued.map((d, i) => (
+        <li key={i} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="font-medium">{d.doc_type_name || docTypes[d.doc_type]}</span>
+          <span>{d.doc_no ? `מס' ${d.doc_no}` : "ללא מספר"}</span>
+          {d.test && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">בדיקה · לא נשמר</span>}
+          <span className="text-muted-foreground text-xs">{fmtTime(d.issued_at)} · {d.by}</span>
+          <span className="tabular-nums">{money(d.total)}</span>
+          {d.pdf_original ? (
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setViewDoc(d)} aria-label={`הצג ${d.doc_type_name || ""} ${d.doc_no || ""}`}><Eye className="w-3.5 h-3.5 ml-1" aria-hidden="true" /> הצג</Button>
+          ) : (
+            <span className="text-xs text-muted-foreground">אין PDF</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+
+  let body;
+  if (compact) body = trigger;
+  else if (embedded) body = (
+    <section aria-labelledby="maven-docs-h" className="rounded-lg border p-3 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="maven-docs-h" className="text-sm font-semibold inline-flex items-center gap-2"><FileText className="w-4 h-4 text-primary" aria-hidden="true" /> מסמכים ב-Invoice Maven {testBadge}</h3>
+        {trigger}
+      </div>
+      {list}
+    </section>
+  );
+  else body = (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base"><FileText className="w-5 h-5 text-primary" aria-hidden="true" /> מסמכים ב-Invoice Maven {testBadge}</CardTitle>
+          {trigger}
+        </div>
+      </CardHeader>
+      <CardContent>{list}</CardContent>
+    </Card>
   );
 
   return (
     <>
-      {compact ? trigger : (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileText className="w-5 h-5 text-indigo-500" /> מסמכים ב-Invoice Maven
-                {cfg.test_mode && <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 inline-flex items-center gap-1"><FlaskConical className="w-3 h-3" /> מצב בדיקה</span>}
-              </CardTitle>
-              {trigger}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {issued.length === 0 ? (
-              <p className="text-sm text-gray-500">{itemCount ? "טרם הופק מסמך לתעודה זו." : "הוסף פריטים לתעודה כדי להפיק מסמך."}</p>
-            ) : (
-              <ul className="divide-y divide-gray-100">
-                {issued.map((d, i) => (
-                  <li key={i} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                    <span className="font-medium">{d.doc_type_name || docTypes[d.doc_type]}</span>
-                    <span className="text-gray-700">{d.doc_no ? `מס' ${d.doc_no}` : "ללא מספר"}</span>
-                    {d.test && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">בדיקה — לא נשמר</span>}
-                    <span className="text-gray-400 text-xs">{fmtTime(d.issued_at)} · {d.by}</span>
-                    <span className="text-gray-600">{money(d.total)}</span>
-                    {d.pdf_original ? (
-                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setViewDoc(d)} aria-label={`הצג ${d.doc_type_name || ""} ${d.doc_no || ""}`}><Eye className="w-3.5 h-3.5 ml-1" aria-hidden="true" /> הצג</Button>
-                    ) : (
-                      <span className="text-xs text-gray-400">אין PDF</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {body}
 
       <MavenPdfViewer doc={viewDoc} open={!!viewDoc} onOpenChange={(v) => { if (!v) setViewDoc(null); }} farmId={farmId} />
 
       <Dialog open={open} onOpenChange={(v) => { if (!issuing) setOpen(v); }}>
-        <DialogContent className="max-w-lg" dir="rtl">
+        <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
             <DialogTitle>הפקת מסמך ב-Invoice Maven</DialogTitle>
-            <DialogDescription>
-              המסמך ייבנה מפריטי תעודת השקילה והלקוח שלה.{cfg.test_mode ? " מצב בדיקה פעיל: Maven לא ישמור את המסמך." : ""}
-            </DialogDescription>
+            <DialogDescription>{api.about}{cfg.test_mode ? " מצב בדיקה פעיל: Maven לא ישמור את המסמך." : ""}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -143,27 +162,34 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
             </div>
 
             {loadingPreview ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="w-4 h-4 animate-spin" /> בונה תצוגה מקדימה…</div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> בונה תצוגה מקדימה…</div>
             ) : preview && (
-              <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-2">
-                <div className="flex justify-between"><span className="text-gray-500">לקוח</span><span className="font-medium">{preview.customer?.name}{preview.customer?.identification ? ` · ${preview.customer.identification}` : ""}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">תאריך</span><span>{preview.document_date}</span></div>
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-2">
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">לקוח</span><span className="font-medium text-end">{preview.customer?.name}{preview.customer?.identification ? ` · ${preview.customer.identification}` : ""}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">תאריך</span><span className="tabular-nums">{preview.document_date}</span></div>
+                {preview.description && <div className="flex justify-between gap-2"><span className="text-muted-foreground">תיאור</span><span className="text-end">{preview.description}</span></div>}
                 <table className="w-full text-xs">
-                  <thead><tr className="text-gray-500"><th className="text-right font-normal py-1">שורה</th><th className="text-left font-normal">כמות</th><th className="text-left font-normal">מחיר</th><th className="text-left font-normal">סה"כ</th></tr></thead>
+                  <thead><tr className="text-muted-foreground"><th className="text-start font-normal py-1">שורה</th><th className="text-end font-normal">כמות</th><th className="text-end font-normal">מחיר</th><th className="text-end font-normal">סה"כ</th></tr></thead>
                   <tbody>
                     {preview.items.map((l, i) => (
-                      <tr key={i} className="border-t border-gray-200">
-                        <td className="py-1">{l.description}{l.item_number ? <span className="text-gray-400"> ({l.item_number})</span> : null}{l.no_vat ? <span className="text-green-700 text-[10px] mr-1">פטור ממע"מ</span> : null}</td>
-                        <td className="text-left tabular-nums">{l.quantity}</td>
-                        <td className="text-left tabular-nums">{l.price > 0 ? money(l.price) : <span className="text-muted-foreground">—</span>}</td>
-                        <td className="text-left tabular-nums">{l.price > 0 ? money(l.price * l.quantity) : <span className="text-muted-foreground">—</span>}</td>
+                      <tr key={i} className="border-t">
+                        <td className="py-1">{l.description}{l.item_number ? <span className="text-muted-foreground"> ({l.item_number})</span> : null}{l.no_vat ? <span className="text-green-800 text-xs ms-1">פטור ממע"מ</span> : null}</td>
+                        <td className="text-end tabular-nums">{l.quantity}</td>
+                        <td className="text-end tabular-nums">{l.price > 0 ? money(l.price) : <span className="text-muted-foreground">—</span>}</td>
+                        <td className="text-end tabular-nums">{l.price > 0 ? money(l.price * l.quantity) : <span className="text-muted-foreground">—</span>}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <div className="flex justify-between font-semibold border-t pt-2"><span>סה"כ{preview.vat_included ? " (כולל מע\"מ)" : " (לפני מע\"מ)"}</span><span>{money(preview.total)}</span></div>
-                {preview.equipment_lines > 0 && <div className="text-xs text-gray-500">כולל {preview.equipment_lines} שורות אריזה/משטח בכמות בלבד, ללא מחיר.</div>}
-                {preview.total === 0 && <div className="flex items-start gap-1 text-amber-700 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> אין מחירים בפריטי התעודה. המסמך יופק בסכום 0 (מתאים לתעודת משלוח).</div>}
+                <div className="flex justify-between font-semibold border-t pt-2"><span>סה"כ{preview.vat_included ? " (כולל מע\"מ)" : " (לפני מע\"מ)"}</span><span className="tabular-nums">{money(preview.total)}</span></div>
+                {preview.equipment_lines > 0 && <div className="text-xs text-muted-foreground">כולל {preview.equipment_lines} שורות אריזה/משטח בכמות בלבד, ללא מחיר.</div>}
+                {preview.total === 0 && !invoiceWithoutPrices && <div className="flex items-start gap-1 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" /> אין מחירים בשורות. המסמך יופק בסכום 0 (מתאים לתעודת משלוח).</div>}
+                {invoiceWithoutPrices && <div className="flex items-start gap-1 text-destructive text-xs" role="alert"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" /> ב-{preview.unpriced_lines} שורות אין מחיר, ולכן לא תופק חשבונית. השלם מחירים בתעודה או הפק תעודת משלוח.</div>}
+                {(preview.certificate_documents || []).length > 0 && (
+                  <div className="flex items-start gap-1 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>לתעודות השקילה המקושרות כבר הופק ב-Maven: {preview.certificate_documents.map((d) => `${d.doc_type_name} מס' ${d.doc_no}${d.certificate_number ? ` (שקילה ${d.certificate_number})` : ""}`).join(", ")}. בדוק שאינך מפיק מסמך כפול.</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -176,24 +202,23 @@ export default function MavenDocumentsCard({ certificate, farmId, itemCount, onI
               <Label htmlFor="mv-send" className="text-sm font-normal cursor-pointer">שלח את המסמך ללקוח במייל דרך Maven{preview?.customer?.email ? ` (${preview.customer.email})` : " (אין מייל ללקוח)"}</Label>
             </div>
             <div className="space-y-1">
-              <Label>הערות על המסמך</Label>
-              <Textarea rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="יודפסו על המסמך (אופציונלי)" />
+              <Label htmlFor="mv-remarks">הערות על המסמך</Label>
+              <Textarea id="mv-remarks" rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="יודפסו על המסמך (אופציונלי)" />
+              {isNote && preview?.remarks && <p className="text-xs text-muted-foreground">יתווסף אוטומטית: {preview.remarks}</p>}
             </div>
 
             {error && (
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm space-y-2">
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm space-y-2" role="alert">
                 <div>{error}</div>
-                {existing && (
-                  <Button size="sm" variant="outline" onClick={() => issue(true)} disabled={issuing}>הפק בכל זאת מסמך נוסף</Button>
-                )}
+                {existing && <Button size="sm" variant="outline" onClick={() => issue(true)} disabled={issuing}>הפק בכל זאת מסמך נוסף</Button>}
               </div>
             )}
           </div>
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={issuing}>ביטול</Button>
-            <Button onClick={() => issue(false)} disabled={issuing || loadingPreview || !preview} >
-              {issuing ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : <FileText className="w-4 h-4 ml-2" />}
+            <Button onClick={() => issue(false)} disabled={issuing || loadingPreview || !preview || invoiceWithoutPrices}>
+              {issuing ? <Loader2 className="w-4 h-4 animate-spin ml-2" aria-hidden="true" /> : <FileText className="w-4 h-4 ml-2" aria-hidden="true" />}
               {cfg.test_mode ? "הפק (בדיקה)" : "הפק מסמך"}
             </Button>
           </DialogFooter>

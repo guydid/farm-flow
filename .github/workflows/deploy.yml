@@ -32,7 +32,7 @@ jobs:
 
       # בדיקות שרת ללא תלויות (node:sqlite המובנה) — פריסה נעצרת אם הן נכשלות
       - name: Backend tests
-        run: node --test backend/procurement.test.js
+        run: node --test backend/procurement.test.js backend/maven.test.js
 
       - name: Build frontend
         working-directory: farm-flow-49ecc86e

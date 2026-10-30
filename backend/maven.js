@@ -9,6 +9,61 @@ const { Readable } = require('stream');
 const MAVEN_HOST = 'app.invoice-maven.co.il';
 const DOC_TYPES = { 200: 'תעודת משלוח', 305: 'חשבונית מס', 320: 'חשבונית מס/קבלה', 10: 'הצעת מחיר', 100: 'הזמנה' };
 const ALLOWED_DOC_TYPES = new Set([200, 305, 320, 10, 100]);
+// מסמכים שאפשר להפיק מתעודת משלוח יוצאת של מודול הרכש
+const NOTE_DOC_TYPES = new Set([200, 305, 320]);
+
+// ── helpers (ברמת המודול, כדי שגם בוני המסמכים הטהורים ישתמשו בהם) ──
+const normName = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const ddmmyyyy = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) { const d = new Date(); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
+  return `${m[3]}/${m[2]}/${m[1]}`;
+};
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ── מסמך ב-Maven מתוך תעודת משלוח יוצאת (מודול הרכש) ──
+// פונקציה טהורה (בלי DB) כדי שאפשר לבדוק אותה: note + items כפי שהם ב-procurement,
+// customer / products של המשק. Maven הוא מערכת הפקה ללקוחות — תעודה נכנסת מספק אין לאן לשלוח.
+function buildNoteDocument(cfg, { note, items, customer, products = [] }, opts = {}) {
+  const docType = Number(opts.doc_type) || 200;
+  const lines = items.map(it => {
+    const product = (it.product_id && products.find(p => p.id === it.product_id))
+      || products.find(p => p.name && normName(p.name) === normName(it.product_name)) || null;
+    const unit = String(it.unit || '').trim();
+    const desc = [it.product_name || product?.name || 'פריט', unit && unit !== "יח'" ? `(${unit})` : null, it.notes ? String(it.notes).trim() : null].filter(Boolean).join(' ');
+    const qty = Number(it.quantity);
+    const line = { description: desc.slice(0, 250), price: round2(it.unit_price), quantity: qty > 0 ? qty : 1 };
+    if (product?.maven_item_no) line.item_number = product.maven_item_no;
+    if (product?.vat_exempt || opts.no_vat) line.no_vat = true;
+    return line;
+  });
+  const body = {
+    doc_type: docType,
+    customer: {
+      name: (customer?.name || note.counterparty_name || 'לקוח').trim(),
+      ...(customer?.identification ? { identification: String(customer.identification) } : {}),
+      ...(customer?.email ? { email: customer.email } : {}),
+      ...(customer?.phone ? { cell_phone: customer.phone } : {}),
+      ...(customer?.address ? { address: customer.address } : {}),
+    },
+    items: lines,
+    // Maven דורש רצף כרונולוגי לכל סוג מסמך → תאריך המסמך = היום; תאריך האספקה בתיאור
+    document_date: ddmmyyyy(opts.document_date || new Date().toISOString().slice(0, 10)),
+    description: [`תעודת משלוח ${note.note_number} מתאריך ${ddmmyyyy(note.delivery_date)}`, note.order_number ? `הזמנה ${note.order_number}` : null].filter(Boolean).join(' · '),
+    vat_included: opts.vat_included !== undefined ? !!opts.vat_included : !!cfg.vat_included,
+    ...(opts.no_vat ? { no_vat: true } : {}),
+    send_to_customer: !!opts.send_to_customer,
+    doc_id: `ff-dn-${note.id}-${docType}${opts.force ? '-' + Date.now() : ''}`,
+  };
+  const remarks = [
+    opts.remarks ? String(opts.remarks).slice(0, 1000) : null,
+    note.vehicle ? `רכב ${note.vehicle}` : null,
+    note.driver_name ? `נהג ${note.driver_name}` : null,
+    note.received_by ? `נמסר ע"י ${note.received_by}` : null,
+  ].filter(Boolean).join(' · ');
+  if (remarks) body.remarks = remarks;
+  return body;
+}
 
 // Config + API call, shared with other modules (leases invoicing)
 function makeMavenCore(deps) {
@@ -98,13 +153,6 @@ function registerMavenRoutes(app, deps) {
   const { loadConfig, saveConfig, publicConfig, mavenCall } = makeMavenCore(deps);
 
   // ── helpers ──
-  const normName = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-  const ddmmyyyy = (iso) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
-    if (!m) { const d = new Date(); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
-    return `${m[3]}/${m[2]}/${m[1]}`;
-  };
-  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const rowsOf = (type, farmId) => db.prepare('SELECT id, data FROM entities WHERE entity_type = ? AND farm_id = ?').all(type, farmId)
     .map(r => { try { return { id: r.id, ...JSON.parse(r.data) }; } catch { return { id: r.id }; } });
   const updateRow = (id, patch) => {
@@ -402,6 +450,78 @@ function registerMavenRoutes(app, deps) {
       res.status(422).json({ ok: false, error: e.message, code: e.code || null });
     }
   });
+  // ── מסמכים מתוך תעודת משלוח יוצאת (מודול הרכש) ──
+  // Maven הוא מערכת הפקה ללקוחות: ה-API מקבל רק מסמכים שאנחנו מפיקים (תעודת משלוח / חשבונית ללקוח).
+  // תעודה נכנסת מספק נרשמת ב-Maven רק כהוצאה — דרך המייל או האפליקציה שלהם, אין לזה API.
+  function loadNoteForMaven(ctx, res, noteId) {
+    const note = rowsOf('delivery_notes', ctx.farmId).find(n => n.id === String(noteId || ''));
+    if (!note) { res.status(404).json({ error: 'תעודת משלוח לא נמצאה' }); return null; }
+    if (note.direction !== 'out') { res.status(400).json({ error: 'ל-Maven אפשר להפיק רק תעודות משלוח יוצאות (ללקוח). תעודה נכנסת מספק נרשמת ב-Maven כהוצאה, דרך המייל או האפליקציה של Maven.', code: 'incoming_note' }); return null; }
+    const items = rowsOf('delivery_note_items', ctx.farmId).filter(i => i.delivery_note_id === note.id).sort((a, b) => (a.line_no || 0) - (b.line_no || 0));
+    const customer = note.customer_id ? rowsOf('customers', ctx.farmId).find(c => c.id === note.customer_id) : null;
+    return { note, items, customer, products: rowsOf('products', ctx.farmId) };
+  }
+  // תעודות שקילה מקושרות שכבר הופק להן מסמך אמיתי ב-Maven — כדי לא להפיק תעודת משלוח כפולה
+  function certificateDocsOf(farmId, note) {
+    const ids = Array.isArray(note.weighing_certificate_ids) ? note.weighing_certificate_ids : [];
+    if (!ids.length) return [];
+    return rowsOf('weighing_certificates', farmId).filter(c => ids.includes(c.id))
+      .flatMap(c => (c.maven_documents || []).filter(d => !d.test).map(d => ({ certificate_id: c.id, certificate_number: c.certificate_number || null, doc_type: d.doc_type, doc_type_name: d.doc_type_name || DOC_TYPES[d.doc_type], doc_no: d.doc_no })));
+  }
+
+  app.get('/api/integrations/maven/note-preview', authMiddleware, (req, res) => {
+    const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
+    const cfg = loadConfig(ctx.farmId);
+    const src = loadNoteForMaven(ctx, res, req.query.delivery_note_id); if (!src) return;
+    const docType = Number(req.query.doc_type) || 200;
+    const body = buildNoteDocument(cfg, src, { doc_type: docType, no_vat: req.query.no_vat === '1' });
+    const total = body.items.reduce((s, l) => s + l.price * l.quantity, 0);
+    res.json({
+      customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, remarks: body.remarks || null,
+      vat_included: body.vat_included, no_vat: !!body.no_vat, exempt_lines: body.items.filter(l => l.no_vat && l.price > 0).length, equipment_lines: 0,
+      unpriced_lines: body.items.filter(l => !(l.price > 0)).length, test_mode: cfg.test_mode !== false,
+      issued: src.note.maven_documents || [], certificate_documents: certificateDocsOf(ctx.farmId, src.note),
+    });
+  });
+
+  app.post('/api/integrations/maven/note-document', authMiddleware, async (req, res) => {
+    const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
+    const cfg = loadConfig(ctx.farmId);
+    if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה עם Maven אינה מופעלת במשק זה' });
+    const { delivery_note_id, doc_type, send_to_customer, remarks, vat_included, force, no_vat } = req.body || {};
+    const docType = Number(doc_type);
+    if (!NOTE_DOC_TYPES.has(docType)) return res.status(400).json({ error: 'סוג מסמך לא נתמך לתעודת משלוח (תעודת משלוח / חשבונית מס / חשבונית מס-קבלה)' });
+    const src = loadNoteForMaven(ctx, res, delivery_note_id); if (!src) return;
+    const { note, items } = src;
+    if (!items.length) return res.status(400).json({ error: 'אין שורות בתעודה' });
+    if (docType !== 200 && items.some(it => !(Number(it.unit_price) > 0))) return res.status(400).json({ error: 'לחשבונית נדרש מחיר בכל שורה. השלם מחירים בתעודה או הפק תעודת משלוח.', code: 'missing_prices' });
+    const already = (note.maven_documents || []).find(d => Number(d.doc_type) === docType && !d.test);
+    if (already && !force) return res.status(409).json({ error: `כבר הופק ${DOC_TYPES[docType]} מס' ${already.doc_no} לתעודה זו`, code: 'already_issued', existing: already });
+    const body = buildNoteDocument(cfg, src, { doc_type: docType, send_to_customer, remarks, vat_included, no_vat: !!no_vat, force: !!force || !!already });
+    try {
+      const r = await mavenCall(cfg, '/api/documents/addDocument', body);
+      const by = ctx.user.full_name || ctx.user.email;
+      const entry = {
+        id: r.id || null, doc_no: r.doc_no ?? null, doc_type: docType, doc_type_name: DOC_TYPES[docType],
+        pdf_original: r.pdf_original || null, pdf_copy: r.pdf_copy || null, allocation_number: r.allocation_number || null,
+        test: cfg.test_mode !== false, issued_at: NOW(), by, total: round2(body.items.reduce((s, l) => s + l.price * l.quantity, 0)),
+      };
+      const patch = { maven_documents: [...(note.maven_documents || []), entry], _by: by };
+      const history = [...(note.history || []), { at: NOW(), by, action: 'maven', doc_type: docType, doc_no: entry.doc_no, test: entry.test, note: `${entry.test ? 'בדיקה: ' : ''}${DOC_TYPES[docType]}${entry.doc_no ? ` מס' ${entry.doc_no}` : ''} ב-Invoice Maven` }];
+      // חשבונית אמיתית ללקוח = התעודה חויבה
+      if (docType !== 200 && !entry.test && note.status !== 'invoiced') {
+        patch.status = 'invoiced';
+        history.push({ at: NOW(), by, action: 'status', from: note.status, to: 'invoiced', note: `חשבונית מס' ${entry.doc_no} ב-Maven` });
+      }
+      patch.history = history;
+      updateRow(note.id, patch);
+      console.log(`[maven] farm=${ctx.farmId} delivery_note=${note.id} issued ${docType} doc_no=${entry.doc_no} test=${entry.test}`);
+      res.json({ ok: true, document: entry, status: patch.status || note.status, warnings: [r.allocation_warning, r.payment_link_warning].filter(Boolean) });
+    } catch (e) {
+      console.error('[maven] addDocument (delivery note) failed:', e.message);
+      res.status(422).json({ ok: false, error: e.message, code: e.code || null });
+    }
+  });
 }
 
-module.exports = { registerMavenRoutes, makeMavenCore, DOC_TYPES };
+module.exports = { registerMavenRoutes, makeMavenCore, buildNoteDocument, DOC_TYPES };

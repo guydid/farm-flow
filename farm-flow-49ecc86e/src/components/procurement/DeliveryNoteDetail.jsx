@@ -7,6 +7,7 @@ import { Loader2, Pencil, FileText, ExternalLink, Scale, Link2, Package } from "
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { apiFetch, DN_DIRECTIONS, DN_STATUS, SOURCES, money, fmtDate, fileHref, isImage } from "./procurementUtils";
+import MavenDocumentsCard from "@/components/weighing/MavenDocumentsCard";
 
 const Status = ({ value }) => { const s = DN_STATUS[value] || { label: value, cls: "bg-muted text-muted-foreground" }; return <Badge className={`${s.cls} border-0 font-medium`}>{s.label}</Badge>; };
 
@@ -103,6 +104,12 @@ export default function DeliveryNoteDetail({ open, onClose, noteId, farmId, canW
               </div>
             )}
 
+            {/* תעודה יוצאת = מסמך שאנחנו מפיקים ללקוח → אפשר להפיק אותו ב-Invoice Maven. לתעודה נכנסת מספק אין API ב-Maven (הוצאות נקלטות שם מהמייל). */}
+            {note.direction === "out" && (
+              <MavenDocumentsCard deliveryNote={note} farmId={farmId} itemCount={note.items.length} embedded canIssue={canWrite}
+                onIssued={(doc, _warnings, status) => { setNote((n) => (n ? { ...n, status: status || n.status, maven_documents: [...(n.maven_documents || []), doc] } : n)); onChanged?.(); }} />
+            )}
+
             {canWrite && (
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => onEdit?.(note)}><Pencil className="w-4 h-4 ml-1" aria-hidden="true" /> ערוך תעודה</Button>
@@ -155,8 +162,8 @@ export default function DeliveryNoteDetail({ open, onClose, noteId, farmId, canW
                   <li key={i} className="flex flex-wrap gap-1">
                     <span className="tabular-nums">{fmtDate(h.at)} {String(h.at).slice(11, 16)}</span>
                     <span className="text-foreground">{h.by}</span>
-                    <span>{h.action === "created" ? "קלט/ה" : h.action === "status" ? `סטטוס: ${DN_STATUS[h.from]?.label || h.from || "—"} → ${DN_STATUS[h.to]?.label || h.to}` : `עדכון${h.fields ? ` (${h.fields.join(", ")})` : ""}`}</span>
-                    {h.note && <span>· {h.note}</span>}
+                    <span>{h.action === "created" ? "קלט/ה" : h.action === "status" ? `סטטוס: ${DN_STATUS[h.from]?.label || h.from || "—"} → ${DN_STATUS[h.to]?.label || h.to}` : h.action === "maven" ? `הפיק/ה ${h.note || "מסמך ב-Invoice Maven"}` : `עדכון${h.fields ? ` (${h.fields.join(", ")})` : ""}`}</span>
+                    {h.note && h.action !== "maven" && <span>· {h.note}</span>}
                   </li>
                 ))}
               </ol>

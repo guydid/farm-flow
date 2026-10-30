@@ -330,6 +330,7 @@ export default function Procurement() {
                       {n.vehicle && <span className="tabular-nums">{n.vehicle}</span>}
                       {n.invoice_id ? <span className="text-success">מקושרת לחשבונית</span> : n.direction === "in" && n.status !== "expected" && <span className="text-warning-foreground">ללא חשבונית</span>}
                       {(n.weighing_certificate_ids || []).length > 0 && <span>{n.weighing_certificate_ids.length} תעודות שקילה</span>}
+                      {(n.maven_documents || []).some((d) => !d.test) && <span className="text-success">הופק ב-Maven</span>}
                     </div>
                   </button>
                   {/* הצילום כיעד הקשה נפרד (לא בתוך הכפתור), ברוחב אצבע */}
