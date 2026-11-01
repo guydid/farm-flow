@@ -104,7 +104,6 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
       .catch(() => {});
     return () => { alive = false; };
   }, [certificateCustomerId, farmId]);
-  const lastForProduct = formData.product_id ? lastPrices[formData.product_id] : null;
   const [formData, setFormData] = useState({
     product_id: "",
     product_name: "",
@@ -117,6 +116,8 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     price_per_unit: "",
     discount_percentage: "",
   });
+  // חייב לבוא אחרי הצהרת formData (שימוש לפני const זורק "Cannot access before initialization")
+  const lastForProduct = formData.product_id ? lastPrices[formData.product_id] : null;
 
   const [displayValues, setDisplayValues] = useState({
     tare_weight: "0.00",
