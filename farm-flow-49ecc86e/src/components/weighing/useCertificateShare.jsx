@@ -1,17 +1,15 @@
-import React, { useState, useRef, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { format } from 'date-fns';
 import { WeighingItem, CompanySettings, Customer } from '@/entities/all';
-import CertificatePrintLayout from './CertificatePrintLayout';
+import { buildCertificatePdf } from './certificatePdf';
 
-// שיתוף תעודות שקילה כ-PDF: מרנדר את פריסת ההדפסה בקונטיינר נסתר, מצלם אותה
-// ל-PDF, ובנייד פותח את חלונית השיתוף של המכשיר (וואטסאפ/מייל). בדפדפן ללא
-// Web Share עם קבצים — הקבצים יורדים והמשתמש מצרף אותם ידנית.
+// שיתוף תעודות שקילה כ-PDF וקטורי (טקסט אמיתי, גופן Heebo מוטמע — לא צילום מסך).
+// בנייד פותח את חלונית השיתוף של המכשיר (וואטסאפ/מייל). בדפדפן ללא Web Share
+// עם קבצים — הקבצים יורדים והמשתמש מצרף אותם ידנית.
 // שימוש: const { share, shareMany, isSharing, shareLayoutElement } = useCertificateShare(toast);
-// יש לרנדר את shareLayoutElement בעץ הקומפוננטה.
+// shareLayoutElement נשמר לתאימות (תמיד null — אין יותר צורך בפריסה נסתרת).
 export default function useCertificateShare(toast) {
-  const [payload, setPayload] = useState(null);
   const [isSharing, setIsSharing] = useState(false);
-  const layoutRef = useRef(null);
 
   const buildPdfFile = useCallback(async (certificate, preloaded = {}) => {
     const items = preloaded.items ?? await WeighingItem.filter({ certificate_id: certificate.id }).catch(() => []);
@@ -26,34 +24,10 @@ export default function useCertificateShare(toast) {
     if (!customer && certificate.customer_id) {
       customer = await Customer.get(certificate.customer_id).catch(() => null);
     }
-    setPayload({ certificate, items, companySettings: companySettings || {}, customer: customer || {} });
-
-    // ממתינים שהפריסה הנסתרת תרונדר ושתמונות (QR) ייטענו
-    await new Promise(r => setTimeout(r, 250));
-    const el = layoutRef.current;
-    if (!el) throw new Error('פריסת התעודה לא נטענה');
-    await Promise.all(Array.from(el.querySelectorAll('img')).map(img =>
-      img.complete ? Promise.resolve() : new Promise(res => { img.onload = res; img.onerror = res; })
-    ));
-
-    const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
-    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-
-    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-    const pageW = 210, pageH = 297;
-    const imgH = canvas.height * pageW / canvas.width;
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    let offset = 0, page = 0;
-    while (offset < imgH) {
-      if (page > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, -offset, pageW, imgH);
-      offset += pageH;
-      page++;
-    }
+    const { blob } = await buildCertificatePdf({ certificate, items, companySettings: companySettings || {}, customer: customer || {} });
 
     const certNum = certificate.reference_number || String(certificate.id).slice(-5);
     const fileName = `תעודת_שקילה_${certNum}.pdf`;
-    const blob = pdf.output('blob');
     const file = new File([blob], fileName, { type: 'application/pdf' });
     return { file, blob, fileName, certNum, certificate };
   }, []);
@@ -111,7 +85,6 @@ export default function useCertificateShare(toast) {
       toast({ title: 'שגיאה', description: 'שיתוף התעודה נכשל.', variant: 'destructive' });
     } finally {
       setIsSharing(false);
-      setPayload(null);
     }
   }, [buildPdfFile, deliver, toast]);
 
@@ -143,22 +116,10 @@ export default function useCertificateShare(toast) {
       toast({ title: 'שגיאה', description: 'שיתוף התעודות נכשל.', variant: 'destructive' });
     } finally {
       setIsSharing(false);
-      setPayload(null);
     }
   }, [buildPdfFile, deliver, share, toast]);
 
-  const shareLayoutElement = payload ? (
-    <div style={{ position: 'fixed', left: '-10000px', top: 0, width: '794px', backgroundColor: '#fff' }}>
-      <div ref={layoutRef}>
-        <CertificatePrintLayout
-          certificate={payload.certificate}
-          items={payload.items}
-          companySettings={payload.companySettings}
-          customer={payload.customer}
-        />
-      </div>
-    </div>
-  ) : null;
+  const shareLayoutElement = null; // תאימות לאחור: הקוראים עדיין מרנדרים אותו
 
   return { share, shareMany, isSharing, shareLayoutElement };
 }
