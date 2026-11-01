@@ -10,6 +10,7 @@ import { format } from "date-fns";
 import { Plus, Printer, Edit, Trash2, Copy, Save, ArrowRight, Loader2, EllipsisVertical, Package, ExternalLink, Share2, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -69,7 +70,8 @@ export default function WeighingDetail() {
     customer_name: "",
     vehicle_type: "truck",
     vehicle_number: "",
-    driver_name: ""
+    driver_name: "",
+    notes: ""
   });
 
   // Refs
@@ -248,7 +250,8 @@ export default function WeighingDetail() {
           customer_name: safeCertData.customer_name || "",
           vehicle_type: safeCertData.vehicle_type || "truck",
           vehicle_number: safeCertData.vehicle_number || "",
-          driver_name: safeCertData.driver_name || ""
+          driver_name: safeCertData.driver_name || "",
+          notes: safeCertData.notes || ""
         });
       }
     } catch (error) {
@@ -647,6 +650,11 @@ export default function WeighingDetail() {
         <Input value={safeObject(certificateFormData).vehicle_number} onChange={handleFieldChange('vehicle_number')} />
       </div>
       <div className="sm:col-span-2 md:col-span-3">
+        <Label htmlFor="wd-notes">הערות:</Label>
+        <Textarea id="wd-notes" rows={2} maxLength={1000} value={safeObject(certificateFormData).notes || ""} onChange={handleFieldChange('notes')}
+          placeholder="הערות לתעודה (מודפסות בתעודה ונשלחות כהערה למסמך ב-Maven)" />
+      </div>
+      <div className="sm:col-span-2 md:col-span-3">
         <Button size="sm" onClick={handleSaveCertificate}>
           <Save className="w-4 h-4 ml-2" /> שמור שינויים
         </Button>
@@ -673,6 +681,9 @@ export default function WeighingDetail() {
                       {safeCertificate.id ? ` · #${String(safeCertificate.id).slice(-5)}` : ''}
                       {safeObject(certificateFormData).vehicle_number ? ` · ${safeObject(certificateFormData).vehicle_number}` : ''}
                     </div>
+                    {safeObject(certificateFormData).notes && !detailsOpen && (
+                      <p className="text-xs text-amber-800 mt-1 line-clamp-2">הערה: {safeObject(certificateFormData).notes}</p>
+                    )}
                   </div>
                   <Button variant="ghost" size="sm" className="shrink-0 text-blue-600 h-8" onClick={() => setDetailsOpen(o => !o)}>
                     {detailsOpen

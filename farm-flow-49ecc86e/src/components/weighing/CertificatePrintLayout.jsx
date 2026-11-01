@@ -181,6 +181,12 @@ export default function CertificatePrintLayout({ certificate, items, companySett
         </div>
       </section>
 
+      {safeCertificate.notes && (
+        <section style={{ border: '1px solid #000', padding: '8px 10px', marginBottom: '15px', fontSize: '10px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+          <strong>הערות:</strong> {String(safeCertificate.notes)}
+        </section>
+      )}
+
       {/* Items Details */}
       <div>
         <table className="print-table">

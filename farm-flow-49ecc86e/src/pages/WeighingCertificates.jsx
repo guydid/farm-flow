@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import EntitySelect from "@/components/common/EntitySelect";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -97,7 +98,8 @@ export default function WeighingCertificates() {
     customer_name: "",
     vehicle_type: "truck",
     vehicle_number: "",
-    driver_name: ""
+    driver_name: "",
+    notes: ""
   });
 
 
@@ -334,7 +336,8 @@ export default function WeighingCertificates() {
       customer_name: "",
       vehicle_type: "truck",
       vehicle_number: "",
-      driver_name: ""
+      driver_name: "",
+      notes: ""
     });
   };
 
@@ -355,7 +358,8 @@ export default function WeighingCertificates() {
       customer_id: certificate.customer_id,
       vehicle_type: certificate.vehicle_type || "truck",
       vehicle_number: certificate.vehicle_number || "",
-      driver_name: certificate.driver_name || ""
+      driver_name: certificate.driver_name || "",
+      notes: "" // הערות הן לתעודה ספציפית ולא משוכפלות
     });
     setIsDialogOpen(true);
   };
@@ -1430,6 +1434,14 @@ export default function WeighingCertificates() {
                       value={formData.driver_name} 
                       onChange={e => setFormData({...formData, driver_name: e.target.value})}
                     />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="wc-notes">הערות</Label>
+                    <Textarea id="wc-notes" rows={2} maxLength={1000} value={formData.notes || ""}
+                      onChange={e => setFormData({...formData, notes: e.target.value})}
+                      placeholder="לדוגמה: סחורה לקירור מיידי, להשאיר משטחים ריקים (אופציונלי)" />
+                    <p className="text-xs text-muted-foreground mt-1">מופיע בתעודה המודפסת ובהערות המסמך ב-Maven.</p>
                   </div>
                 </>
               )}

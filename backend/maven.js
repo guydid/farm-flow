@@ -321,7 +321,7 @@ function registerMavenRoutes(app, deps) {
     };
     if (opts.remarks) body.remarks = String(opts.remarks).slice(0, 1000);
     if (cert.vehicle_number || cert.driver_name) {
-      body.remarks = [body.remarks, cert.vehicle_number ? `רכב ${cert.vehicle_number}` : null, cert.driver_name ? `נהג ${cert.driver_name}` : null].filter(Boolean).join(' · ');
+      body.remarks = [body.remarks, cert.notes ? String(cert.notes).trim().slice(0, 600) : null, cert.vehicle_number ? `רכב ${cert.vehicle_number}` : null, cert.driver_name ? `נהג ${cert.driver_name}` : null].filter(Boolean).join(' · ');
     }
     return body;
   }
