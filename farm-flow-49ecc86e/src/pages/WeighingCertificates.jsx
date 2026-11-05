@@ -30,7 +30,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import useCertificateShare from "../components/weighing/useCertificateShare";
 import { getMeCached, getFarmCached, getListCached, invalidateList } from "@/api/cachedReads";
-import CustomerOpenReportLayout from "../components/weighing/CustomerOpenReport";
+import CustomerOpenReportLayout, { groupEntriesByProduct } from "../components/weighing/CustomerOpenReport";
 
 
 import { DateInput } from "@/components/ui/date-input";
@@ -52,6 +52,7 @@ export default function WeighingCertificates() {
   const [reportData, setReportData] = useState(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportSharing, setReportSharing] = useState(false);
+  const [reportMode, setReportMode] = useState('product'); // 'product' = לפי פריט (ברירת מחדל), 'day' = לפי יום
   const reportRef = useRef(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -409,13 +410,14 @@ export default function WeighingCertificates() {
           (groupsMap[key] = groupsMap[key] || []).push({ cert: c, items: byCert[c.id] || [] });
         });
       const groups = Object.entries(groupsMap).map(([date, entries]) => ({ date, entries }));
+      const productGroups = groupEntriesByProduct(groups.flatMap(g => g.entries));
       const totals = {
         certs: openCerts.length,
         weight: openCerts.reduce((s, c) => s + (parseFloat(c.total_weight) || 0), 0),
         packages: openCerts.reduce((s, c) => s + (parseInt(c.total_packages) || 0), 0),
         amount: openCerts.reduce((s, c) => s + (parseFloat(c.total_amount) || 0), 0),
       };
-      setReportData({ customer, groups, totals });
+      setReportData({ customer, groups, productGroups, totals });
     } catch (error) {
       console.error("Failed to build customer report:", error);
       toast({ title: "שגיאה", description: "הפקת הדוח נכשלה", variant: "destructive" });
@@ -442,10 +444,11 @@ export default function WeighingCertificates() {
         offset += pageH;
         page++;
       }
-      const fileName = `דוח_תעודות_פתוחות_${reportData.customer.name}.pdf`;
+      const modeLabel = reportMode === 'product' ? 'לפי_פריט' : 'לפי_יום';
+      const fileName = `דוח_תעודות_פתוחות_${modeLabel}_${reportData.customer.name}.pdf`;
       const blob = pdf.output('blob');
       const file = new File([blob], fileName, { type: 'application/pdf' });
-      const text = `דוח תעודות פתוחות — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
+      const text = `דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ files: [file], title: fileName, text });
@@ -477,7 +480,7 @@ export default function WeighingCertificates() {
       toast({ title: "שגיאה", description: "יש לאפשר חלונות קופצים להדפסה", variant: "destructive" });
       return;
     }
-    w.document.write(`<html dir="rtl"><head><title>דוח תעודות פתוחות</title></head><body style="margin:0">${el.outerHTML}</body></html>`);
+    w.document.write(`<html dir="rtl"><head><title>דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'}</title></head><body style="margin:0">${el.outerHTML}</body></html>`);
     w.document.close();
     setTimeout(() => { w.focus(); w.print(); }, 300);
   };
@@ -1494,7 +1497,21 @@ export default function WeighingCertificates() {
 
           {reportData && !reportBusy && (
             <>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div role="radiogroup" aria-label="סידור הדוח" className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                  {[['product', 'לפי פריט'], ['day', 'לפי יום']].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={reportMode === value}
+                      onClick={() => setReportMode(value)}
+                      className={`min-h-[40px] px-3 rounded-[10px] text-sm font-medium transition-colors ${reportMode === value ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <Button onClick={shareReportPdf} disabled={reportSharing} className="flex-1 sm:flex-initial">
                   {reportSharing ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Share2 className="w-4 h-4 ml-2" />}
                   שתף PDF
@@ -1511,8 +1528,10 @@ export default function WeighingCertificates() {
                   <CustomerOpenReportLayout
                     customer={reportData.customer}
                     groups={reportData.groups}
+                    productGroups={reportData.productGroups}
                     totals={reportData.totals}
                     farmName={currentFarm?.name}
+                    mode={reportMode}
                   />
                 </div>
               </div>
