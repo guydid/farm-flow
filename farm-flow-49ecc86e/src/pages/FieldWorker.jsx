@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { User, Farm, Seeding, Harvest, Activity, ActivityType, Variety, Crop, Packaging, Product } from "@/entities/all";
-import { varietiesForSeeding, packagingsForSeeding } from "@/lib/seedingFilters";
+import { varietiesForSeeding, packagingsForSeeding, expectedWeightForSeeding } from "@/lib/seedingFilters";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -142,12 +142,14 @@ export default function FieldWorker() {
   useEffect(() => {
     if (harvestForm.package_count && harvestForm.packaging) {
       const p = packagings.find(x => x.name === harvestForm.packaging);
-      if (p && typeof p.expected_weight === 'number') {
-        const w = (parseFloat(harvestForm.package_count) * p.expected_weight);
+      const seeding = seedings.find(s => s.id === harvestForm.seeding_id);
+      const expectedWeight = expectedWeightForSeeding(p, seeding, products);
+      if (expectedWeight != null) {
+        const w = (parseFloat(harvestForm.package_count) * expectedWeight);
         if (!isNaN(w)) setHarvestForm(prev => ({ ...prev, weight: w.toFixed(2) }));
       }
     }
-  }, [harvestForm.package_count, harvestForm.packaging, packagings]);
+  }, [harvestForm.package_count, harvestForm.packaging, harvestForm.seeding_id, packagings, products, seedings]);
 
   const getSeedingDisplayName = (seeding) => {
     if (language === 'en' || language === 'th') {

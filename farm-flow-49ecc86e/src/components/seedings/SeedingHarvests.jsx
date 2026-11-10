@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Harvest, PalletType, Packaging } from "@/entities/all";
+import { Harvest, PalletType, Packaging, Product } from "@/entities/all";
+import { expectedWeightForSeeding } from "@/lib/seedingFilters";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,6 +17,7 @@ export default function SeedingHarvests({ seeding, varieties, harvests, onUpdate
   const navigate = useNavigate();
   const [palletTypes, setPalletTypes] = useState([]);
   const [packagings, setPackagings] = useState([]);
+  const [products, setProducts] = useState([]);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingHarvest, setEditingHarvest] = useState(null);
   const { toast } = useToast();
@@ -36,11 +38,13 @@ export default function SeedingHarvests({ seeding, varieties, harvests, onUpdate
     if (!seeding?.farm_id) return;
     
     try {
-      const [palletTypesData, packagingsData] = await Promise.all([
+      const [palletTypesData, packagingsData, productsData] = await Promise.all([
         PalletType.list(),
-        Packaging.filter({ farm_id: seeding.farm_id })
+        Packaging.filter({ farm_id: seeding.farm_id }),
+        Product.filter({ farm_id: seeding.farm_id }).catch(() => [])
       ]);
-      
+      setProducts(Array.isArray(productsData) ? productsData : []);
+
       setPalletTypes(Array.isArray(palletTypesData) ? palletTypesData : []);
       const loadedPackagings = Array.isArray(packagingsData) ? packagingsData : [];
       setPackagings(loadedPackagings);
@@ -64,12 +68,13 @@ export default function SeedingHarvests({ seeding, varieties, harvests, onUpdate
   useEffect(() => {
     if (formData.packaging && formData.quantity && packagings.length > 0) {
       const selectedPackaging = packagings.find(p => p.name === formData.packaging);
-      if (selectedPackaging && selectedPackaging.expected_weight) {
-        const calculatedWeight = selectedPackaging.expected_weight * parseFloat(formData.quantity || 0);
+      const expectedWeight = expectedWeightForSeeding(selectedPackaging, seeding, products);
+      if (expectedWeight) {
+        const calculatedWeight = expectedWeight * parseFloat(formData.quantity || 0);
         setFormData(prev => ({ ...prev, weight: calculatedWeight.toFixed(2).toString() }));
       }
     }
-  }, [formData.packaging, formData.quantity, packagings]);
+  }, [formData.packaging, formData.quantity, packagings, products, seeding]);
 
   const handleEdit = (harvest) => {
     setEditingHarvest(harvest);

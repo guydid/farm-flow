@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from "react";
-import { varietiesForSeeding, packagingsForSeeding } from "@/lib/seedingFilters";
+import { varietiesForSeeding, packagingsForSeeding, expectedWeightForSeeding } from "@/lib/seedingFilters";
 import { Activity, Harvest, Spraying, ActivityType, Packaging, Product } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -69,8 +69,9 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
   useEffect(() => {
     if (actionType === 'harvest' && formData.package_count && formData.packaging) {
       const selectedPackaging = effectivePackagings.find(p => p && p.name === formData.packaging);
-      if (selectedPackaging && typeof selectedPackaging.expected_weight === 'number') {
-        const calculatedWeight = parseFloat(formData.package_count) * selectedPackaging.expected_weight;
+      const expectedWeight = expectedWeightForSeeding(selectedPackaging, seeding, effectiveProducts);
+      if (expectedWeight != null) {
+        const calculatedWeight = parseFloat(formData.package_count) * expectedWeight;
         setFormData(prev => ({ ...prev, quantity: calculatedWeight.toFixed(2) }));
       } else {
         setFormData(prev => ({ ...prev, quantity: '' }));
@@ -78,7 +79,7 @@ export default function QuickActions({ seeding, varieties, onRefresh, pesticides
     } else if (actionType === 'harvest' && (!formData.package_count || !formData.packaging)) {
         setFormData(prev => ({ ...prev, quantity: '' }));
     }
-  }, [formData.package_count, formData.packaging, effectivePackagings, actionType]);
+  }, [formData.package_count, formData.packaging, effectivePackagings, effectiveProducts, seeding, actionType]);
 
   // Auto-recalculate pesticide quantities when area changes
   useEffect(() => {

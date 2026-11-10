@@ -23,7 +23,8 @@ export default function PackagingManager({ currentFarm }) {
     tare_weight: "",
     expected_weight: "",
     weighable: true,      // אריזה שקילה: נשקלת (ברוטו/טרה/נטו). לא שקילה: נספרת ביחידות בלבד
-    product_ids: []       // שיוך למוצרים; ריק = מתאימה לכל המוצרים
+    product_ids: [],      // שיוך למוצרים; ריק = מתאימה לכל המוצרים
+    product_weights: {}   // משקל נטו צפוי לפי מוצר { productId: ק"ג }; חסר = המשקל הכללי
   };
   const [formData, setFormData] = useState(initialFormData);
   const [products, setProducts] = useState([]);
@@ -76,7 +77,10 @@ export default function PackagingManager({ currentFarm }) {
       tare_weight: item.tare_weight?.toString() || "",
       expected_weight: item.expected_weight?.toString() || "",
       weighable: item.weighable !== false,
-      product_ids: Array.isArray(item.product_ids) ? item.product_ids : []
+      product_ids: Array.isArray(item.product_ids) ? item.product_ids : [],
+      product_weights: Object.fromEntries(
+        Object.entries(item.product_weights || {}).map(([id, w]) => [id, String(w)])
+      )
     });
     setIsDialogOpen(true);
   };
@@ -116,6 +120,11 @@ export default function PackagingManager({ currentFarm }) {
         expected_weight: formData.expected_weight ? parseFloat(formData.expected_weight) : null,
         weighable: formData.weighable !== false,
         product_ids: Array.isArray(formData.product_ids) ? formData.product_ids : [],
+        product_weights: Object.fromEntries(
+          Object.entries(formData.product_weights || {})
+            .map(([id, w]) => [id, parseFloat(w)])
+            .filter(([, w]) => w > 0)
+        ),
         farm_id: currentFarm.id
       };
 
@@ -208,7 +217,15 @@ export default function PackagingManager({ currentFarm }) {
                           {pack.weighable !== false ? 'שקילה' : 'יחידות'}
                         </span>
                       </TableCell>
-                      <TableCell>{pack.expected_weight ? `${pack.expected_weight} ק"ג` : '-'}</TableCell>
+                      <TableCell className="text-xs">
+                        {[
+                          pack.expected_weight ? `${pack.expected_weight} ק"ג` : null,
+                          ...Object.entries(pack.product_weights || {}).map(([id, w]) => {
+                            const name = products.find(p => p.id === id)?.name;
+                            return name ? `${name}: ${w}` : null;
+                          })
+                        ].filter(Boolean).join(' · ') || '-'}
+                      </TableCell>
                       <TableCell>{pack.weighable !== false ? `${pack.tare_weight} ק"ג` : '-'}</TableCell>
                       <TableCell className="font-medium">{pack.name}</TableCell>
                     </TableRow>
@@ -300,7 +317,7 @@ export default function PackagingManager({ currentFarm }) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="expected_weight">משקל נטו צפוי (ק"ג)</Label>
+                <Label htmlFor="expected_weight">משקל נטו צפוי כללי (ק"ג)</Label>
                 <Input
                   id="expected_weight"
                   type="number"
@@ -309,6 +326,37 @@ export default function PackagingManager({ currentFarm }) {
                   onChange={(e) => setFormData({ ...formData, expected_weight: e.target.value })}
                 />
               </div>
+
+              {(() => {
+                const weightProducts = formData.product_ids.length > 0
+                  ? products.filter(p => formData.product_ids.includes(p.id))
+                  : products;
+                if (weightProducts.length === 0) return null;
+                return (
+                  <div className="space-y-2">
+                    <Label>משקל צפוי לפי מוצר (ק"ג)</Label>
+                    <p className="text-xs text-gray-500 -mt-1">מוצר ללא משקל ישתמש במשקל הכללי</p>
+                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                      {weightProducts.map(p => (
+                        <div key={p.id} className="flex items-center gap-2">
+                          <span className="text-sm flex-1 truncate">{p.name}</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            className="w-24"
+                            aria-label={`משקל צפוי ${p.name}`}
+                            value={formData.product_weights[p.id] ?? ""}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              product_weights: { ...formData.product_weights, [p.id]: e.target.value }
+                            })}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <DialogFooter>

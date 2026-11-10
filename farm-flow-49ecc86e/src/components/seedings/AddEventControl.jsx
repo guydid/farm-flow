@@ -13,7 +13,7 @@ import { Activity, Harvest, Spraying, ActivityType, PlotSeeding, Plot, Packaging
 import PesticideSelector from "./PesticideSelector";
 import { format } from "date-fns";
 import SprayingForm from "./SprayingForm";
-import { packagingsForSeeding } from "@/lib/seedingFilters";
+import { packagingsForSeeding, expectedWeightForSeeding } from "@/lib/seedingFilters";
 import { useNavigate } from "react-router-dom";
 
 import { DateInput } from "@/components/ui/date-input";
@@ -154,8 +154,9 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
     // Auto-calculate weight for harvest
     if (eventType === 'harvest' && formData.package_count && formData.packaging) {
       const selectedPackaging = effectivePackagings.find(p => p && p.name === formData.packaging);
-      if (selectedPackaging && typeof selectedPackaging.expected_weight === 'number') {
-        const calculatedWeight = parseFloat(formData.package_count) * selectedPackaging.expected_weight;
+      const expectedWeight = expectedWeightForSeeding(selectedPackaging, seeding, effectiveProducts);
+      if (expectedWeight != null) {
+        const calculatedWeight = parseFloat(formData.package_count) * expectedWeight;
         setFormData(prev => ({ ...prev, quantity: calculatedWeight.toFixed(2), weight: calculatedWeight.toFixed(2) }));
       } else {
         setFormData(prev => ({ ...prev, quantity: '', weight: '' }));
@@ -163,7 +164,7 @@ export default function AddEventControl({ seeding, pesticides, onSuccess, onClos
     } else if (eventType === 'harvest' && (!formData.package_count || !formData.packaging)) {
         setFormData(prev => ({ ...prev, quantity: '', weight: '' }));
     }
-  }, [formData.package_count, formData.packaging, effectivePackagings, eventType]);
+  }, [formData.package_count, formData.packaging, effectivePackagings, effectiveProducts, seeding, eventType]);
 
 
   const resetForm = useCallback(() => {

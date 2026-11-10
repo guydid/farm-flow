@@ -19,6 +19,23 @@ export function varietiesForSeeding(seeding, varieties, { keepId } = {}) {
   return out;
 }
 
+// משקל נטו צפוי של אריזה למזרע: קודם המשקל שהוגדר למוצר מסוג הגידול של המזרע
+// (pkg.product_weights = { [productId]: kg }), ואם אין — המשקל הכללי של האריזה (expected_weight).
+export function expectedWeightForSeeding(pkg, seeding, products) {
+  if (!pkg) return null;
+  const norm = (v) => String(v || "").trim().toLowerCase();
+  const crop = norm(seeding?.crop_type);
+  const weights = pkg.product_weights && typeof pkg.product_weights === 'object' ? pkg.product_weights : {};
+  if (crop) {
+    for (const p of (Array.isArray(products) ? products : [])) {
+      const c = norm(p?.crop_type);
+      const w = parseFloat(weights[p?.id]);
+      if (c && (c === crop || c.includes(crop) || crop.includes(c)) && w > 0) return w;
+    }
+  }
+  return typeof pkg.expected_weight === 'number' ? pkg.expected_weight : null;
+}
+
 export function packagingsForSeeding(seeding, packagings, products, { keepName } = {}) {
   const all = (Array.isArray(packagings) ? packagings : [])
     .filter(p => p && (!seeding?.farm_id || !p.farm_id || p.farm_id === seeding.farm_id));
