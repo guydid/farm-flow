@@ -162,6 +162,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS auth_tokens (
   used_at TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 )`);
+// טוקן אימות מייל נושא את ה-hash של הסיסמה שנבחרה באותה הרשמה (מונע pre-hijack: מי שמחזיק בתיבה קובע את הסיסמה)
+try { db.exec('ALTER TABLE auth_tokens ADD COLUMN payload TEXT'); } catch (_) {}
 
 // דחיסת תשובות: ה-JSON עובר במנהרת Cloudflare עד הקצה, דחיסה מקצרת את הדרך
 app.use(compression({ threshold: 1024 }));
@@ -3108,11 +3110,13 @@ mailer.setFallbackSender({
 });
 
 // טוקן חד-פעמי למייל (אימות/איפוס) — נשמר רק ה-hash
-function issueAuthToken(userId, kind, ttlMs) {
-  db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND kind = ?').run(userId, kind);
+function issueAuthToken(userId, kind, ttlMs, payload = null) {
+  // טוקני אימות נשמרים במקביל (כל אחד עם הסיסמה של ההרשמה שלו) — כך הרשמה מאוחרת של אחר לא מבטלת
+  // את הקישור שבתיבה של הבעלים האמיתי. בשאר הסוגים — רק הטוקן האחרון תקף.
+  if (kind !== 'verify') db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND kind = ?').run(userId, kind);
   const raw = crypto.randomBytes(32).toString('base64url');
-  db.prepare('INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at) VALUES (?, ?, ?, ?, ?)')
-    .run(uuidv4(), userId, kind, sha256(raw), Date.now() + ttlMs);
+  db.prepare('INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at, payload) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(uuidv4(), userId, kind, sha256(raw), Date.now() + ttlMs, payload);
   return raw;
 }
 function consumeAuthToken(raw, kind) {
@@ -3123,8 +3127,8 @@ function consumeAuthToken(raw, kind) {
   return row;
 }
 
-async function sendVerificationEmail(user) {
-  const raw = issueAuthToken(user.id, 'verify', 48 * 3600 * 1000);
+async function sendVerificationEmail(user, passwordHash = null) {
+  const raw = issueAuthToken(user.id, 'verify', 48 * 3600 * 1000, passwordHash);
   const url = `${APP_BASE_URL}/login?verify=${encodeURIComponent(raw)}`;
   const { html, text } = mailer.renderEmail({
     title: 'אימות כתובת המייל',
@@ -3229,8 +3233,12 @@ app.post('/api/auth/register', registerLimiter, async (req, res) => {
 
   const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (existing) {
-    // לא חושפים אם המייל רשום: חשבון שלא אומת מקבל שוב מייל אימות, ובחשבון קיים — כלום
-    if (!existing.email_verified) await sendVerificationEmail(existing).catch(e => console.error('[auth] verify mail:', e.message));
+    // לא חושפים אם המייל רשום: חשבון שלא אומת מקבל שוב מייל אימות, ובחשבון קיים — כלום.
+    // הקישור נושא את הסיסמה של ההרשמה הזו; היא נקבעת רק כשלוחצים עליו מתוך התיבה.
+    if (!existing.email_verified) {
+      const hash = await bcrypt.hash(password, 12);
+      await sendVerificationEmail(existing, hash).catch(e => console.error('[auth] verify mail:', e.message));
+    }
     return res.json({ verify_required: true });
   }
 
@@ -3247,7 +3255,7 @@ app.post('/api/auth/register', registerLimiter, async (req, res) => {
 
   if (!needVerify) return res.json(loginPayload({ id: userId }));
   try {
-    await sendVerificationEmail({ id: userId, email, full_name });
+    await sendVerificationEmail({ id: userId, email, full_name }, password_hash);
   } catch (e) {
     console.error('[auth] verification email failed:', e.message);
     // בלי מייל אימות אין דרך להיכנס — לא משאירים משתמש ומשק יתומים; אפשר להירשם שוב
@@ -3260,6 +3268,14 @@ app.post('/api/auth/register', registerLimiter, async (req, res) => {
 app.post('/api/auth/verify-email', authEmailLimiter, (req, res) => {
   const row = consumeAuthToken(req.body?.token, 'verify');
   if (!row) return res.status(400).json({ error: 'Invalid or expired link', code: 'invalid_token' });
+  const before = db.prepare('SELECT email_verified FROM users WHERE id = ?').get(row.user_id);
+  if (before && !before.email_verified) {
+    // אימות ראשון: הסיסמה היא זו שנבחרה בהרשמה שהקישור שלה נלחץ. קישור בלי סיסמה (שליחה חוזרת)
+    // מנקה את הסיסמה — אולי נקבעה ע"י מי שרשם את המייל לפני הבעלים; נכנסים ובוחרים חדשה ב"שכחתי סיסמה".
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(row.payload || '', row.user_id);
+    db.prepare("DELETE FROM auth_tokens WHERE user_id = ? AND kind = 'verify'").run(row.user_id);
+    bumpTokenVersion(row.user_id);
+  }
   db.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?').run(NOW(), row.user_id);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
   if (!user || user.is_active === 0) return res.json({ success: true });
