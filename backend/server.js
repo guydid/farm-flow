@@ -419,7 +419,10 @@ function formatEntity(row) {
 //   פעילות "עקירה"  → end_date           (התאריך המאוחר ביותר)
 // נקרא אחרי כל יצירה/עדכון/מחיקה של activities או harvests.
 const PLANTING_TYPE_RE  = /שתיל|planting/i;
-const UPROOTING_TYPE_RE = /עקיר|uproot/i;
+// "עקירת עשבים" / "weed uprooting" הם עישוב, לא סיום הגידול
+const UPROOTING_TYPE_RE = /^(?!.*(עשב|weed)).*(עקיר|uproot)/i;
+// סטטוס מזרע נגזר מהפעילויות — מתקדם קדימה אוטומטית; חוזר אחורה רק אם הוא עצמו נקבע אוטומטית
+const SEEDING_STATUS_RANK = { ordered: 0, preparation: 1, growing: 2, harvesting: 3, uprooted: 4, archived: 5 };
 
 function syncSeedingDates(seedingId) {
   if (!seedingId) return;
@@ -454,6 +457,22 @@ function syncSeedingDates(seedingId) {
   }
   next.first_harvest_date = firstHarv;
   next.end_date = uprooting;
+
+  const derived = uprooting ? 'uprooted' : firstHarv ? 'harvesting' : planting ? 'growing' : null;
+  const cur = seed.status;
+  const rank = (st) => SEEDING_STATUS_RANK[st] ?? -1;
+  if (cur !== 'archived') {
+    if (derived && rank(cur) < rank(derived)) {
+      next.status = derived;
+      if (!seed.status_auto) next.status_before_auto = cur || null;
+      next.status_auto = true;
+    } else if (seed.status_auto && rank(derived) < rank(cur)) {
+      // הפעילות שקבעה את הסטטוס נמחקה → חוזרים לסטטוס הנגזר (או למה שהיה לפני האוטומציה)
+      const fallback = seed.status_before_auto || 'ordered';
+      next.status = derived && rank(derived) >= rank(fallback) ? derived : fallback;
+      if (rank(next.status) <= rank(fallback)) { delete next.status_auto; delete next.status_before_auto; }
+    }
+  }
 
   if (JSON.stringify(next) === JSON.stringify(seed)) return;
   // שדות נגזרים בלבד — לא מקדמים updated_at, כדי שקטיף/פעילות לא יופיעו גם כ"עדכון מזרע" בעדכונים האחרונים
@@ -2392,8 +2411,11 @@ async function refreshGmailAccessToken(farmId, conn) {
     err.oauthError = tokens.error || null;
     throw err;
   }
+  // Disconnected while the refresh was in flight → don't resurrect the connection.
+  const current = getGmailConnectionForUser(farmId, conn.user_id);
+  if (!current) return tokens.access_token;
   const updated = {
-    ...conn,
+    ...current,
     access_token_enc: encryptSecret(tokens.access_token),
     access_token_expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
   };
@@ -2921,7 +2943,12 @@ async function runGmailSync(farmId, conn, opts = {}) {
 
   // קוראים מחדש מה-DB ולא כותבים את conn המקורי: ensureGmailAccessToken אולי רענן טוקן
   // באמצע הריצה, וכתיבת העותק הישן הייתה דורסת אותו בטוקן שכבר פג.
-  const fresh = getGmailConnectionForUser(farmId, conn.user_id) || conn;
+  const fresh = getGmailConnectionForUser(farmId, conn.user_id);
+  // החיבור נותק באמצע הסנכרון → לא כותבים אותו מחדש (היה מחזיר את הטוקנים שנמחקו)
+  if (!fresh) {
+    console.log(`[gmail-sync] connection removed mid-sync farm=${farmId} — not saving state`);
+    return { scanned, saved, skipped, filedToEmployees };
+  }
   const updated = {
     ...fresh,
     last_sync_at: NOW(),
@@ -3669,6 +3696,8 @@ app.put('/api/admin/farms/:id/plan', authMiddleware, adminMiddleware, (req, res)
   if (plan === 'active') {
     data.plan = 'active';
   } else if (Number.isInteger(extend_days) && extend_days > 0 && extend_days <= 366) {
+    // הארכה חלה רק על משק בניסיון; העברת משק פעיל/ללא מסלול לניסיון — רק במפורש (plan:'trial')
+    if (data.plan !== 'trial' && plan !== 'trial') return res.status(400).json({ error: 'המשק אינו בתקופת ניסיון — אין מה להאריך', code: 'not_trial' });
     const base = Math.max(Date.now(), Date.parse(data.trial_ends_at || '') || 0);
     data.plan = 'trial';
     data.trial_ends_at = new Date(base + extend_days * 864e5).toISOString();
@@ -4036,17 +4065,32 @@ app.put('/api/farm-members/:id', authMiddleware, (req, res) => {
   if (!user.is_admin && !myMembership) return res.status(404).json({ error: 'Membership not found' });
   const isOwnerOrAdmin = user.is_admin || myMembership?.role === 'owner';
   const isManagerPlus = user.is_admin || ['owner', 'manager'].includes(myMembership?.role);
+  const ownerCount = db.prepare("SELECT COUNT(*) c FROM farm_members WHERE farm_id = ? AND role = 'owner'").get(membership.farm_id).c;
+  const isLastOwner = membership.role === 'owner' && ownerCount <= 1;
+  const LAST_OWNER_ERR = 'לא ניתן להסיר את הבעלים האחרון של המשק — מנה בעלים נוסף קודם';
 
+  // Validate everything before writing anything.
   if (role !== undefined) {
     if (!isOwnerOrAdmin) return res.status(403).json({ error: 'Only farm owners can change roles' });
     const validRoles = ['owner', 'manager', 'worker', 'viewer'];
     if (!validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    if (isLastOwner && role !== 'owner') return res.status(400).json({ error: LAST_OWNER_ERR });
+  }
+  if (field_worker !== undefined) {
+    if (!isManagerPlus) return res.status(403).json({ error: 'Forbidden' });
+    // Turning field-worker mode on demotes to 'worker' — a manager may only do that to workers/viewers.
+    if (field_worker && !isOwnerOrAdmin && ['owner', 'manager'].includes(membership.role)) {
+      return res.status(403).json({ error: 'רק בעלי המשק יכולים להעביר מנהל או בעלים למצב עובד שטח' });
+    }
+    if (field_worker && isLastOwner) return res.status(400).json({ error: LAST_OWNER_ERR });
+  }
+
+  if (role !== undefined) {
     db.prepare('UPDATE farm_members SET role = ? WHERE id = ?').run(role, id);
     membership.role = role;
   }
 
   if (field_worker !== undefined) {
-    if (!isManagerPlus) return res.status(403).json({ error: 'Forbidden' });
     const others = db.prepare('SELECT COUNT(*) c FROM farm_members WHERE user_id = ? AND farm_id != ?').get(membership.user_id, membership.farm_id).c;
     const target = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(membership.user_id);
     if (field_worker && (others > 0 || target?.is_admin) && !user.is_admin) {
@@ -4078,6 +4122,10 @@ app.delete('/api/farm-members/:id', authMiddleware, (req, res) => {
   if (!user.is_admin && !isSelf) {
     const myMembership = getFarmMember(membership.farm_id, req.user.id);
     if (!myMembership || myMembership.role !== 'owner') return res.status(403).json({ error: 'Only farm owners can remove members' });
+  }
+  if (membership.role === 'owner') {
+    const owners = db.prepare("SELECT COUNT(*) c FROM farm_members WHERE farm_id = ? AND role = 'owner'").get(membership.farm_id).c;
+    if (owners <= 1) return res.status(400).json({ error: 'לא ניתן להסיר את הבעלים האחרון של המשק — מנה בעלים נוסף קודם, או מחק את המשק' });
   }
 
   // Remove farm from user's farm_ids
@@ -4552,7 +4600,11 @@ app.put('/api/pesticide-prices', authMiddleware, (req, res) => {
 
 // רכש ומכירות: הזמנות ותעודות משלוח (procurement.js). נרשם לפני הראוטים הגנריים /api/:entity
 const procurement = require('./procurement').registerProcurementRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4 });
-require('./mcp')(app, { farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
+// מכונות מצב בבעלות השרת — הראוטים הגנריים ו-MCP לא קופצים מצבים (stateGuards.js)
+const { makeStateGuards, GuardError } = require('./stateGuards');
+const stateGuards = makeStateGuards({ procurement, NOW });
+const guardFail = (res, e) => { if (e instanceof GuardError) { res.status(e.status).json({ error: e.message }); return true; } throw e; };
+require('./mcp')(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
@@ -4659,7 +4711,8 @@ async function attendanceAlertTick() {
       try {
         const { absentees } = runAttendanceAbsenceCheck(row.farm_id);
         const res = await dispatchAbsenceAlert(row.farm_id, cfg, absentees, today);
-        const full = { ...getAttnAlertConfig(row.farm_id), ...cfg, last_run_date: today, last_run_at: NOW(), last_absentees: absentees.map(a => a.name) };
+        // מיזוג על הקונפיג העדכני (לא על העותק מתחילת הריצה) — כדי לא לדרוס שמירה שבוצעה בינתיים
+        const full = { ...getAttnAlertConfig(row.farm_id), last_run_date: today, last_run_at: NOW(), last_absentees: absentees.map(a => a.name) };
         saveAttnAlertConfig(row.farm_id, full);
         console.log(`[attn-alert] farm=${row.farm_id} absentees=${absentees.length} inApp=${res.in_app}`);
       } catch (err) {
@@ -4769,7 +4822,11 @@ app.post('/api/attendance/check-absences', authMiddleware, async (req, res) => {
   const cfg = getAttnAlertConfig(farmId);
   const result = runAttendanceAbsenceCheck(farmId);
   let dispatched = { in_app: false };
-  if (req.body?.notify) dispatched = await dispatchAbsenceAlert(farmId, cfg, result.absentees, result.today);
+  if (req.body?.notify) {
+    dispatched = await dispatchAbsenceAlert(farmId, cfg, result.absentees, result.today);
+    // התראה ידנית נחשבת כריצת היום — המתזמן לא ישלח שוב את אותה התראה
+    if (dispatched.in_app) saveAttnAlertConfig(farmId, { ...getAttnAlertConfig(farmId), last_run_date: result.today, last_run_at: NOW(), last_absentees: result.absentees.map(a => a.name) });
+  }
   res.json({ ...result, dispatched });
 });
 
@@ -5149,6 +5206,11 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
     for (const item of req.body) {
       if (item && item.id != null && (!cleanId(item.id) || idTaken(item.id))) return res.status(409).json({ error: 'Record id already exists' });
     }
+    const guardOpts = { isAdmin: !!user.is_admin, via: 'rest', by: user.full_name || user.email };
+    const prepared = new Map();
+    try {
+      for (const item of req.body) if (item && typeof item === 'object') prepared.set(item, stateGuards.onCreate(entity, item, guardOpts));
+    } catch (e) { if (guardFail(res, e)) return; }
     const now = NOW();
     const ins = db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
     const ids = [];
@@ -5158,7 +5220,7 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
           if (!item || typeof item !== 'object') continue;
           const id = cleanId(item.id) || uuidv4();
           const farm_id = item.farm_id || user.current_farm_id;
-          const data = { ...item, _by: user.full_name || user.email };
+          const data = { ...prepared.get(item), _by: user.full_name || user.email };
           ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
           ins.run(id, entity, farm_id, JSON.stringify(data), now, now);
           ids.push(id);
@@ -5199,7 +5261,9 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
   }
 
   // _by — מי יצר/עדכן אחרון (מוצג ב"עדכונים אחרונים")
-  const data = { ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
+  let data;
+  try { data = stateGuards.onCreate(entity, { ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) }, { isAdmin: !!user.is_admin, via: 'rest', by: user.full_name || user.email }); }
+  catch (e) { if (guardFail(res, e)) return; }
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
   if (entity === 'farms') {
     data.owner_id = user.id;
@@ -5251,11 +5315,17 @@ app.patch('/api/:entity', authMiddleware, (req, res) => {
 
   const now = NOW();
   const upd = db.prepare('UPDATE entities SET data=?, updated_at=? WHERE entity_type=? AND id=?');
+  const guardOpts = { isAdmin: !!user.is_admin, via: 'rest', by: user.full_name || user.email };
+  const prepared = new Map();
+  try {
+    for (const item of items) {
+      let existing; try { existing = JSON.parse(byId.get(item.id).data || '{}'); } catch { existing = {}; }
+      prepared.set(item, stateGuards.onUpdate(entity, existing, { ...existing, ...item, _by: guardOpts.by }, guardOpts));
+    }
+  } catch (e) { if (guardFail(res, e)) return; }
   db.transaction(() => {
     for (const item of items) {
-      const row = byId.get(item.id);
-      let existing; try { existing = JSON.parse(row.data || '{}'); } catch { existing = {}; }
-      const updated = { ...existing, ...item, _by: user.full_name || user.email };
+      const updated = prepared.get(item);
       ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
       upd.run(JSON.stringify(updated), now, entity, item.id);
       if (entity === 'activities' || entity === 'harvests') syncSeedingDates(updated.seeding_id);
@@ -5286,7 +5356,9 @@ app.put('/api/:entity/:id', authMiddleware, (req, res) => {
   }
 
   const existing = JSON.parse(row.data || '{}');
-  const updated = { ...existing, ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
+  let updated;
+  try { updated = stateGuards.onUpdate(entity, existing, { ...existing, ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) }, { isAdmin: !!user.is_admin, via: 'rest', by: user.full_name || user.email }); }
+  catch (e) { if (guardFail(res, e)) return; }
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
   if (entity === 'farms') {
     updated.owner_id = existing.owner_id; // הבעלות לא משתנה דרך עריכה
@@ -5324,6 +5396,11 @@ app.delete('/api/:entity/:id', authMiddleware, (req, res) => {
   } else if (!canDeleteRole(roleOf(row.farm_id, req.user.id))) {
     return res.status(403).json({ error: 'Insufficient permissions to delete' });
   }
+
+  let rowData = {}; try { rowData = JSON.parse(row.data || '{}'); } catch { rowData = {}; }
+  try {
+    if (stateGuards.onDelete(entity, row, rowData, { isAdmin: !!user.is_admin, by: user.full_name || user.email })) return res.json({ success: true });
+  } catch (e) { if (guardFail(res, e)) return; }
 
   // מחיקת חשבונית שיובאה מ-Gmail רושמת tombstone, כדי שסנכרון עתידי לא יחזיר אותה
   if (entity === 'invoices') {

@@ -102,7 +102,7 @@ const KNOWN_FIELDS = {
 };
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
+module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
   const knownFields = (entity) => KNOWN_FIELDS[entity] || (procurement && procurement.KNOWN_FIELDS[entity]) || [];
   const agentBy = (ctx) => `סוכן: ${ctx.tokenName}`;
   db.exec(`
@@ -991,8 +991,9 @@ module.exports = function mountMcp(app, { farmTrialExpired, db, listEntities, fo
         if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
         if (PROCUREMENT_ENTITIES.includes(args.entity)) return procurementCreate(ctx, args.entity, args.data);
         const id = uuidv4();
-        const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, args.data)
-          : args.entity === 'employee_events' ? validateEmployeeEvent(ctx, args.data) : args.data), _by: `סוכן: ${ctx.tokenName}` };
+        const guarded = stateGuards ? stateGuards.onCreate(args.entity, args.data, { isAdmin: false, via: 'mcp', by: `סוכן: ${ctx.tokenName}` }) : args.data;
+        const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, guarded)
+          : args.entity === 'employee_events' ? validateEmployeeEvent(ctx, guarded) : guarded), _by: `סוכן: ${ctx.tokenName}` };
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
         const now = NOW();
         db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -1015,6 +1016,7 @@ module.exports = function mountMcp(app, { farmTrialExpired, db, listEntities, fo
         }
         if (PROCUREMENT_ENTITIES.includes(args.entity)) return procurementUpdate(ctx, args.entity, row.id, existing, args.data);
         let updated = { ...existing, ...args.data, _by: `סוכן: ${ctx.tokenName}` };
+        if (stateGuards) updated = stateGuards.onUpdate(args.entity, existing, updated, { isAdmin: false, via: 'mcp', by: `סוכן: ${ctx.tokenName}` });
         ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
         if (args.entity === 'employee_events') updated = { ...validateEmployeeEvent(ctx, updated), created_by: existing.created_by || '' };
         if (args.entity === 'pesticide_stock') updated = { ...validateStockMovement(ctx, updated), created_by: existing.created_by || '', updated_by: `סוכן: ${ctx.tokenName}`, _by: `סוכן: ${ctx.tokenName}` };

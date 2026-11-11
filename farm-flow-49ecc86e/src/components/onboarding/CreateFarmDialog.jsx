@@ -6,9 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
-import { Farm, User, Subscription, CompanySettings } from '@/entities/all';
+import { Farm, User, CompanySettings } from '@/entities/all';
 import { Loader2 } from 'lucide-react';
-import { addYears, format } from 'date-fns';
 
 export default function CreateFarmDialog({ open, onClose, onSuccess }) {
   const { toast } = useToast();
@@ -83,31 +82,7 @@ export default function CreateFarmDialog({ open, onClose, onSuccess }) {
         // Not critical, continue
       }
 
-      // Step 3: Create trial subscription
-      const today = new Date();
-      const trialEndDate = addYears(today, 1); // 1 year trial
-      
-      try {
-        await Subscription.create({
-          farm_id: newFarm.id,
-          plan_type: 'basic',
-          plan_name: 'בסיסי',
-          status: 'trial',
-          start_date: format(today, 'yyyy-MM-dd'),
-          end_date: format(trialEndDate, 'yyyy-MM-dd'),
-          trial_end_date: format(trialEndDate, 'yyyy-MM-dd'),
-          annual_price: 0, // Free during trial
-          max_plots: 5,
-          max_employees: 10,
-          max_seedings: 20,
-          features: ["מעקב חלקות", "ניהול עובדים", "מעקב מזרעים", "דוחות בסיסיים"],
-          auto_renewal: false
-        });
-        console.log('Trial subscription created');
-      } catch (subscriptionError) {
-        console.warn('Failed to create subscription:', subscriptionError);
-        // Not critical, continue
-      }
+      // תקופת הניסיון נקבעת בשרת על המשק עצמו (farm.plan / trial_ends_at)
 
       // Step 4: Update user's farm list and set as current farm
       const updatedFarmIds = [...(currentUser.farm_ids || []), newFarm.id];

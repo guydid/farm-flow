@@ -115,12 +115,25 @@ function registerLeaseRoutes(app, deps) {
     res.json({ ok: true, reading: getRow('meter_readings', readingId, ctx.farmId), payment, consumption, amount });
   });
 
+  // In-process locks: the read-check-await-write sequences below must not interleave (single Node process).
+  const inflight = new Set();
+  const withLock = (key, res, fn) => {
+    if (inflight.has(key)) return res.status(409).json({ error: 'הפעולה כבר מתבצעת — נסה שוב בעוד רגע' });
+    inflight.add(key);
+    return Promise.resolve().then(fn).finally(() => inflight.delete(key));
+  };
+
   // ── mark a payment paid / unpaid ──
   app.post('/api/lease-payments/:id/pay', authMiddleware, (req, res) => {
     const ctx = ctxOf(req, res, { write: true }); if (!ctx) return;
     const p = getRow('lease_payments', req.params.id, ctx.farmId);
     if (!p) return res.status(404).json({ error: 'תשלום לא נמצא' });
     const { paid = true, paid_date, paid_amount, method, reference, notes } = req.body || {};
+    if (p.status === 'cancelled') return res.status(400).json({ error: 'החיוב בוטל' });
+    if (!paid && p.invoice_id) {
+      const inv = getRow('lease_invoices', p.invoice_id, ctx.farmId);
+      if (inv && inv.status === 'paid') return res.status(400).json({ error: `החיוב שולם דרך חשבונית ${inv.number} — כדי לבטל, בטל את החשבונית` });
+    }
     const patch = paid
       ? { status: 'paid', paid_date: (paid_date || today()).slice(0, 10), paid_amount: round2(paid_amount ?? p.amount), method: method || p.method || null, reference: reference || p.reference || null, notes: notes ?? p.notes ?? '', paid_by: ctx.by }
       : { status: p.due_date < today() ? 'overdue' : 'due', paid_date: null, paid_amount: null, paid_by: null };
@@ -195,6 +208,9 @@ function registerLeaseRoutes(app, deps) {
 
   app.post('/api/leases/:id/invoice', authMiddleware, async (req, res) => {
     const ctx = ctxOf(req, res, { write: true }); if (!ctx) return;
+    return withLock(`lease-invoice:${ctx.farmId}`, res, () => issueInvoice(req, res, ctx));
+  });
+  async function issueInvoice(req, res, ctx) {
     const lease = getRow('leases', req.params.id, ctx.farmId);
     if (!lease) return res.status(404).json({ error: 'הסכם לא נמצא' });
     if (lease.direction !== 'receive') return res.status(400).json({ error: 'חשבוניות מופקות רק להסכמים שבהם המשק משכיר' });
@@ -242,13 +258,17 @@ function registerLeaseRoutes(app, deps) {
     }
     console.log(`[leases] farm=${ctx.farmId} invoice ${number} lease=${lease.id} rows=${rows.length} total=${t.total} maven=${!!mavenDoc}`);
     res.json({ ok: true, invoice: getRow('lease_invoices', invId, ctx.farmId) });
-  });
+  }
 
   app.post('/api/lease-invoices/:id/pay', authMiddleware, async (req, res) => {
     const ctx = ctxOf(req, res, { write: true }); if (!ctx) return;
+    return withLock(`lease-inv:${req.params.id}`, res, () => payInvoice(req, res, ctx));
+  });
+  async function payInvoice(req, res, ctx) {
     const inv = getRow('lease_invoices', req.params.id, ctx.farmId);
     if (!inv) return res.status(404).json({ error: 'חשבונית לא נמצאה' });
     if (inv.status === 'paid') return res.status(400).json({ error: 'החשבונית כבר שולמה' });
+    if (inv.status === 'cancelled') return res.status(400).json({ error: 'החשבונית בוטלה — לא ניתן לסמן אותה כשולמה' });
     const { paid_date, method, reference, issue_receipt } = req.body || {};
     const date = (paid_date || today()).slice(0, 10);
     // Maven דוחה תאריכים עתידיים → תאריך המסמך/התשלום בקבלה לא יעבור את היום
@@ -272,13 +292,15 @@ function registerLeaseRoutes(app, deps) {
     }
     const updated = updateRow(inv.id, { status: 'paid', paid_at: NOW(), paid_date: date, method: method || null, reference: reference || null, receipt });
     res.json({ ok: true, invoice: { ...updated, id: inv.id } });
-  });
+  }
 
   // cancel an internal (non-Maven) invoice: releases its payments
   app.post('/api/lease-invoices/:id/cancel', authMiddleware, (req, res) => {
     const ctx = ctxOf(req, res, { write: true }); if (!ctx) return;
     const inv = getRow('lease_invoices', req.params.id, ctx.farmId);
     if (!inv) return res.status(404).json({ error: 'חשבונית לא נמצאה' });
+    if (inv.status === 'cancelled') return res.status(400).json({ error: 'החשבונית כבר בוטלה' });
+    if (inflight.has(`lease-inv:${inv.id}`)) return res.status(409).json({ error: 'החשבונית בתהליך תשלום — נסה שוב בעוד רגע' });
     if (inv.maven && !inv.maven.test) return res.status(400).json({ error: 'חשבונית שהופקה ב-Maven מבוטלת רק דרך Maven (חשבונית זיכוי)' });
     for (const pid of inv.payment_ids || []) { const p = getRow('lease_payments', pid, ctx.farmId); if (p) updateRow(pid, { invoice_id: null, invoice_no: null, ...(inv.status === 'paid' ? { status: p.due_date < today() ? 'overdue' : 'due', paid_date: null, paid_amount: null } : {}) }); }
     updateRow(inv.id, { status: 'cancelled', cancelled_at: NOW() });
@@ -308,13 +330,18 @@ function registerLeaseRoutes(app, deps) {
           const days = Math.round((Date.parse(p.due_date) - Date.parse(t)) / 86400000);
           const before = Number(lease.reminder_days_before ?? 7);
           const sent = Array.isArray(p.reminders_sent) ? p.reminders_sent : [];
+          // חלונות ולא ימים מדויקים: אם השרת היה למטה ביום התזכורת, היא נשלחת בריצה הבאה (פעם אחת לכל סוג)
+          const sentOf = (b) => sent.filter(x => x.startsWith(`${b}:`)).map(x => x.slice(b.length + 1)).sort();
           let bucket = null;
-          if (days === before && before > 0) bucket = 'soon';
-          else if (days === 0) bucket = 'today';
-          // באיחור: תזכורת ראשונה מיד (אם טרם נשלחה), ואחר כך אחת לשבוע
-          else if (days < 0 && ((-days) % 7 === 0 || !sent.some(x => x.startsWith('overdue:')))) bucket = 'overdue';
+          if (days > 0 && before > 0 && days <= before && !sentOf('soon').length) bucket = 'soon';
+          else if (days === 0 && !sentOf('today').length) bucket = 'today';
+          else if (days < 0) {
+            // באיחור: תזכורת ראשונה מיד, ואחר כך אחת לשבוע ממועד התזכורת הקודמת
+            const last = sentOf('overdue').slice(-1)[0];
+            if (!last || Math.round((Date.parse(t) - Date.parse(last)) / 86400000) >= 7) bucket = 'overdue';
+          }
           if (days < 0 && p.status !== 'overdue') updateRow(p.id, { status: 'overdue' });
-          if (!bucket || sent.includes(`${bucket}:${t}`)) continue;
+          if (!bucket) continue;
           const who = lease.counterparty_name ? ` (${lease.counterparty_name})` : '';
           lines[bucket].push(`${p.direction === 'receive' ? 'לקבל' : 'לשלם'} ₪${Number(p.amount).toLocaleString('he-IL')} · ${p.description || KINDS[p.kind] || ''} · ${lease.title}${who}${days < 0 ? ` · באיחור ${-days} ימים` : ''}`);
           updateRow(p.id, { reminders_sent: [...sent, `${bucket}:${t}`].slice(-30) });

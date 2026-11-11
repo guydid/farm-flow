@@ -418,8 +418,18 @@ function registerMavenRoutes(app, deps) {
     res.json({ customer: body.customer, items: body.items, total: round2(total), document_date: body.document_date, description: body.description, vat_included: body.vat_included, no_vat: !!body.no_vat, exempt_lines: body.items.filter(l => l.no_vat && l.price > 0).length, equipment_lines: body._equipment_lines || 0, test_mode: cfg.test_mode !== false, issued: cert.maven_documents || [] });
   });
 
+  // Per-record lock: one Maven document request per certificate / delivery note at a time,
+  // so a double-click can't issue two real documents before the first one is recorded.
+  const mavenInflight = new Set();
+  const lockMaven = (key, res) => {
+    if (mavenInflight.has(key)) { res.status(409).json({ error: 'מסמך כבר מופק לרשומה זו — המתן לסיום', code: 'in_progress' }); return false; }
+    mavenInflight.add(key); res.on('finish', () => mavenInflight.delete(key)); res.on('close', () => mavenInflight.delete(key));
+    return true;
+  };
+
   app.post('/api/integrations/maven/document', authMiddleware, async (req, res) => {
     const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
+    if (!lockMaven(`cert:${String(req.body?.certificate_id || '')}`, res)) return;
     const cfg = loadConfig(ctx.farmId);
     if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה עם Maven אינה מופעלת במשק זה' });
     const { certificate_id, doc_type, send_to_customer, remarks, vat_included, force, no_vat } = req.body || {};
@@ -440,7 +450,8 @@ function registerMavenRoutes(app, deps) {
         pdf_original: r.pdf_original || null, pdf_copy: r.pdf_copy || null, allocation_number: r.allocation_number || null,
         test: cfg.test_mode !== false, issued_at: NOW(), by: ctx.user.full_name || ctx.user.email, total: round2(body.items.reduce((s, l) => s + l.price * l.quantity, 0)),
       };
-      const patch = { maven_documents: [...(cert.maven_documents || []), entry] };
+      const fresh = rowsOf('weighing_certificates', ctx.farmId).find(c => c.id === cert.id) || cert;
+      const patch = { maven_documents: [...(fresh.maven_documents || []), entry] };
       if (docType === 200 && !entry.test) { patch.delivery_note_issued = true; patch.delivery_note_date = NOW().slice(0, 10); }
       updateRow(cert.id, patch);
       console.log(`[maven] farm=${ctx.farmId} cert=${cert.id} issued ${docType} doc_no=${entry.doc_no} test=${entry.test}`);
@@ -486,6 +497,7 @@ function registerMavenRoutes(app, deps) {
 
   app.post('/api/integrations/maven/note-document', authMiddleware, async (req, res) => {
     const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
+    if (!lockMaven(`note:${String(req.body?.delivery_note_id || '')}`, res)) return;
     const cfg = loadConfig(ctx.farmId);
     if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה עם Maven אינה מופעלת במשק זה' });
     const { delivery_note_id, doc_type, send_to_customer, remarks, vat_included, force, no_vat } = req.body || {};
@@ -506,17 +518,18 @@ function registerMavenRoutes(app, deps) {
         pdf_original: r.pdf_original || null, pdf_copy: r.pdf_copy || null, allocation_number: r.allocation_number || null,
         test: cfg.test_mode !== false, issued_at: NOW(), by, total: round2(body.items.reduce((s, l) => s + l.price * l.quantity, 0)),
       };
-      const patch = { maven_documents: [...(note.maven_documents || []), entry], _by: by };
-      const history = [...(note.history || []), { at: NOW(), by, action: 'maven', doc_type: docType, doc_no: entry.doc_no, test: entry.test, note: `${entry.test ? 'בדיקה: ' : ''}${DOC_TYPES[docType]}${entry.doc_no ? ` מס' ${entry.doc_no}` : ''} ב-Invoice Maven` }];
+      const cur = rowsOf('delivery_notes', ctx.farmId).find(n => n.id === note.id) || note;
+      const patch = { maven_documents: [...(cur.maven_documents || []), entry], _by: by };
+      const history = [...(cur.history || []), { at: NOW(), by, action: 'maven', doc_type: docType, doc_no: entry.doc_no, test: entry.test, note: `${entry.test ? 'בדיקה: ' : ''}${DOC_TYPES[docType]}${entry.doc_no ? ` מס' ${entry.doc_no}` : ''} ב-Invoice Maven` }];
       // חשבונית אמיתית ללקוח = התעודה חויבה
-      if (docType !== 200 && !entry.test && note.status !== 'invoiced') {
+      if (docType !== 200 && !entry.test && cur.status !== 'invoiced') {
         patch.status = 'invoiced';
-        history.push({ at: NOW(), by, action: 'status', from: note.status, to: 'invoiced', note: `חשבונית מס' ${entry.doc_no} ב-Maven` });
+        history.push({ at: NOW(), by, action: 'status', from: cur.status, to: 'invoiced', note: `חשבונית מס' ${entry.doc_no} ב-Maven` });
       }
       patch.history = history;
       updateRow(note.id, patch);
       console.log(`[maven] farm=${ctx.farmId} delivery_note=${note.id} issued ${docType} doc_no=${entry.doc_no} test=${entry.test}`);
-      res.json({ ok: true, document: entry, status: patch.status || note.status, warnings: [r.allocation_warning, r.payment_link_warning].filter(Boolean) });
+      res.json({ ok: true, document: entry, status: patch.status || cur.status, warnings: [r.allocation_warning, r.payment_link_warning].filter(Boolean) });
     } catch (e) {
       console.error('[maven] addDocument (delivery note) failed:', e.message);
       res.status(422).json({ ok: false, error: e.message, code: e.code || null });

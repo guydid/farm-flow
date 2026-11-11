@@ -217,10 +217,10 @@ function makeProcurementCore({ db, uuidv4, NOW }) {
     const total_amount = round2(items.reduce((s, it) => s + lineTotal(it), 0));
     const patch = { total_amount };
     let next = order.status;
-    if (!['draft', 'cancelled', 'invoiced'].includes(order.status)) {
+    if (!['draft', 'cancelled'].includes(order.status)) {
       if (allDelivered && anyDelivered) next = 'delivered';
       else if (anyDelivered) next = 'partially_delivered';
-      else if (order.status === 'partially_delivered' || order.status === 'delivered') next = 'ordered';
+      else if (['partially_delivered', 'delivered', 'invoiced'].includes(order.status)) next = 'ordered';
       if (next === 'delivered' && received.length && received.every(n => n.status === 'invoiced')) next = 'invoiced';
     }
     const history = [...(order.history || [])];
@@ -253,6 +253,14 @@ function makeProcurementCore({ db, uuidv4, NOW }) {
       created.push({ item_id: it.id, product_name: it.product_name, quantity: it.quantity, unit: it.unit, stock_movement_id: mid });
     }
     return created;
+  }
+
+  // ביטול תנועות המלאי שנוצרו מתעודה (לפני החלפת שורות / כשהתעודה יוצאת ממצב "התקבל"), כדי שלא ייספרו פעמיים
+  function revertStock(farmId, noteId) {
+    const rows = db.prepare("SELECT id FROM entities WHERE entity_type = 'pesticide_stock' AND farm_id = ? AND json_extract(data, '$.delivery_note_id') = ?").all(farmId, noteId);
+    for (const r of rows) deleteRow('pesticide_stock', r.id);
+    for (const it of itemsOfNote(farmId, noteId)) if (it.stock_movement_id) updateRow('delivery_note_items', it.id, { stock_movement_id: null });
+    return rows.length;
   }
 
   // תעודה יוצאת → תעודות שקילה של אותו לקוח באותו יום (או מזהים שנמסרו)
@@ -345,18 +353,25 @@ function makeProcurementCore({ db, uuidv4, NOW }) {
     }
     const history = [...(note.history || [])];
     let status = note.status;
+    const finalInvoiceId = p.invoice_id !== undefined ? (p.invoice_id || null) : (note.invoice_id || null);
+    const hasRealMavenInvoice = (note.maven_documents || []).some(d => Number(d.doc_type) !== 200 && !d.test);
     if (patch.status !== undefined && patch.status !== note.status) {
       if (!DN_STATUSES.includes(patch.status)) fail(`status חייב להיות אחד מ: ${DN_STATUSES.join(', ')}`);
+      if (patch.status === 'invoiced' && !finalInvoiceId && !hasRealMavenInvoice) fail('לסימון "חויבה" נדרש invoice_id (חשבונית מקושרת)');
       status = patch.status;
       history.push(audit(by, 'status', { from: note.status, to: status, ...(patch.status_note ? { note: String(patch.status_note) } : {}) }));
     } else if (p.invoice_id && !note.invoice_id && note.status !== 'expected' && note.status !== 'invoiced') {
       status = 'invoiced'; history.push(audit(by, 'status', { from: note.status, to: status, note: 'קושרה חשבונית' }));
+    } else if (p.invoice_id === null && note.invoice_id && note.status === 'invoiced' && !hasRealMavenInvoice) {
+      status = 'received'; history.push(audit(by, 'status', { from: note.status, to: status, note: 'הוסר קישור לחשבונית' }));
     }
     if (Object.keys(p).length) history.push(audit(by, 'updated', { fields: Object.keys(p) }));
+    const leftReceived = DN_RECEIVED.has(note.status) && !DN_RECEIVED.has(status);
     updateRow('delivery_notes', noteId, { ...p, status, history, _by: by });
+    if (Array.isArray(patch.items) || leftReceived) revertStock(farmId, noteId);
     if (Array.isArray(patch.items)) {
       const order = getRow('orders', p.order_id ?? note.order_id, farmId);
-      let items = normalizeItems(farmId, patch.items);
+      let items = normalizeItems(farmId, patch.items).map(({ stock_movement_id, ...it }) => it);
       if (order) items = matchItemsToOrder(farmId, itemsOfOrder(farmId, order.id), items);
       for (const old of itemsOfNote(farmId, noteId)) deleteRow('delivery_note_items', old.id);
       items.forEach((it, i) => insertRow('delivery_note_items', farmId, { ...it, delivery_note_id: noteId, line_no: i + 1, _by: by }));
@@ -525,6 +540,42 @@ function makeProcurementCore({ db, uuidv4, NOW }) {
       ...(hits.length && hits.length <= 5 ? { combinations: hits.map(m => candidates.filter((_, i) => m & (1 << i)).map(c => c.id)) } : {}) };
   }
 
+  // חשבונית נמחקה → משחררים את תעודות המשלוח שקושרו אליה (אחרת נשארות "חויבה" עם קישור יתום)
+  function unlinkInvoice(farmId, by, invoiceId) {
+    const touchedOrders = new Set();
+    for (const n of rowsOf('delivery_notes', farmId).filter(x => x.invoice_id === invoiceId)) {
+      const realMaven = (n.maven_documents || []).some(d => Number(d.doc_type) !== 200 && !d.test);
+      const status = n.status === 'invoiced' && !realMaven ? 'received' : n.status;
+      updateRow('delivery_notes', n.id, { invoice_id: null, invoice_number: null, status, history: [...(n.history || []), audit(by, 'status', { from: n.status, to: status, note: 'החשבונית המקושרת נמחקה' })], _by: by });
+      if (n.order_id) touchedOrders.add(n.order_id);
+    }
+    for (const oid of touchedOrders) recomputeOrder(farmId, by, oid);
+  }
+
+  // מחיקת תעודת משלוח: גם השורות, תנועות המלאי שיצרה, ועדכון ההזמנה
+  function deleteDeliveryNote(farmId, by, noteId) {
+    const note = getRow('delivery_notes', noteId, farmId);
+    if (!note) return false;
+    revertStock(farmId, noteId);
+    for (const it of itemsOfNote(farmId, noteId)) deleteRow('delivery_note_items', it.id);
+    deleteRow('delivery_notes', noteId);
+    if (note.order_id) recomputeOrder(farmId, by, note.order_id);
+    return true;
+  }
+
+  // מחיקת הזמנה: השורות נמחקות, תעודות המשלוח נשארות אך מאבדות את הקישור
+  function deleteOrder(farmId, by, orderId) {
+    const order = getRow('orders', orderId, farmId);
+    if (!order) return false;
+    for (const it of itemsOfOrder(farmId, orderId)) deleteRow('order_items', it.id);
+    for (const n of notesOfOrder(farmId, orderId)) {
+      updateRow('delivery_notes', n.id, { order_id: null, order_number: null, history: [...(n.history || []), audit(by, 'updated', { note: `ההזמנה ${order.order_number} נמחקה` })] });
+      for (const it of itemsOfNote(farmId, n.id)) if (it.order_item_id) updateRow('delivery_note_items', it.id, { order_item_id: null });
+    }
+    deleteRow('orders', orderId);
+    return true;
+  }
+
   function summary(farmId) {
     const t = today();
     const open = listOpenOrders(farmId, {});
@@ -586,6 +637,7 @@ function makeProcurementCore({ db, uuidv4, NOW }) {
     getRow, rowsOf, fullOrder, fullNote,
     createOrder, addOrderItems, updateOrderStatus, updateOrder, recomputeOrder,
     createDeliveryNote, updateDeliveryNote, addDeliveryNoteItems,
+    unlinkInvoice, deleteDeliveryNote, deleteOrder,
     listOpenOrders, listExpectedDeliveries, findDiscrepancies, matchInvoiceToDeliveryNotes, summary,
   };
 }

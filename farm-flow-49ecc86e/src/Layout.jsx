@@ -5,7 +5,7 @@ import { createPageUrl } from "@/utils";
 import { LayoutDashboard, Users, Menu, X, Sprout, Settings, Map, SlidersHorizontal, Layers, Users2, Building, Truck, ShieldCheck, Clock, FileText, Bug, KeyRound, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Subscription, Vehicle } from "@/entities/all";
+import { User, CompanySettings, Employee, PlasticSheet, Seeding, Farm, Vehicle } from "@/entities/all";
 import { getMeCached, getFarmCached } from "@/api/cachedReads";
 import { useVersionCheck, formatVersion } from "@/lib/appVersion";
 import { batchFetch } from "@/api/localClient";
@@ -58,13 +58,12 @@ export default function Layout({ children, currentPageName }) {
     try {
       // Fetch all notification sources in parallel (was 5 serial round-trips)
       // בקשת רשת אחת במקום חמש (כל סבב דרך Cloudflare עולה ~0.4 שנ')
-      const [employees, sheets, seedings, vehicles, subscriptions] = await batchFetch([
+      const [employees, sheets, seedings, vehicles] = await batchFetch([
         { entity: 'employees', filter: { farm_id: currentFarm.id } },
         { entity: 'plastic_sheets', filter: { farm_id: currentFarm.id } },
         { entity: 'seedings', filter: { farm_id: currentFarm.id, status: 'ordered' } },
         { entity: 'vehicles', filter: { farm_id: currentFarm.id } },
-        { entity: 'subscriptions', filter: { farm_id: currentFarm.id } },
-      ]).catch(() => [[], [], [], [], []]);
+      ]).catch(() => [[], [], [], []]);
 
       // Employee notifications - only employees from the current farm
       // עובדים בארכיון לא מייצרים התראות (דרכון/אשרה)
@@ -179,61 +178,21 @@ export default function Layout({ children, currentPageName }) {
         checkVehicleDate(veh.licensing_info?.next_test_date, 'test', 'טסט עומד לפוג');
       });
 
-      // Subscription notifications (subscriptions already fetched in the parallel batch above)
-      try {
-        const safeSubscriptions = Array.isArray(subscriptions) ? subscriptions : [];
-        
-        safeSubscriptions.forEach(subscription => {
-          if (!subscription) return; // Safety check for null/undefined subscription objects
-          
-          if (subscription.end_date) {
-            try {
-              const endDate = parseISO(subscription.end_date);
-              const daysUntilExpiry = differenceInDays(endDate, new Date());
-              
-              if (daysUntilExpiry <= 30 && daysUntilExpiry >= 0) {
-                generated.push({
-                  id: `subscription-${subscription.id}-expiry`,
-                  title: `מנוי ${subscription.plan_name} עומד לפוג`,
-                  description: `פג תוקף ב-${format(endDate, 'dd/MM/yyyy')} (עוד ${daysUntilExpiry} ימים)`,
-                  dueDate: endDate,
-                  type: 'subscription',
-                  link: createPageUrl(`Settings?tab=subscription`),
-                  priority: daysUntilExpiry <= 7 ? 'high' : 'medium'
-                });
-              }
-              
-              if (daysUntilExpiry < 0 && subscription.status !== 'expired') {
-                generated.push({
-                  id: `subscription-${subscription.id}-expired`,
-                  title: `מנוי ${subscription.plan_name} פג תוקף`,
-                  description: `המנוי פג ב-${format(endDate, 'dd/MM/yyyy')}`,
-                  dueDate: endDate,
-                  type: 'subscription',
-                  link: createPageUrl(`Settings?tab=subscription`),
-                  priority: 'high'
-                });
-              }
-            } catch (error) {
-              console.warn(`Error parsing subscription end date for subscription ${subscription.id}:`, error);
-            }
-          }
-          
-          if (subscription.status === 'pending_payment') {
-            generated.push({
-              id: `subscription-${subscription.id}-payment`,
-              title: `תשלום מנוי ממתין`,
-              description: `נדרש תשלום עבור מנוי ${subscription.plan_name}`,
-              dueDate: new Date(),
-              type: 'subscription',
-              link: createPageUrl(`Settings?tab=subscription`),
-              priority: 'high'
-            });
-          }
-        });
-      } catch (subscriptionError) {
-        // Silently handle subscription entity errors - it might not exist yet
-        console.info('Subscription notifications not available:', subscriptionError.message);
+      // תקופת ניסיון: farm.plan / trial_ends_at (הבאנר בראש העמוד מציג גם הוא את המצב)
+      if (currentFarm.plan === 'trial' && currentFarm.trial_ends_at) {
+        const endDate = new Date(currentFarm.trial_ends_at);
+        const daysLeft = Math.ceil((endDate - new Date()) / 864e5);
+        if (daysLeft <= 3) {
+          generated.push({
+            id: `trial-${currentFarm.id}-${daysLeft <= 0 ? 'expired' : 'ending'}`,
+            title: daysLeft <= 0 ? 'תקופת הניסיון הסתיימה' : 'תקופת הניסיון מסתיימת בקרוב',
+            description: daysLeft <= 0 ? 'המשק במצב צפייה בלבד — להארכה פנה למנהל המערכת' : `נותרו ${daysLeft} ימים (עד ${format(endDate, 'dd/MM/yyyy')})`,
+            dueDate: endDate,
+            type: 'subscription',
+            link: createPageUrl('Settings?tab=subscription'),
+            priority: 'high'
+          });
+        }
       }
 
     } catch (error) {

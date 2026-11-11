@@ -44,7 +44,7 @@ export default function Subscription() {
   return (
     <div className="p-6" dir="rtl">
       <div className="max-w-6xl mx-auto">
-        <PageHeader title="ניהול מנוי" subtitle="ניהול מנוי ותשלומים עבור המשק" />
+        <PageHeader title="ניהול מנוי" subtitle="מצב המנוי של המשק" />
         
         <SubscriptionManager currentFarm={currentFarm} />
       </div>
