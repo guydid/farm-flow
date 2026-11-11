@@ -528,6 +528,8 @@ export default function WeighingCertificates() {
     const activeCerts = certsArray.filter(cert => {
       if (!cert) return false;
       const isArchived = cert.status === 'completed' || cert.status === 'shipped';
+      // סינון מפורש לסטטוס שהוא ארכיוני (הושלם/נשלח) מציג אותו גם מחוץ לתצוגת הארכיון
+      if (filters.status === 'completed' || filters.status === 'shipped') return true;
       return showArchived ? isArchived : !isArchived;
     });
 
@@ -640,6 +642,32 @@ export default function WeighingCertificates() {
     }
     setSelectedCertificates(newSelected);
   };
+
+  // שינוי סטטוס לתעודה בודדת (מהתפריט בכרטיס בנייד)
+  const handleSingleStatusChange = async (certId, newStatus) => {
+    try {
+      await WeighingCertificate.update(certId, { status: newStatus });
+      toast({ title: "הצלחה", description: `הסטטוס עודכן: ${translateStatus(newStatus)}` });
+      loadData();
+    } catch (error) {
+      console.error("Error updating certificate status:", error);
+      toast({ title: "שגיאה", description: "עדכון הסטטוס נכשל", variant: "destructive" });
+    }
+  };
+
+  // לחיצה ארוכה על כרטיס בנייד — נכנסים למצב בחירה ומסמנים אותו
+  const longPressRef = useRef({ timer: null, fired: false });
+  const startLongPress = (certId) => {
+    longPressRef.current.fired = false;
+    clearTimeout(longPressRef.current.timer);
+    longPressRef.current.timer = setTimeout(() => {
+      longPressRef.current.fired = true;
+      setSelectMode(true);
+      setSelectedCertificates(prev => new Set(prev).add(certId));
+      if (navigator.vibrate) navigator.vibrate(20);
+    }, 450);
+  };
+  const cancelLongPress = () => clearTimeout(longPressRef.current.timer);
 
   const handleBulkStatusChange = async (newStatus) => {
     if (selectedCertificates.size === 0) {
@@ -1058,7 +1086,13 @@ export default function WeighingCertificates() {
                       return (
                         <div
                           key={cert.id}
+                          onTouchStart={() => startLongPress(cert.id)}
+                          onTouchEnd={cancelLongPress}
+                          onTouchMove={cancelLongPress}
+                          onTouchCancel={cancelLongPress}
+                          onContextMenu={(e) => { if (longPressRef.current.fired) e.preventDefault(); }}
                           onClick={() => {
+                            if (longPressRef.current.fired) { longPressRef.current.fired = false; return; }
                             if (selectMode) {
                               handleSelectCertificate(cert.id, !isSelected);
                             } else {
@@ -1107,6 +1141,16 @@ export default function WeighingCertificates() {
                                       ? <Loader2 className="w-4 h-4 ml-2 animate-spin" />
                                       : <Share2 className="w-4 h-4 ml-2" />}
                                     שתף
+                                  </DropdownMenuItem>
+                                  {[["completed","סמן הושלם"],["shipped","סמן נשלח"],["draft","החזר לטיוטה"]]
+                                    .filter(([st]) => st !== cert.status)
+                                    .map(([st, label]) => (
+                                      <DropdownMenuItem key={st} onClick={() => handleSingleStatusChange(cert.id, st)}>
+                                        <CheckCircle2 className="w-4 h-4 ml-2" />{label}
+                                      </DropdownMenuItem>
+                                  ))}
+                                  <DropdownMenuItem onClick={() => { setSelectMode(true); setSelectedCertificates(prev => new Set(prev).add(cert.id)); }}>
+                                    <Check className="w-4 h-4 ml-2" />בחר
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => handleToggleDeliveryNote(cert.id, cert.delivery_note_issued)}>
                                     {cert.delivery_note_issued ? (
