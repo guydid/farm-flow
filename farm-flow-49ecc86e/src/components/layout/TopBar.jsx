@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bell, Menu, User as UserIcon, LogOut, ShieldCheck } from "lucide-react";
+import { Bell, Menu, User as UserIcon, LogOut, ShieldCheck, ArrowRight } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { User } from "@/entities/all";
 import NotificationPanel from "./NotificationPanel";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { BrandMark } from "@/lib/branding";
 import AccessibilityMenu from "@/components/common/AccessibilityMenu";
@@ -30,6 +30,14 @@ export default function TopBar({
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  // כפתור חזרה (אייקון) בנייד בכל מסך חוץ מלוח הבקרה
+  const dashPath = createPageUrl('Dashboard');
+  const showBack = location.pathname !== '/' && !location.pathname.startsWith(dashPath);
+  const goBack = () => {
+    if (window.history.length > 1) navigate(-1);
+    else navigate(dashPath);
+  };
 
   const handleLogout = async () => {
     try {
@@ -52,6 +60,19 @@ export default function TopBar({
         >
           <Menu className="h-6 w-6" />
         </Button>
+
+        {showBack && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden h-10 w-10 shrink-0 rounded-full text-gray-700"
+            onClick={goBack}
+            aria-label="חזרה למסך הקודם"
+            title="חזרה"
+          >
+            <ArrowRight className="h-5 w-5" />
+          </Button>
+        )}
 
         {/* לוגו החברה בפינה העליונה (נייד ודסקטופ) — לחיצה חוזרת ללוח הבקרה */}
         <button type="button" onClick={() => navigate(createPageUrl('Dashboard'))} className="flex items-center flex-shrink-0" aria-label="לוח בקרה">

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import BackButton from "@/components/common/BackButton";
 import { Link, useNavigate } from "react-router-dom";
 import { Vehicle, VehicleTreatment, User, Farm, Invoice } from "@/entities/all";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { format, parseISO } from "date-fns";
-import { ArrowRight, Loader2, Edit, Trash2, Plus, Wrench, FileText, Upload, Receipt } from "lucide-react";
+import { Loader2, Edit, Trash2, Plus, Wrench, FileText, Upload, Receipt } from "lucide-react";
 import { createPageUrl } from "@/utils";
 import { Badge } from "@/components/ui/badge";
 import { UploadPrivateFile, CreateFileSignedUrl } from "@/integrations/Core";
@@ -294,7 +295,7 @@ export default function VehicleDetail() {
         <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
             <div className="max-w-6xl mx-auto space-y-6">
                 <div className="mb-6">
-                    <Link to={createPageUrl("Vehicles")} className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-4"><ArrowRight className="h-4 w-4" />חזרה</Link>
+                    <BackButton to={createPageUrl("Vehicles")} label="חזרה לרשימת הרכבים" className="mb-2 -mr-2" />
                     <div className="flex justify-between items-center">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">{vehicle.name}</h1>

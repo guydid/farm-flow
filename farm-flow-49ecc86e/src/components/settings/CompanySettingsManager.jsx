@@ -74,6 +74,8 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
     setFormData(prev => ({ ...prev, main_crops: cropsArray }));
   };
 
+  const logoInputRef = React.useRef(null);
+
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -87,6 +89,7 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
       toast({ title: "שגיאה", description: "העלאת הלוגו נכשלה.", variant: "destructive" });
     } finally {
       setIsUploading(false);
+      if (logoInputRef.current) logoInputRef.current.value = ""; // מאפשר לבחור שוב את אותו קובץ
     }
   };
 
@@ -147,15 +150,14 @@ export default function CompanySettingsManager({ currentFarm }) { // currentFarm
             <div className="md:col-span-1 space-y-4">
                <div>
                   <Label>לוגו</Label>
-                  <Input id="logo_upload" type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+                  <input ref={logoInputRef} id="logo_upload" type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
                   <div className="mt-2 flex items-center gap-4">
                     {formData.logo_url && <img src={formData.logo_url} alt="לוגו" className="h-16 w-16 rounded-md border object-cover" />}
-                    <Label htmlFor="logo_upload" className="w-full">
-                      <Button type="button" variant="outline" className="w-full cursor-pointer" disabled={isUploading}>
-                        {isUploading ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Upload className="w-4 h-4 ml-2" />}
-                        {isUploading ? "מעלה..." : (formData.logo_url ? "החלף לוגו" : "העלה לוגו")}
-                      </Button>
-                    </Label>
+                    <Button type="button" variant="outline" className="flex-1 cursor-pointer" disabled={isUploading}
+                      onClick={() => logoInputRef.current?.click()}>
+                      {isUploading ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Upload className="w-4 h-4 ml-2" />}
+                      {isUploading ? "מעלה..." : (formData.logo_url ? "החלף לוגו" : "העלה לוגו")}
+                    </Button>
                   </div>
                 </div>
             </div>

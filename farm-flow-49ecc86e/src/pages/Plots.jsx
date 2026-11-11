@@ -538,12 +538,11 @@ export default function Plots() {
                     <div className="grid gap-2">
                       <Label>הסכם שכירות</Label>
                       <Input id="lease_agreement" type="file" onChange={handleFileChange} className="hidden" />
-                      <Label htmlFor="lease_agreement" className="w-full">
-                        <Button as="div" variant="outline" className="w-full cursor-pointer">
-                          {isUploading ? <Loader2 className="w-4 h-4 ml-2 animate-spin"/> : <Upload className="w-4 h-4 ml-2" />}
-                          {isUploading ? "מעלה קובץ..." : (formData.lease_agreement_url ? "החלף קובץ" : "העלה קובץ")}
-                        </Button>
-                      </Label>
+                      <Button type="button" variant="outline" className="w-full cursor-pointer" disabled={isUploading}
+                        onClick={() => document.getElementById('lease_agreement')?.click()}>
+                        {isUploading ? <Loader2 className="w-4 h-4 ml-2 animate-spin"/> : <Upload className="w-4 h-4 ml-2" />}
+                        {isUploading ? "מעלה קובץ..." : (formData.lease_agreement_url ? "החלף קובץ" : "העלה קובץ")}
+                      </Button>
                       {formData.lease_agreement_url &&
                         <a href={formData.lease_agreement_url} target="_blank" rel="noopener noreferrer">
                           <Button variant="link" size="sm" className="p-0 h-auto">

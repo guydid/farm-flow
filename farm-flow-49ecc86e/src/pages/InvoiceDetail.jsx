@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import BackButton from "@/components/common/BackButton";
 import { Invoice, Supplier, User } from '@/entities/all';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { getToken } from '@/api/localClient';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  ArrowRight, Loader2, Save, Trash2, CheckCircle2, XCircle,
+  Loader2, Save, Trash2, CheckCircle2, XCircle,
   Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
@@ -230,9 +231,7 @@ export default function InvoiceDetail() {
     <div className="p-4 sm:p-6 lg:p-8 bg-gray-50/50 min-h-screen" dir="rtl">
       <div className="max-w-screen-2xl mx-auto">
         <div className="flex items-center gap-3 mb-6">
-          <Link to={createPageUrl('Invoices')}>
-            <Button variant="outline" size="sm"><ArrowRight className="w-4 h-4 ml-1" />חזרה</Button>
-          </Link>
+          <BackButton to={createPageUrl('Invoices')} label="חזרה לחשבוניות" />
           <div className="flex-1 min-w-0">
             <h1 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">
               {invoice.supplier_name || suppliers.find(s => s.id === invoice.supplier_id)?.name || 'חשבונית'}

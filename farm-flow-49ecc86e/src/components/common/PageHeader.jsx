@@ -1,6 +1,5 @@
 import React from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import BackButton from "@/components/common/BackButton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -17,10 +16,7 @@ export default function PageHeader({ title, subtitle, icon: Icon, backTo, backLa
   return (
     <header className={cn("mb-4 lg:mb-6", className)}>
       {backTo && (
-        <Link to={backTo} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-2 rounded-md">
-          <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          {backLabel}
-        </Link>
+        <BackButton to={backTo} label={backLabel} className="mb-1 -mr-2" />
       )}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
         <div className="flex items-center gap-3 min-w-0">

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import BackButton from "@/components/common/BackButton";
 import { Link } from "react-router-dom";
 import { Seeding, Plot, Activity, Harvest, Spraying, Pesticide, PlotSeeding, Variety, Packaging } from "@/entities/all";
 import { batchFetch } from "@/api/localClient";
@@ -10,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useToast } from "@/components/ui/use-toast";
 import { format, parseISO } from "date-fns";
 import { he } from "date-fns/locale";
-import { ArrowRight, Loader2, Calendar, Droplets, Tractor, MapPin, TrendingUp, Activity as ActivityIcon, Edit, Plus, ExternalLink, Archive, Trash2, MoreVertical, Leaf } from "lucide-react";
+import { Loader2, Calendar, Droplets, Tractor, MapPin, TrendingUp, Activity as ActivityIcon, Edit, Plus, ExternalLink, Archive, Trash2, MoreVertical, Leaf } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // NEW IMPORT
 
 import SeedingSummary from "../components/seedings/SeedingSummary";
@@ -359,11 +360,7 @@ export default function SeedingDetail() {
       <div className="p-3 sm:p-6 lg:p-8 bg-gray-50 min-h-screen">
         <div className="max-w-7xl mx-auto space-y-4 lg:space-y-6">
           {/* Back button */}
-          <Link to={createPageUrl("Seedings")} className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900">
-            <ArrowRight className="h-4 w-4" />
-            <span className="hidden sm:inline">חזרה לכל המזרעים</span>
-            <span className="sm:hidden">חזרה</span>
-          </Link>
+          <BackButton to={createPageUrl("Seedings")} label="חזרה לכל המזרעים" className="-mr-2" />
 
           <Card className="overflow-hidden">
             <CardHeader className="bg-gradient-to-r from-white to-gray-50 px-4 py-3 lg:px-6 lg:py-4">

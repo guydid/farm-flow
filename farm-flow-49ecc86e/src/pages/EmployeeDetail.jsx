@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import BackButton from "@/components/common/BackButton";
 import { listFarmUsers } from '@/api/farmUsers';
 import { Link, useNavigate } from "react-router-dom";
 import { Employee, ManpowerCompany, User, EmployeeLog, Farm } from "@/entities/all";
@@ -11,7 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useToast } from "@/components/ui/use-toast";
 import { UploadFile } from "@/integrations/Core";
 import { format, differenceInDays, parseISO } from "date-fns";
-import { ArrowRight, Loader2, Camera, User as UserIcon, FileText, Trash2, Download, AlertTriangle, BookOpen, Edit, FileUp, ExternalLink, Upload } from "lucide-react";
+import { Loader2, Camera, User as UserIcon, FileText, Trash2, Download, AlertTriangle, BookOpen, Edit, FileUp, ExternalLink, Upload } from "lucide-react";
 import { createPageUrl } from "@/utils";
 import { Badge } from "@/components/ui/badge";
 import EmployeeTimeline from "@/components/employees/EmployeeTimeline";
@@ -322,10 +323,7 @@ export default function EmployeeDetail() {
             <div className="max-w-6xl mx-auto">
                 {/* Header */}
                 <div className="mb-6">
-                    <Link to={createPageUrl("Employees")} className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-4">
-                        <ArrowRight className="h-4 w-4" />
-                        חזרה לרשימת העובדים
-                    </Link>
+                    <BackButton to={createPageUrl("Employees")} label="חזרה לרשימת העובדים" className="mb-2 -mr-2" />
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                         <div className="flex items-center gap-4">
                             <div className="relative">
