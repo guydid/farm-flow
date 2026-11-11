@@ -493,6 +493,50 @@ function getFarmMember(farmId, userId) {
   return db.prepare('SELECT * FROM farm_members WHERE farm_id = ? AND user_id = ?').get(farmId, userId);
 }
 
+// ─── TRIAL (תקופת ניסיון) ─────────────────────────────────────────────────────
+// משק שנפתח בהרשמה עצמית מקבל plan='trial' + trial_ends_at. בסיום התקופה המשק עובר
+// לצפייה בלבד (כל כתיבה נחסמת ב-402) עד שמנהל המערכת מאריך/מפעיל. משקים בלי plan — ללא הגבלה.
+const TRIAL_DAYS = 14;
+const PLAN_FIELDS = ['plan', 'trial_ends_at'];
+const trialFields = () => ({ plan: 'trial', trial_ends_at: new Date(Date.now() + TRIAL_DAYS * 864e5).toISOString() });
+function farmTrialExpired(farmId) {
+  if (!farmId) return false;
+  const row = db.prepare("SELECT data FROM entities WHERE entity_type='farms' AND id=?").get(farmId);
+  if (!row) return false;
+  let d = {}; try { d = JSON.parse(row.data || '{}'); } catch { return false; }
+  return d.plan === 'trial' && !!d.trial_ends_at && Date.parse(d.trial_ends_at) <= Date.now();
+}
+// מותר גם במשק שתקופתו הסתיימה: כניסה/פרופיל/החלפת משק, ניהול מערכת, התראות, סנכרון שעון נוכחות
+const TRIAL_WRITE_ALLOW = [/^\/auth\//, /^\/admin\//, /^\/notifications(\/|$)/, /^\/attendance\/sync$/];
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (TRIAL_WRITE_ALLOW.some(r => r.test(req.path))) return next();
+  const h = req.headers.authorization;
+  const payload = h && h.startsWith('Bearer ') ? verifySessionToken(h.slice(7)) : null;
+  if (!payload) return next(); // הראוט עצמו יחזיר 401
+  const user = getUser(payload.id);
+  if (!user || user.is_admin) return next();
+  const farms = new Set();
+  // ראוטים רבים (leases/maven/procurement/attendance) לוקחים את המשק מ-query לפני body/current
+  if (typeof req.query?.farm_id === 'string') farms.add(req.query.farm_id);
+  for (const it of (Array.isArray(req.body) ? req.body : [req.body])) {
+    if (it && typeof it.farm_id === 'string') farms.add(it.farm_id);
+  }
+  const m = req.path.match(/^\/([a-z_]+)\/([A-Za-z0-9_-]{1,64})$/);
+  if (m && ['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    const row = db.prepare('SELECT id, entity_type, farm_id FROM entities WHERE entity_type = ? AND id = ?').get(m[1], m[2]);
+    if (row?.entity_type === 'farms' && req.method === 'DELETE') return next(); // מחיקת המשק עצמו מותרת
+    if (row) farms.add(row.entity_type === 'farms' ? row.id : row.farm_id);
+  }
+  if (!farms.size && user.current_farm_id) farms.add(user.current_farm_id);
+  for (const fid of farms) {
+    if (farmTrialExpired(fid)) {
+      return res.status(402).json({ error: 'תקופת הניסיון של המשק הסתיימה — המערכת במצב צפייה בלבד. להארכה פנה למנהל המערכת.', code: 'trial_expired' });
+    }
+  }
+  next();
+});
+
 // ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: NOW() }));
 
@@ -3116,11 +3160,11 @@ function loginPayload(user) {
 }
 
 // משק חדש + בעלות — משמש בהרשמה (סיסמה/Google)
-function createFarmForUser(userId, farmName) {
+function createFarmForUser(userId, farmName, { trial = true } = {}) {
   const farmId = uuidv4();
   const now = NOW();
   db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-    farmId, 'farms', null, JSON.stringify({ name: farmName, owner_id: userId }), now, now
+    farmId, 'farms', null, JSON.stringify({ name: farmName, owner_id: userId, ...(trial ? trialFields() : {}) }), now, now
   );
   db.prepare('INSERT OR IGNORE INTO farm_members (id, farm_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)').run(uuidv4(), farmId, userId, 'owner', now);
   db.prepare('UPDATE users SET farm_ids = ?, current_farm_id = ?, updated_at = ? WHERE id = ?').run(JSON.stringify([farmId]), farmId, now, userId);
@@ -3198,7 +3242,7 @@ app.post('/api/auth/register', registerLimiter, async (req, res) => {
     db.prepare('INSERT INTO users (id, email, password_hash, full_name, farm_ids, current_farm_id, is_admin, is_active, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(
       userId, email, password_hash, full_name, '[]', null, isFirstUser ? 1 : 0, needVerify ? 0 : 1, now, now
     );
-    farmId = createFarmForUser(userId, farm_name || (full_name ? `המשק של ${full_name}` : 'המשק שלי'));
+    farmId = createFarmForUser(userId, farm_name || (full_name ? `המשק של ${full_name}` : 'המשק שלי'), { trial: !isFirstUser });
   })();
 
   if (!needVerify) return res.json(loginPayload({ id: userId }));
@@ -3417,7 +3461,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
         const isFirst = cnt === 0 ? 1 : 0;
         db.prepare('INSERT INTO users (id,email,password_hash,full_name,avatar_url,google_id,is_admin,is_active,email_verified,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,1,?,?)')
           .run(newId, normEmail(gu.email), '', gu.name || '', gu.picture || '', gu.id, isFirst, NOW(), NOW());
-        createFarmForUser(newId, gu.name ? `המשק של ${gu.name}` : 'המשק שלי');
+        createFarmForUser(newId, gu.name ? `המשק של ${gu.name}` : 'המשק שלי', { trial: !isFirst });
         user = getUser(newId);
       }
     }
@@ -3595,9 +3639,29 @@ app.get('/api/admin/farms', authMiddleware, adminMiddleware, (req, res) => {
     const entityCount = db.prepare("SELECT COUNT(*) as cnt FROM entities WHERE entity_type != 'farms' AND farm_id = ?").get(f.id).cnt;
     const owner = data.owner_id ? db.prepare('SELECT id, email, full_name FROM users WHERE id = ?').get(data.owner_id) : null;
     const memberCount = db.prepare('SELECT COUNT(*) as cnt FROM farm_members WHERE farm_id = ?').get(f.id).cnt;
-    return { id: f.id, name: data.name, owner, entity_count: entityCount, member_count: memberCount, created_at: f.created_at };
+    return { id: f.id, name: data.name, owner, entity_count: entityCount, member_count: memberCount, created_at: f.created_at, plan: data.plan || null, trial_ends_at: data.trial_ends_at || null, trial_expired: farmTrialExpired(f.id) };
   });
   res.json(result);
+});
+
+// Admin: מסלול משק — הארכת ניסיון (extend_days) או הפעלה מלאה (plan='active')
+app.put('/api/admin/farms/:id/plan', authMiddleware, adminMiddleware, (req, res) => {
+  const row = db.prepare("SELECT * FROM entities WHERE entity_type='farms' AND id=?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const data = JSON.parse(row.data || '{}');
+  const { plan, extend_days } = req.body || {};
+  if (plan === 'active') {
+    data.plan = 'active';
+  } else if (Number.isInteger(extend_days) && extend_days > 0 && extend_days <= 366) {
+    const base = Math.max(Date.now(), Date.parse(data.trial_ends_at || '') || 0);
+    data.plan = 'trial';
+    data.trial_ends_at = new Date(base + extend_days * 864e5).toISOString();
+  } else {
+    return res.status(400).json({ error: 'plan=active or extend_days (1-366) required' });
+  }
+  db.prepare('UPDATE entities SET data=?, updated_at=? WHERE id=?').run(JSON.stringify(data), NOW(), row.id);
+  console.log(`[trial] admin ${req.user.id} farm=${row.id} plan=${data.plan} ends=${data.trial_ends_at || '-'}`);
+  res.json({ id: row.id, plan: data.plan, trial_ends_at: data.trial_ends_at || null, trial_expired: farmTrialExpired(row.id) });
 });
 
 // Admin: get all sent notifications
@@ -4108,334 +4172,6 @@ app.delete('/api/notifications/:id', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
-// ─── TELEGRAM BOT ─────────────────────────────────────────────────────────────
-
-// in-memory link codes: code → { user_id, expires }
-const _tgLinkCodes = new Map();
-
-function tgGetConfig(farmId) {
-  const row = db.prepare("SELECT data FROM entities WHERE entity_type='telegram_config' AND farm_id=? LIMIT 1").get(farmId);
-  return row ? JSON.parse(row.data) : null;
-}
-function tgSaveConfig(farmId, cfg) {
-  const ex = db.prepare("SELECT id FROM entities WHERE entity_type='telegram_config' AND farm_id=? LIMIT 1").get(farmId);
-  if (ex) {
-    db.prepare("UPDATE entities SET data=?,updated_at=? WHERE entity_type='telegram_config' AND id=?").run(JSON.stringify(cfg), NOW(), ex.id);
-  } else {
-    db.prepare("INSERT INTO entities (id,entity_type,farm_id,data,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(uuidv4(), 'telegram_config', farmId, JSON.stringify(cfg), NOW(), NOW());
-  }
-}
-async function tgApi(token, method, body = {}) {
-  const bodyStr = JSON.stringify(body);
-  return httpsRequest({
-    hostname: 'api.telegram.org',
-    path: `/bot${token}/${method}`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) }
-  }, bodyStr);
-}
-async function tgSend(token, chatId, text) {
-  return tgApi(token, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML' });
-}
-
-// GET /api/telegram/config
-app.get('/api/telegram/config', authMiddleware, (req, res) => {
-  const user = getUser(req.user.id);
-  if (!user?.current_farm_id) return res.status(400).json({ error: 'אין משק פעיל' });
-  const cfg = tgGetConfig(user.current_farm_id);
-  if (!cfg) return res.json({ enabled: false });
-  res.json({ enabled: true, bot_username: cfg.bot_username, bot_name: cfg.bot_name, webhook_set: cfg.webhook_set });
-});
-
-// POST /api/telegram/config — validate token, register webhook
-app.post('/api/telegram/config', authMiddleware, async (req, res) => {
-  const { token } = req.body;
-  if (!token?.trim()) return res.status(400).json({ error: 'token חסר' });
-  const user = getUser(req.user.id);
-  if (!user?.current_farm_id) return res.status(400).json({ error: 'אין משק פעיל' });
-  if (!['owner', 'manager'].includes(getFarmMember(user.current_farm_id, user.id)?.role)) return res.status(403).json({ error: 'בעלים/מנהל בלבד' });
-
-  // Validate token
-  const meRes = await tgApi(token, 'getMe');
-  if (meRes.status !== 200) return res.status(400).json({ error: 'Token לא תקין' });
-  const me = JSON.parse(meRes.body);
-  if (!me.ok) return res.status(400).json({ error: 'Token שגוי: ' + me.description });
-
-  const webhookSecret = uuidv4().replace(/-/g, '');
-  const webhookUrl   = 'https://farm.nitur-ai.com/api/telegram/webhook';
-
-  const whRes  = await tgApi(token, 'setWebhook', { url: webhookUrl, secret_token: webhookSecret, allowed_updates: ['message'] });
-  const whData = JSON.parse(whRes.body);
-
-  const cfg = {
-    token,
-    webhook_secret: webhookSecret,
-    bot_username: me.result.username,
-    bot_name: me.result.first_name,
-    webhook_set: whData.ok,
-  };
-  tgSaveConfig(user.current_farm_id, cfg);
-  console.log(`[TG] @${me.result.username} configured for farm ${user.current_farm_id}`);
-  res.json({ success: true, bot_username: cfg.bot_username, webhook_set: cfg.webhook_set });
-});
-
-// DELETE /api/telegram/config — remove bot
-app.delete('/api/telegram/config', authMiddleware, async (req, res) => {
-  const user = getUser(req.user.id);
-  if (!user?.current_farm_id) return res.status(400).json({ error: 'אין משק פעיל' });
-  if (!['owner', 'manager'].includes(getFarmMember(user.current_farm_id, user.id)?.role)) return res.status(403).json({ error: 'בעלים/מנהל בלבד' });
-  const cfg = tgGetConfig(user.current_farm_id);
-  if (cfg) {
-    await tgApi(cfg.token, 'deleteWebhook').catch(() => {});
-    db.prepare("DELETE FROM entities WHERE entity_type='telegram_config' AND farm_id=?").run(user.current_farm_id);
-  }
-  res.json({ success: true });
-});
-
-// POST /api/telegram/generate-link-code — user generates a code to link their TG
-app.post('/api/telegram/generate-link-code', authMiddleware, (req, res) => {
-  const code = crypto.randomBytes(5).toString('hex').slice(0, 8).toUpperCase();
-  _tgLinkCodes.set(code, { user_id: req.user.id, expires: Date.now() + 10 * 60 * 1000 });
-  for (const [k, v] of _tgLinkCodes) if (v.expires < Date.now()) _tgLinkCodes.delete(k);
-  res.json({ code, expires_in: 600 });
-});
-
-// POST /api/telegram/webhook — Telegram pushes updates here (no auth, verified by secret header)
-app.post('/api/telegram/webhook', (req, res) => {
-  res.sendStatus(200); // ack immediately
-  const secret = req.headers['x-telegram-bot-api-secret-token'];
-  if (!secret) return;
-
-  const allCfgs = db.prepare("SELECT data, farm_id FROM entities WHERE entity_type='telegram_config'").all();
-  const match   = allCfgs.find(r => { try { return JSON.parse(r.data).webhook_secret === secret; } catch { return false; } });
-  if (!match) return;
-
-  const cfg    = JSON.parse(match.data);
-  const farmId = match.farm_id;
-  const msg    = req.body?.message;
-  if (!msg?.text) return;
-
-  setImmediate(() => tgHandleMessage(cfg, farmId, msg));
-});
-
-async function tgHandleMessage(cfg, farmId, msg) {
-  const chatId = msg.chat.id;
-  const text   = msg.text.trim();
-  const tgFrom = msg.from;
-  console.log(`[TG] from ${tgFrom.first_name}(${tgFrom.id}) farm=${farmId}: ${text}`);
-
-  // Find linked Farm Flow user
-  const linked = db.prepare('SELECT * FROM users WHERE telegram_chat_id=?').get(String(chatId));
-
-  // /start
-  if (text === '/start' || text === '/התחל') {
-    const name = tgFrom.first_name || 'שם';
-    await tgSend(cfg.token, chatId,
-      `שלום ${name}! 🌱 אני הבוט של המשק.\n\n` +
-      `כדי להתחבר למערכת:\n` +
-      `1. היכנס ל-Farm Flow → הגדרות → טלגרם\n` +
-      `2. לחץ "צור קוד חיבור"\n` +
-      `3. שלח לי: /link XXXXXX`
-    );
-    return;
-  }
-
-  // /link CODE
-  if (text.startsWith('/link ') || text.startsWith('/חבר ')) {
-    const code = text.split(' ')[1]?.toUpperCase();
-    const entry = code ? _tgLinkCodes.get(code) : null;
-    if (!entry || entry.expires < Date.now()) {
-      await tgSend(cfg.token, chatId, '❌ קוד לא תקין או פג תוקף. צור קוד חדש ב-Farm Flow.');
-      return;
-    }
-    _tgLinkCodes.delete(code);
-    db.prepare('UPDATE users SET telegram_chat_id=?, telegram_username=? WHERE id=?')
-      .run(String(chatId), tgFrom.username || '', entry.user_id);
-    const u = db.prepare('SELECT full_name FROM users WHERE id=?').get(entry.user_id);
-    await tgSend(cfg.token, chatId, `✅ חשבון מחובר בהצלחה!\nשלום ${u?.full_name || tgFrom.first_name}! 👋\nכעת תוכל לשאול שאלות על המשק.`);
-    return;
-  }
-
-  if (!linked) {
-    await tgSend(cfg.token, chatId, '⚠️ חשבון לא מחובר. שלח /start להוראות.');
-    return;
-  }
-  // הבוט של משק עונה רק לחברי אותו משק (ומשתמש פעיל)
-  if (linked.is_active === 0 || !getFarmMember(farmId, linked.id)) {
-    await tgSend(cfg.token, chatId, '⛔ אין לך גישה למשק הזה.');
-    return;
-  }
-
-  // Natural language query via Groq
-  await tgGroqQuery(cfg, farmId, chatId, linked, text);
-}
-
-async function tgGroqQuery(cfg, farmId, chatId, user, text) {
-  const GROQ_KEY = getGroqApiKey();
-  if (!GROQ_KEY) {
-    await tgSend(cfg.token, chatId, '⚠️ GROQ_API_KEY לא מוגדר בשרת.');
-    return;
-  }
-
-  const today = new Date().toISOString().slice(0, 10);
-
-  // Helper: load all entities of a type for this farm, parse JSON data
-  function fetchAll(type) {
-    return db.prepare("SELECT id, data FROM entities WHERE entity_type=? AND farm_id=?").all(type, farmId)
-      .map(r => { try { return { id: r.id, ...JSON.parse(r.data) }; } catch { return null; } })
-      .filter(Boolean);
-  }
-
-  // ── Load farm data ──────────────────────────────────────────────────────────
-  const varieties    = fetchAll('varieties');    // זנים
-  const plots        = fetchAll('plots');        // חלקות
-  const plotSeedings = fetchAll('plot_seedings');// קשר חלקה↔מזרע
-  const seedings     = fetchAll('seedings');     // מזרעים
-  const employees    = fetchAll('employees');    // עובדים
-  const vehicles     = fetchAll('vehicles');     // כלי רכב
-  const customers    = fetchAll('customers');    // לקוחות
-  const crops        = fetchAll('crops');        // גידולים
-
-  // Lookup maps
-  const varietyMap = Object.fromEntries(varieties.map(v => [v.id, v.name]));
-  const plotMap    = Object.fromEntries(plots.map(p => [p.id, p.name]));
-
-  // seeding → plot names
-  const seeding2plots = {};
-  for (const ps of plotSeedings) {
-    if (!seeding2plots[ps.seeding_id]) seeding2plots[ps.seeding_id] = [];
-    const pname = plotMap[ps.plot_id];
-    if (pname) seeding2plots[ps.seeding_id].push(pname);
-  }
-
-  // ── Recent harvests (60 days) ───────────────────────────────────────────────
-  const cutoff60 = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
-  const recentHarvests = db.prepare(
-    "SELECT data FROM entities WHERE entity_type='harvests' AND farm_id=? ORDER BY json_extract(data,'$.date') DESC LIMIT 100"
-  ).all(farmId)
-    .map(r => { try { return JSON.parse(r.data); } catch { return null; } })
-    .filter(r => r && r.date >= cutoff60);
-
-  // Aggregate by variety
-  const hvByVariety = {};
-  for (const h of recentHarvests) {
-    const key = h.variety || 'לא ידוע';
-    if (!hvByVariety[key]) hvByVariety[key] = { weight: 0, packages: 0, count: 0 };
-    hvByVariety[key].weight   += (h.weight || 0);
-    hvByVariety[key].packages += (h.package_count || 0);
-    hvByVariety[key].count++;
-  }
-  const harvestsText = Object.entries(hvByVariety).length
-    ? Object.entries(hvByVariety).map(([v, s]) =>
-        `  • ${v}: ${s.weight.toLocaleString()}ק"ג | ${s.count} קטיפות | ${s.packages} קרטונות`
-      ).join('\n')
-    : '  אין קטיפות ב-60 הימים האחרונים';
-
-  // ── Recent sprayings (30 days) ──────────────────────────────────────────────
-  const cutoff30 = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-  const recentSprayings = db.prepare(
-    "SELECT data FROM entities WHERE entity_type='sprayings' AND farm_id=? ORDER BY json_extract(data,'$.date') DESC LIMIT 50"
-  ).all(farmId)
-    .map(r => { try { return JSON.parse(r.data); } catch { return null; } })
-    .filter(r => r && r.date >= cutoff30);
-
-  const sprayingsText = recentSprayings.length
-    ? recentSprayings.map(s => {
-        const pests = (s.applied_pesticides || []).map(p => p.pesticide_name).join(', ');
-        const seed  = seedings.find(sd => sd.id === s.seeding_id);
-        return `  • ${s.date} | ${seed?.name || '?'} | ${pests}`;
-      }).join('\n')
-    : '  אין ריסוסים ב-30 הימים האחרונים';
-
-  // ── Format seedings ─────────────────────────────────────────────────────────
-  const seedingsText = seedings.map(s => {
-    const varNames = (s.varieties || []).map(v => varietyMap[v.variety_id] || '?').join(', ');
-    const plotNames = (seeding2plots[s.id] || []).join(', ');
-    const totalQty  = (s.varieties || []).reduce((sum, v) => sum + (v.seedling_quantity || 0), 0);
-    return (
-      `• ${s.name}\n` +
-      `  גידול: ${s.crop_type} | זנים: ${varNames}\n` +
-      `  חלקה: ${plotNames || 'לא שויך'} | שטח: ${s.total_area || '?'} דונם\n` +
-      `  שתילה: ${s.planting_date || '?'} | קטיף ראשון: ${s.first_harvest_date || '?'} | סיום: ${s.end_date || s.estimated_end_date || '?'}\n` +
-      `  כמות שתילים: ${totalQty.toLocaleString()} | סטטוס: ${s.status || '?'}`
-    );
-  }).join('\n\n') || 'אין מזרעים';
-
-  // ── Build system prompt ─────────────────────────────────────────────────────
-  const systemPrompt = [
-    `אתה עוזר חכם של משק חקלאי. ענה תמיד בעברית, קצר, ברור וידידותי.`,
-    `תאריך היום: ${today} | שם המשתמש: ${user.full_name}`,
-    ``,
-    `══ מזרעים פעילים (${seedings.length}) ══`,
-    seedingsText,
-    ``,
-    `══ זנים רשומים (${varieties.length}) ══`,
-    varieties.map(v => `• ${v.name} — ${v.crop_type}${v.marketing_company ? ' | ' + v.marketing_company : ''}`).join('\n') || 'אין',
-    ``,
-    `══ חלקות (${plots.length}) ══`,
-    plots.map(p => `• ${p.name} | ${p.size} דונם | ${p.structure_type === 'greenhouse' ? 'חממה' : p.structure_type} | ${p.activity_status === 'active' ? 'פעיל' : 'לא פעיל'}`).join('\n') || 'אין',
-    ``,
-    `══ גידולים (${crops.length}) ══`,
-    crops.map(c => c.name).join(', ') || 'אין',
-    ``,
-    `══ קטיפות — 60 ימים אחרונים ══`,
-    harvestsText,
-    ``,
-    `══ ריסוסים — 30 ימים אחרונים ══`,
-    sprayingsText,
-    ``,
-    `══ עובדים (${employees.length}) ══`,
-    employees.length
-      ? employees.map(e => `• ${e.first_name} ${e.last_name}${e.role ? ' | ' + e.role : ''}${e.nationality ? ' | ' + e.nationality : ''}`).join('\n')
-      : 'אין עובדים רשומים',
-    ``,
-    `══ כלי רכב (${vehicles.length}) ══`,
-    vehicles.length
-      ? vehicles.map(v => `• ${v.make} ${v.model} ${v.license_plate || ''}`.trim()).join('\n')
-      : 'אין',
-    ``,
-    `══ לקוחות ══`,
-    customers.map(c => c.name).join(', ') || 'אין',
-    ``,
-    `ענה על שאלות על המשק, חשב כמויות וסיכומים, עזור לתכנן.`,
-    `אם חסר מידע ענה מה ידוע ואמור שאינך יודע את השאר.`,
-  ].join('\n');
-
-  const body = JSON.stringify({
-    model: 'llama-3.3-70b-versatile',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: text }
-    ],
-    max_tokens: 500,
-    temperature: 0.3
-  });
-
-  try {
-    const r = await httpsRequest({
-      hostname: 'api.groq.com',
-      path: '/openai/v1/chat/completions',
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_KEY}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, body);
-
-    if (r.status === 200) {
-      const reply = JSON.parse(r.body)?.choices?.[0]?.message?.content || 'אין תשובה';
-      await tgSend(cfg.token, chatId, reply);
-    } else {
-      console.error('[TG/Groq]', r.status, r.body.slice(0, 200));
-      await tgSend(cfg.token, chatId, '❌ שגיאה זמנית. נסה שוב.');
-    }
-  } catch (err) {
-    console.error('[TG/Groq]', String(err));
-    await tgSend(cfg.token, chatId, '❌ שגיאת חיבור לשרת.');
-  }
-}
-
 // ─── PUSR / MODBUS SENSOR SCANNER ─────────────────────────────────────────────
 // (defined here — BEFORE generic /api/:entity routes to avoid route collision)
 
@@ -4800,22 +4536,21 @@ app.put('/api/pesticide-prices', authMiddleware, (req, res) => {
 
 // רכש ומכירות: הזמנות ותעודות משלוח (procurement.js). נרשם לפני הראוטים הגנריים /api/:entity
 const procurement = require('./procurement').registerProcurementRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4 });
-require('./mcp')(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
+require('./mcp')(app, { farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
-require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, tgGetConfig, tgSend, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
+require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in
-// today and pushes an in-app notification and/or Telegram message to managers.
+// today and pushes an in-app notification to managers.
 const ATTN_ALERT_TZ = 'Asia/Jerusalem';
 const ATTN_ALERT_DEFAULTS = {
   enabled: false,
   check_time: '09:00',          // HH:MM local (ATTN_ALERT_TZ)
   work_days: [0, 1, 2, 3, 4],   // 0=Sun … 6=Sat (Israel work week Sun–Thu)
   channel_in_app: true,
-  channel_telegram: false,
   last_run_date: null,          // YYYY-MM-DD guard so it fires once per day
   last_run_at: null,
   last_absentees: [],
@@ -4876,11 +4611,11 @@ function runAttendanceAbsenceCheck(farmId) {
 
 // Push the absence alert over the configured channels. Returns a delivery summary.
 async function dispatchAbsenceAlert(farmId, cfg, absentees, today) {
-  if (!absentees.length) return { in_app: false, telegram: 0 };
+  if (!absentees.length) return { in_app: false };
   const names = absentees.map(a => a.name).join(', ');
   const title = absentees.length === 1 ? 'עובד לא הגיע היום' : `${absentees.length} עובדים לא הגיעו היום`;
   const body = `נכון ל-${today}: ${names}`;
-  let inApp = false, tg = 0;
+  let inApp = false;
 
   if (cfg.channel_in_app) {
     db.prepare('INSERT INTO notifications (id, recipient_id, farm_id, title, body, type, sent_by, created_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -4888,20 +4623,7 @@ async function dispatchAbsenceAlert(farmId, cfg, absentees, today) {
     inApp = true;
   }
 
-  if (cfg.channel_telegram) {
-    const tgCfg = tgGetConfig(farmId);
-    if (tgCfg?.token) {
-      const chats = db.prepare(
-        "SELECT DISTINCT u.telegram_chat_id AS cid FROM farm_members fm JOIN users u ON u.id=fm.user_id " +
-        "WHERE fm.farm_id=? AND fm.role IN ('owner','manager') AND u.telegram_chat_id IS NOT NULL AND u.telegram_chat_id != ''"
-      ).all(farmId);
-      for (const c of chats) {
-        try { await tgSend(tgCfg.token, c.cid, `⚠️ <b>${title}</b>\n${body}`); tg++; }
-        catch (err) { console.error('[attn-alert] telegram send failed:', String(err?.message || err)); }
-      }
-    }
-  }
-  return { in_app: inApp, telegram: tg };
+  return { in_app: inApp };
 }
 
 // Scheduler: once a minute, fire each enabled farm's check when its time arrives.
@@ -4923,7 +4645,7 @@ async function attendanceAlertTick() {
         const res = await dispatchAbsenceAlert(row.farm_id, cfg, absentees, today);
         const full = { ...getAttnAlertConfig(row.farm_id), ...cfg, last_run_date: today, last_run_at: NOW(), last_absentees: absentees.map(a => a.name) };
         saveAttnAlertConfig(row.farm_id, full);
-        console.log(`[attn-alert] farm=${row.farm_id} absentees=${absentees.length} inApp=${res.in_app} tg=${res.telegram}`);
+        console.log(`[attn-alert] farm=${row.farm_id} absentees=${absentees.length} inApp=${res.in_app}`);
       } catch (err) {
         console.error(`[attn-alert] farm=${row.farm_id} failed:`, String(err?.message || err));
       }
@@ -5015,7 +4737,6 @@ app.post('/api/attendance/alert-config', authMiddleware, (req, res) => {
     check_time: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.check_time) ? b.check_time : cur.check_time,
     work_days: Array.isArray(b.work_days) ? [...new Set(b.work_days.map(Number).filter(d => d >= 0 && d <= 6))].sort() : cur.work_days,
     channel_in_app: b.channel_in_app !== false,
-    channel_telegram: !!b.channel_telegram,
     last_run_date: cur.last_run_date,
     last_run_at: cur.last_run_at,
     last_absentees: cur.last_absentees,
@@ -5031,7 +4752,7 @@ app.post('/api/attendance/check-absences', authMiddleware, async (req, res) => {
   if (!canManageFarmAlerts(req, farmId)) return res.status(403).json({ error: 'Forbidden' });
   const cfg = getAttnAlertConfig(farmId);
   const result = runAttendanceAbsenceCheck(farmId);
-  let dispatched = { in_app: false, telegram: 0 };
+  let dispatched = { in_app: false };
   if (req.body?.notify) dispatched = await dispatchAbsenceAlert(farmId, cfg, result.absentees, result.today);
   res.json({ ...result, dispatched });
 });
@@ -5464,7 +5185,10 @@ app.post('/api/:entity', authMiddleware, (req, res) => {
   // _by — מי יצר/עדכן אחרון (מוצג ב"עדכונים אחרונים")
   const data = { ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete data[k]);
-  if (entity === 'farms') data.owner_id = user.id;
+  if (entity === 'farms') {
+    data.owner_id = user.id;
+    if (!user.is_admin) { PLAN_FIELDS.forEach(k => delete data[k]); Object.assign(data, trialFields()); }
+  }
 
   db.transaction(() => {
     db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(
@@ -5548,7 +5272,11 @@ app.put('/api/:entity/:id', authMiddleware, (req, res) => {
   const existing = JSON.parse(row.data || '{}');
   const updated = { ...existing, ...req.body, ...(entity === 'pesticides' || entity === 'farms' ? {} : { _by: user.full_name || user.email }) };
   ['id', 'farm_id', 'created_at', 'updated_at'].forEach(k => delete updated[k]);
-  if (entity === 'farms') updated.owner_id = existing.owner_id; // הבעלות לא משתנה דרך עריכה
+  if (entity === 'farms') {
+    updated.owner_id = existing.owner_id; // הבעלות לא משתנה דרך עריכה
+    // מסלול/תקופת ניסיון — רק מנהל המערכת (דרך /api/admin/farms/:id/plan)
+    PLAN_FIELDS.forEach(k => { if (k in existing) updated[k] = existing[k]; else delete updated[k]; });
+  }
 
   // רשומה לא עוברת בין משקים
   const farm_id = row.farm_id;

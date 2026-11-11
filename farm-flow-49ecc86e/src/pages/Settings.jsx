@@ -26,7 +26,6 @@ import {
   CreditCard,
   Loader2,
   Brain,
-  Send,
   Mail,
   Clock,
   Receipt,
@@ -52,7 +51,6 @@ import AISettingsManager from '../components/settings/AISettingsManager';
 import GmailSettingsManager from '../components/settings/GmailSettingsManager';
 import BookkeeperSettingsManager from '../components/settings/BookkeeperSettingsManager';
 import AttendanceSettingsManager from '../components/settings/AttendanceSettingsManager';
-import TelegramSettings from '../components/settings/TelegramSettings';
 import McpSettingsManager from '../components/settings/McpSettingsManager';
 import IntegrationsManager from '../components/settings/IntegrationsManager';
 import { User, Farm } from '@/entities/all';
@@ -225,10 +223,6 @@ export default function Settings() {
                   <Brain className="w-3.5 h-3.5" />
                   <span>AI וסוכנים</span>
                 </TabsTrigger>
-                <TabsTrigger value="telegram" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
-                  <Send className="w-3.5 h-3.5" />
-                  <span>טלגרם</span>
-                </TabsTrigger>
                 <TabsTrigger value="gmail" className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs whitespace-nowrap">
                   <Mail className="w-3.5 h-3.5" />
                   <span>Gmail</span>
@@ -298,9 +292,6 @@ export default function Settings() {
               <AISettingsManager />
               <McpSettingsManager />
             </div>
-          </TabsContent>
-          <TabsContent value="telegram">
-            <TelegramSettings />
           </TabsContent>
           <TabsContent value="gmail">
             <GmailSettingsManager />

@@ -31,7 +31,7 @@ ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 HF_TOKEN = os.environ.get('HF_TOKEN', '')
 # Optional: override the HuggingFace model (default: Qwen/Qwen2.5-VL-3B-Instruct)
 HF_MODEL = os.environ.get('HF_MODEL', '')
-# Groq API key for Telegram bot NLP (free tier: https://console.groq.com)
+# Groq API key (vision OCR fallback) (free tier: https://console.groq.com)
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 # Registration: set ALLOW_REGISTRATION=true env var to enable public sign-up

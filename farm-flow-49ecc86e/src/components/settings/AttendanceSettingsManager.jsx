@@ -113,7 +113,6 @@ export default function AttendanceSettingsManager({ currentFarm }) {
           check_time: cfg.check_time,
           work_days: cfg.work_days,
           channel_in_app: cfg.channel_in_app,
-          channel_telegram: cfg.channel_telegram,
         }),
       });
       setCfg(d);
@@ -136,7 +135,7 @@ export default function AttendanceSettingsManager({ currentFarm }) {
       });
       setCheckResult(d);
       if (notify) {
-        setMessage({ type: "success", text: `התראה נשלחה (אפליקציה: ${d.dispatched?.in_app ? "כן" : "לא"}, טלגרם: ${d.dispatched?.telegram || 0})` });
+        setMessage({ type: "success", text: `התראה נשלחה (אפליקציה: ${d.dispatched?.in_app ? "כן" : "לא"})` });
         setTimeout(() => setMessage(null), 5000);
       }
     } catch (e) {
@@ -347,10 +346,6 @@ export default function AttendanceSettingsManager({ currentFarm }) {
                 <div className="flex items-center gap-2">
                   <Checkbox id="ch-inapp" checked={!!cfg.channel_in_app} onCheckedChange={(v) => patchCfg({ channel_in_app: !!v })} />
                   <Label htmlFor="ch-inapp" className="text-sm font-normal cursor-pointer">התראה באפליקציה</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox id="ch-tg" checked={!!cfg.channel_telegram} onCheckedChange={(v) => patchCfg({ channel_telegram: !!v })} />
-                  <Label htmlFor="ch-tg" className="text-sm font-normal cursor-pointer">טלגרם (לבעלים/מנהלים מקושרים)</Label>
                 </div>
               </div>
 

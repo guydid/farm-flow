@@ -6,7 +6,7 @@
 const KINDS = { rent: 'שכירות', housing: 'מגורי עובדים', electricity: 'חשמל', water: 'מים', gas: 'גז', other: 'חיוב', credit: 'זיכוי' };
 
 function registerLeaseRoutes(app, deps) {
-  const { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, tgGetConfig, tgSend, attnNow } = deps;
+  const { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, attnNow } = deps;
 
   const roleOf = (farmId, userId) => getFarmMember(farmId, userId)?.role || null;
   const ctxOf = (req, res, { write = false } = {}) => {
@@ -286,14 +286,9 @@ function registerLeaseRoutes(app, deps) {
   });
 
   // ── daily reminders: X days before due, on the due date, and weekly while overdue ──
-  async function notify(farmId, title, body, telegram) {
+  function notify(farmId, title, body) {
     db.prepare('INSERT INTO notifications (id, recipient_id, farm_id, title, body, type, sent_by, created_at) VALUES (?,?,?,?,?,?,?,?)')
       .run(uuidv4(), null, farmId, title, body, 'warning', null, NOW());
-    if (!telegram || !tgGetConfig || !tgSend) return;
-    const tgCfg = tgGetConfig(farmId);
-    if (!tgCfg?.token) return;
-    const chats = db.prepare("SELECT DISTINCT u.telegram_chat_id AS cid FROM farm_members fm JOIN users u ON u.id=fm.user_id WHERE fm.farm_id=? AND fm.role IN ('owner','manager') AND u.telegram_chat_id IS NOT NULL AND u.telegram_chat_id != ''").all(farmId);
-    for (const c of chats) { try { await tgSend(tgCfg.token, c.cid, `🏠 <b>${title}</b>\n${body}`); } catch (e) { console.error('[leases] telegram failed:', String(e?.message || e)); } }
   }
   let running = false, lastRunDate = null;
   async function reminderTick() {
@@ -306,7 +301,7 @@ function registerLeaseRoutes(app, deps) {
       for (const farmId of farms) {
         const leases = Object.fromEntries(rowsOf('leases', farmId).map(l => [l.id, l]));
         const payments = rowsOf('lease_payments', farmId).filter(p => ['due', 'overdue'].includes(p.status));
-        const lines = { soon: [], today: [], overdue: [] }; let telegram = false;
+        const lines = { soon: [], today: [], overdue: [] };
         for (const p of payments) {
           if (p.kind === 'credit' || Number(p.amount) < 0) continue; // זיכויים לא מזכירים
           const lease = leases[p.lease_id]; if (!lease || lease.reminders_enabled === false) continue;
@@ -322,12 +317,11 @@ function registerLeaseRoutes(app, deps) {
           if (!bucket || sent.includes(`${bucket}:${t}`)) continue;
           const who = lease.counterparty_name ? ` (${lease.counterparty_name})` : '';
           lines[bucket].push(`${p.direction === 'receive' ? 'לקבל' : 'לשלם'} ₪${Number(p.amount).toLocaleString('he-IL')} · ${p.description || KINDS[p.kind] || ''} · ${lease.title}${who}${days < 0 ? ` · באיחור ${-days} ימים` : ''}`);
-          if (lease.reminder_telegram) telegram = true;
           updateRow(p.id, { reminders_sent: [...sent, `${bucket}:${t}`].slice(-30) });
         }
-        if (lines.soon.length) await notify(farmId, `תשלומי שכירות בקרוב (${lines.soon.length})`, lines.soon.join('\n'), telegram);
-        if (lines.today.length) await notify(farmId, `תשלומי שכירות להיום (${lines.today.length})`, lines.today.join('\n'), telegram);
-        if (lines.overdue.length) await notify(farmId, `תשלומי שכירות באיחור (${lines.overdue.length})`, lines.overdue.join('\n'), telegram);
+        if (lines.soon.length) notify(farmId, `תשלומי שכירות בקרוב (${lines.soon.length})`, lines.soon.join('\n'));
+        if (lines.today.length) notify(farmId, `תשלומי שכירות להיום (${lines.today.length})`, lines.today.join('\n'));
+        if (lines.overdue.length) notify(farmId, `תשלומי שכירות באיחור (${lines.overdue.length})`, lines.overdue.join('\n'));
         if (lines.soon.length || lines.today.length || lines.overdue.length) console.log(`[leases] farm=${farmId} reminders soon=${lines.soon.length} today=${lines.today.length} overdue=${lines.overdue.length}`);
       }
     } catch (e) { console.error('[leases] reminder tick failed:', e.message); }

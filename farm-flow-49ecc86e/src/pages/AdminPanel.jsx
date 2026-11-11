@@ -130,6 +130,19 @@ export default function AdminPanel() {
     try { const ss = await adminFetch('/admin/server-status'); if (ss && !ss.error) setServerStatus(ss); } catch { /* ignore */ }
   }, []);
 
+  const [planBusy, setPlanBusy] = useState(null);
+  const setFarmPlan = async (farm, body) => {
+    setPlanBusy(farm.id);
+    try {
+      const r = await adminFetch(`/admin/farms/${farm.id}/plan`, { method: 'PUT', body: JSON.stringify(body) });
+      if (r?.error) throw new Error(r.error);
+      setFarms(prev => prev.map(f => (f.id === farm.id ? { ...f, ...r } : f)));
+      toast({ title: r.plan === 'active' ? `המנוי של ${farm.name} הופעל` : `הניסיון של ${farm.name} הוארך עד ${new Date(r.trial_ends_at).toLocaleDateString('he-IL')}` });
+    } catch (e) {
+      toast({ title: 'שגיאה בעדכון המסלול', description: e.message || '', variant: 'destructive' });
+    } finally { setPlanBusy(null); }
+  };
+
   const [cleaningUploads, setCleaningUploads] = useState(false);
   const cleanupUploads = async () => {
     if (!window.confirm('למחוק קבצים ישנים שאינם מקושרים לאף רשומה (מעל 14 יום)? קבצים של חשבוניות/עובדים נשמרים תמיד.')) return;
@@ -514,7 +527,22 @@ export default function AdminPanel() {
                     {f.entity_count} רשומות · {f.created_at ? new Date(f.created_at).toLocaleDateString('he-IL') : ''}
                   </div>
                 </div>
-                <Badge variant="secondary">{f.entity_count} רשומות</Badge>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {f.plan === 'active' && <Badge className="bg-green-100 text-green-800 hover:bg-green-100">מנוי פעיל</Badge>}
+                  {f.plan === 'trial' && (
+                    <Badge className={f.trial_expired ? 'bg-red-100 text-red-800 hover:bg-red-100' : 'bg-amber-100 text-amber-800 hover:bg-amber-100'}>
+                      {f.trial_expired ? 'ניסיון הסתיים' : 'ניסיון'} · {f.trial_ends_at ? new Date(f.trial_ends_at).toLocaleDateString('he-IL') : ''}
+                    </Badge>
+                  )}
+                  {f.plan && f.plan !== 'active' && (
+                    <>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" disabled={planBusy === f.id} onClick={() => setFarmPlan(f, { extend_days: 14 })}>+14 יום</Button>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" disabled={planBusy === f.id} onClick={() => setFarmPlan(f, { extend_days: 30 })}>+30 יום</Button>
+                      <Button size="sm" className="h-7 text-xs" disabled={planBusy === f.id} onClick={() => setFarmPlan(f, { plan: 'active' })}>הפעל מנוי</Button>
+                    </>
+                  )}
+                  <Badge variant="secondary">{f.entity_count} רשומות</Badge>
+                </div>
               </CardContent>
             </Card>
           ))}

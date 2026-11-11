@@ -16,7 +16,7 @@ const EMPTY = {
   counterparty_name: "", counterparty_phone: "", counterparty_id_number: "", counterparty_email: "",
   start_date: "", end_date: "", amount: "", frequency: "monthly", due_day: "1", payment_method: "transfer",
   status: "active", contract_url: "", contract_name: "", notes: "",
-  reminders_enabled: true, reminder_days_before: 7, reminder_telegram: false, meters: [],
+  reminders_enabled: true, reminder_days_before: 7, meters: [],
   billing_mode: "", vat_exempt: false,
 };
 
@@ -182,7 +182,6 @@ export default function LeaseForm({ open, onClose, onSave, lease, defaultDirecti
             <div className="flex items-center justify-between"><Label className="font-medium">תזכורות</Label><Switch checked={form.reminders_enabled !== false} onCheckedChange={(v) => set({ reminders_enabled: v })} /></div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1"><Label className="text-xs">ימים לפני מועד התשלום</Label><Input type="number" min="0" max="60" dir="ltr" value={form.reminder_days_before} onChange={(e) => set({ reminder_days_before: e.target.value })} /></div>
-              <div className="flex items-center justify-between pt-5"><Label className="text-sm">גם בטלגרם (לבעלים/מנהלים)</Label><Switch checked={!!form.reminder_telegram} onCheckedChange={(v) => set({ reminder_telegram: v })} /></div>
             </div>
             <p className="text-[11px] text-gray-400">התראה באפליקציה נשלחת לפני המועד, ביום התשלום, ואחת לשבוע בזמן איחור.</p>
           </div>

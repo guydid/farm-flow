@@ -508,6 +508,21 @@ export default function Layout({ children, currentPageName }) {
               <Button size="sm" className="h-7" onClick={() => window.location.reload()}>רענן עכשיו</Button>
             </div>
           )}
+          {currentFarm?.plan === 'trial' && currentFarm.trial_ends_at && (() => {
+            const msLeft = Date.parse(currentFarm.trial_ends_at) - Date.now();
+            const expired = msLeft <= 0;
+            const daysLeft = Math.max(1, Math.ceil(msLeft / 864e5));
+            return (
+              <div role="status" dir="rtl" className={cn(
+                "border-b text-sm px-4 py-2 text-center",
+                expired ? "bg-red-50 border-red-200 text-red-800" : "bg-amber-50 border-amber-200 text-amber-900"
+              )}>
+                {expired
+                  ? "תקופת הניסיון הסתיימה — המשק במצב צפייה בלבד. הנתונים שמורים; להארכה או להפעלת מנוי פנה למנהל המערכת."
+                  : `תקופת ניסיון: ${daysLeft === 1 ? "נותר יום אחד" : `נותרו ${daysLeft} ימים`} (עד ${new Date(currentFarm.trial_ends_at).toLocaleDateString("he-IL")}).`}
+              </div>
+            );
+          })()}
           <TopBar
             onMenuClick={() => setSidebarOpen(true)}
             currentUser={currentUser}

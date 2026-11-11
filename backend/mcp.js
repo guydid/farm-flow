@@ -102,7 +102,7 @@ const KNOWN_FIELDS = {
 };
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
+module.exports = function mountMcp(app, { farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
   const knownFields = (entity) => KNOWN_FIELDS[entity] || (procurement && procurement.KNOWN_FIELDS[entity]) || [];
   const agentBy = (ctx) => `סוכן: ${ctx.tokenName}`;
   db.exec(`
@@ -180,12 +180,14 @@ module.exports = function mountMcp(app, { db, listEntities, formatEntity, getUse
     const member = getFarmMember(row.farm_id, user.id);
     if (!member && !user.is_admin) return null;
     db.prepare('UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?').run(NOW(), row.id);
+    // תקופת ניסיון שהסתיימה → הסוכן במצב קריאה בלבד (כמו ה-REST)
+    const locked = !user.is_admin && !!farmTrialExpired?.(row.farm_id);
     return {
       tokenId: row.id,
       tokenName: row.name || 'סוכן',
       farmId: row.farm_id,
-      canWrite: !!row.can_write && member?.role !== 'viewer',
-      canWritePest: (!!row.can_write || !!row.pest_write) && member?.role !== 'viewer',
+      canWrite: !locked && !!row.can_write && member?.role !== 'viewer',
+      canWritePest: !locked && (!!row.can_write || !!row.pest_write) && member?.role !== 'viewer',
       // Same user object the REST routes use, narrowed to this single farm.
       user: { ...user, farm_ids: [row.farm_id], current_farm_id: row.farm_id },
     };

@@ -220,7 +220,7 @@ export default function Login() {
             )}
 
             <h2 className="text-xl font-semibold text-gray-800 mb-1">{title}</h2>
-            {mode === 'register' && <p className="text-sm text-gray-500 mb-5">פותחים משק חדש ומתחילים לעבוד. חינם.</p>}
+            {mode === 'register' && <p className="text-sm text-gray-500 mb-5">פותחים משק חדש ומתחילים לעבוד. 14 ימי ניסיון חינם, בלי כרטיס אשראי.</p>}
             {mode === 'forgot' && <p className="text-sm text-gray-500 mb-5">נשלח אליך קישור לבחירת סיסמה חדשה.</p>}
             {mode === 'login' && <div className="mb-5" />}
             {mode === 'reset' && <div className="mb-5" />}
