@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bell, Menu, User as UserIcon, LogOut, ShieldCheck, ArrowRight } from "lucide-react";
+import { Bell, Menu, User as UserIcon, LogOut, ShieldCheck, ArrowRight, Rocket } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -150,6 +150,12 @@ export default function TopBar({
               <UserIcon className="h-4 w-4 mr-2" />
               הפרופיל שלי
             </DropdownMenuItem>
+            {currentFarm && (
+              <DropdownMenuItem onClick={() => window.dispatchEvent(new Event('open-onboarding'))}>
+                <Rocket className="h-4 w-4 mr-2" />
+                אשף התחלה
+              </DropdownMenuItem>
+            )}
             {currentUser?.is_admin && (
               <>
                 <DropdownMenuSeparator />

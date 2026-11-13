@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function WelcomeScreen({ currentUser, onFarmCreated }) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showJoinHelp, setShowJoinHelp] = useState(false);
   const navigate = useNavigate();
 
   const handleCreateSuccess = (newFarm) => {
@@ -57,11 +58,18 @@ export default function WelcomeScreen({ currentUser, onFarmCreated }) {
           <Button 
             variant="outline" 
             className="w-full h-12 text-base"
-            onClick={() => alert('פיצ\'ר זה יתווסף בקרוב')}
+            onClick={() => setShowJoinHelp(v => !v)}
+            aria-expanded={showJoinHelp}
           >
             <UserPlus className="mr-2 h-5 w-5" />
             הצטרף למשק קיים
           </Button>
+          {showJoinHelp && (
+            <p role="status" className="text-sm text-gray-700 bg-blue-50 border border-blue-200 rounded-lg p-3">
+              כדי להצטרף למשק קיים, בקש מבעל המשק להזמין אותך מהמסך "חברי משק" לכתובת {currentUser?.email || 'המייל שלך'}.
+              אחרי ההזמנה, היכנס מחדש והמשק יופיע אצלך.
+            </p>
+          )}
           
           <div className="text-center text-sm text-gray-500 mt-6">
             זקוק לעזרה? צור קשר עמנו בכתובת support@farmflow.co.il

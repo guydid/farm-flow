@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import TopBar from "./components/layout/TopBar";
 import BottomNav from "./components/layout/BottomNav";
 import WelcomeScreen from './components/onboarding/WelcomeScreen';
+import OnboardingWizard, { onboardingKey } from './components/onboarding/OnboardingWizard';
 import FarmSelector from './components/layout/FarmSelector';
 import ErrorBoundary from './components/ErrorBoundary';
 import { refreshBrand, BrandMark, useBrand } from "@/lib/branding";
@@ -270,6 +271,32 @@ export default function Layout({ children, currentPageName }) {
     fetchData();
   }, []);
 
+  // אשף התחלה: נפתח אוטומטית לבעלי משק חדש (בלי חלקות/עובדים/גידולים) שטרם סיים אותו,
+  // וידנית מתפריט המשתמש (אירוע open-onboarding)
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  useEffect(() => {
+    if (!currentFarm || !currentUser || currentFarm.onboarding_completed_at) return;
+    if (currentFarm.owner_id !== currentUser.id) return;
+    if (currentFarm.plan === 'trial' && currentFarm.trial_ends_at && Date.parse(currentFarm.trial_ends_at) <= Date.now()) return;
+    try {
+      if (localStorage.getItem(onboardingKey(currentFarm.id)) || sessionStorage.getItem(onboardingKey(currentFarm.id))) return;
+    } catch { /* */ }
+    let cancelled = false;
+    batchFetch([
+      { entity: 'plots', filter: { farm_id: currentFarm.id } },
+      { entity: 'employees', filter: { farm_id: currentFarm.id } },
+      { entity: 'crops', filter: { farm_id: currentFarm.id } },
+    ]).then(res => {
+      if (!cancelled && res.every(r => Array.isArray(r) && r.length === 0)) setShowOnboarding(true);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentFarm?.id, currentUser?.id]);
+  useEffect(() => {
+    const on = () => setShowOnboarding(true);
+    window.addEventListener('open-onboarding', on);
+    return () => window.removeEventListener('open-onboarding', on);
+  }, []);
+
   // Load notifications only after currentFarm is loaded
   useEffect(() => {
     if (currentFarm) {
@@ -523,6 +550,12 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Bottom Navigation - mobile only */}
         <BottomNav />
+        <OnboardingWizard
+          open={showOnboarding && !!currentFarm}
+          onClose={() => setShowOnboarding(false)}
+          farm={currentFarm}
+          currentUser={currentUser}
+        />
       </div>
     </ErrorBoundary>
   );
