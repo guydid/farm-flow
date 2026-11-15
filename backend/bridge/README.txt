@@ -11,6 +11,8 @@ FarmFlow — גשר שעון נוכחות (ZKTeco / JB Clock)
 --------------
 1. חלץ את ה-ZIP לתיקייה קבועה, למשל  C:\FarmFlowSync
    (לא לתיקיית הורדות ולא לשולחן העבודה).
+   אם install.bat הופעל ישירות מתוך ה-ZIP, הוא מעתיק את עצמו אוטומטית
+   ל-C:\FarmFlowSync וממשיך משם (config.json קיים לא נדרס).
 2. ודא ש-Python 3.10 ומעלה מותקן:  https://www.python.org/downloads/
    בהתקנה סמן "Add python.exe to PATH".
 3. הפעל  install.bat  (לחיצה כפולה). הוא מתקין את החבילות, יוצר משימה

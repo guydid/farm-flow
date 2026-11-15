@@ -11,6 +11,45 @@ echo === FarmFlow clock bridge installer ===
 echo Folder: %CD%
 echo.
 
+REM --- Running from inside the ZIP? Explorer unpacks it to %TEMP% and deletes it later,
+REM --- which leaves the scheduled task pointing at a missing run_sync_hidden.vbs.
+REM --- Copy everything to a permanent folder and continue the install from there.
+if not exist "%~dp0farmflow_sync.py" goto :not_extracted
+if /I "%~1"=="--copied" goto :folder_ok
+set "ISTEMP="
+setlocal EnableDelayedExpansion
+set "HERE=%CD%\"
+if /I not "!HERE:%TEMP%\=!"=="!HERE!" set "ISTEMP=1"
+if /I not "!HERE:\AppData\Local\Temp\=!"=="!HERE!" set "ISTEMP=1"
+endlocal & set "ISTEMP=%ISTEMP%"
+if not defined ISTEMP goto :folder_ok
+set "TARGET=%SystemDrive%\FarmFlowSync"
+mkdir "%TARGET%" >nul 2>nul
+if not exist "%TARGET%\" set "TARGET=%LOCALAPPDATA%\FarmFlowSync"
+mkdir "%TARGET%" >nul 2>nul
+echo This installer is running from a temporary folder (inside the ZIP).
+echo Copying the bridge to a permanent folder: %TARGET%
+for %%f in ("%~dp0*.py" "%~dp0*.vbs" "%~dp0*.bat" "%~dp0*.txt") do copy /Y "%%~f" "%TARGET%\" >nul
+REM keep an existing config.json (clock IP / WRK folder you already set)
+if not exist "%TARGET%\config.json" copy /Y "%~dp0config.json" "%TARGET%\" >nul
+if not exist "%TARGET%\install.bat" (
+  echo [ERROR] Copy failed. Extract the ZIP to C:\FarmFlowSync manually and run install.bat from there.
+  pause
+  exit /b 1
+)
+echo.
+call "%TARGET%\install.bat" --copied
+exit /b %errorlevel%
+
+:not_extracted
+echo [ERROR] The bridge files were not found next to install.bat.
+echo         Extract the ZIP first ^(right click - Extract All^) to C:\FarmFlowSync,
+echo         then run install.bat from that folder.
+pause
+exit /b 1
+
+:folder_ok
+
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python was not found. Install Python 3.10+ from https://www.python.org/downloads/
