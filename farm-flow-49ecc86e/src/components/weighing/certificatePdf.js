@@ -42,7 +42,7 @@ async function fetchBase64(url) {
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 }
-async function ensureFonts(doc) {
+export async function ensureFonts(doc) {
   if (!fontCache) {
     fontCache = Promise.all([fetchBase64('/fonts/Heebo-Regular.ttf'), fetchBase64('/fonts/Heebo-Bold.ttf')])
       .catch((e) => { fontCache = null; throw e; });
@@ -119,16 +119,16 @@ function groupItems(items) {
 
 // עמודות הטבלה מימין לשמאל (רוחב במ"מ, סה"כ = CONTENT_W)
 const COLUMNS = [
-  { key: 'product', label: 'מוצר', w: 36, align: 'right' },
+  { key: 'product', label: 'מוצר', w: 34, align: 'right' },
   { key: 'quality', label: 'איכות', w: 14, align: 'center' },
-  { key: 'packaging', label: 'סוג אריזה', w: 24, align: 'center' },
+  { key: 'packaging', label: 'אריזה', w: 22, align: 'center' },
   { key: 'count', label: 'אריזות', w: 14, align: 'center' },
-  { key: 'gross', label: 'ברוטו (ק"ג)', w: 18, align: 'center' },
-  { key: 'tare', label: 'טרה (ק"ג)', w: 18, align: 'center' },
-  { key: 'net', label: 'נטו (ק"ג)', w: 18, align: 'center' },
-  { key: 'price', label: 'מחיר', w: 16, align: 'center' },
+  { key: 'gross', label: 'ברוטו ק"ג', w: 18, align: 'center' },
+  { key: 'tare', label: 'טרה ק"ג', w: 16, align: 'center' },
+  { key: 'net', label: 'נטו ק"ג', w: 18, align: 'center' },
+  { key: 'price', label: 'מחיר', w: 18, align: 'center' },
   { key: 'discount', label: 'הנחה', w: 12, align: 'center' },
-  { key: 'total', label: 'סה"כ ₪', w: 16, align: 'center' },
+  { key: 'total', label: 'סה"כ', w: 20, align: 'center' },
 ];
 // מיקומי x: העמודה הראשונה צמודה לימין
 (function layoutColumns() {
@@ -155,73 +155,70 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
     doc.addPage(); y = MARGIN; return true;
   };
 
-  // ---- כותרת ----
+  // ---- כותרת: משק מימין, שם המסמך + QR משמאל (כמו תצוגת ההדפסה) ----
   const headerTop = y;
-  // ימין: פרטי המשק
   text(co.company_name || 'שם המשק', RIGHT, y + 6, { size: 14, bold: true });
   const coLines = [
-    `ע.מ/ח.פ: ${co.business_number || 'לא צוין'}`,
-    [co.address, co.city].filter(Boolean).join(', '),
-    `טלפון: ${co.phone || 'לא צוין'}`,
-    co.email ? `אימייל: ${co.email}` : null,
+    co.business_number ? `ע.מ/ח.פ ${co.business_number}` : null,
+    [co.address, co.city].filter(Boolean).join(', ') || null,
+    [co.phone && `טלפון ${co.phone}`, co.email].filter(Boolean).join(' · ') || null,
   ].filter(Boolean);
-  coLines.forEach((l, i) => text(l, RIGHT, y + 12 + i * 4.2, { size: 8.5 }));
-  // מרכז: שם המסמך ותיבת מספר/תאריך
-  const cx = PAGE_W / 2;
-  text('תעודת שקילה', cx, y + 7, { align: 'center', size: 16, bold: true });
-  doc.setFillColor(245, 245, 245); doc.setDrawColor(190); doc.setLineWidth(0.2);
-  doc.rect(cx - 30, y + 10, 60, 17, 'FD');
-  text(`מס' תעודה: ${certNum}`, cx, y + 15, { align: 'center', size: 9, bold: true });
-  text(`תאריך: ${cert.date ? format(new Date(cert.date), 'dd/MM/yyyy') : 'לא צוין'}`, cx, y + 20, { align: 'center', size: 8.5 });
-  text(`שעה: ${cert.time || 'לא צוין'}`, cx, y + 25, { align: 'center', size: 8.5 });
-  // שמאל: QR
+  coLines.forEach((l, i) => text(l, RIGHT, y + 11.5 + i * 4, { size: 8, color: 70 }));
+  let titleX = LEFT;
   if (qr) {
     try {
-      doc.addImage(qr, 'PNG', LEFT, y + 1, 22, 22);
-      text(String(cert.barcode), LEFT + 11, y + 26, { align: 'center', size: 6, color: 60 });
+      doc.addImage(qr, 'PNG', LEFT, y, 20, 20);
+      text(String(cert.barcode), LEFT + 10, y + 23, { align: 'center', size: 6, color: 90 });
+      titleX = LEFT + 24;
     } catch {
       /* ללא QR */
     }
   }
-  y = headerTop + 31;
-  doc.setDrawColor(0); doc.setLineWidth(0.6); doc.line(LEFT, y, RIGHT, y);
-  y += 6;
+  const titleLines = [
+    [`מס' ${certNum}`, 11, true, 0],
+    [`${cert.date ? format(new Date(cert.date), 'dd/MM/yyyy') : 'לא צוין'}${cert.time ? ` · ${cert.time}` : ''}`, 8, false, 70],
+    cert.status ? [`סטטוס: ${STATUSES[cert.status] || cert.status}`, 8, false, 70] : null,
+  ].filter(Boolean);
+  text('תעודת שקילה', titleX, y + 6.5, { align: 'left', size: 16, bold: true });
+  titleLines.forEach(([l, size, bold, color], i) => text(l, titleX, y + 12 + i * 4.3, { align: 'left', size, bold, color }));
+  y = headerTop + 27;
+  doc.setDrawColor(17); doc.setLineWidth(0.7); doc.line(LEFT, y, RIGHT, y);
+  y += 5;
 
   // ---- לקוח / הובלה ----
-  const boxGap = 6, boxW = (CONTENT_W - boxGap) / 2, boxH = 30;
+  const boxGap = 4, boxW = (CONTENT_W - boxGap) / 2;
+  const custLines = [
+    ['שם', cu.name || cert.customer_name || 'לא צוין'],
+    cu.address ? ['כתובת', cu.address] : null,
+    cu.phone ? ['טלפון', cu.phone] : null,
+    cu.contact_person ? ['איש קשר', cu.contact_person] : null,
+  ].filter(Boolean);
+  const transLines = [
+    ['נהג', cert.driver_name || 'לא צוין'],
+    ['רכב', [VEHICLE_TYPES[cert.vehicle_type] || cert.vehicle_type, cert.vehicle_number].filter(Boolean).join(' · ') || 'לא צוין'],
+  ];
+  const boxH = 11 + Math.max(custLines.length, transLines.length) * 4.4;
   const drawBox = (x1, title, lines) => {
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(x1, y, boxW, boxH);
-    doc.setFillColor(240, 240, 240); doc.rect(x1 + 0.15, y + 0.15, boxW - 0.3, 6, 'F');
-    text(title, x1 + boxW / 2, y + 4.3, { align: 'center', size: 9, bold: true });
+    doc.setDrawColor(156, 163, 175); doc.setLineWidth(0.25); doc.roundedRect(x1, y, boxW, boxH, 1.5, 1.5, 'S');
+    text(title, x1 + boxW - 3, y + 4.5, { size: 7.5, bold: true, color: 85 });
+    doc.setDrawColor(229, 231, 235); doc.setLineWidth(0.2); doc.line(x1 + 3, y + 6.2, x1 + boxW - 3, y + 6.2);
     lines.forEach(([k, v], i) => {
-      const ly = y + 11 + i * 4.6;
-      doc.setFont('Heebo', 'bold'); doc.setFontSize(8.5);
-      const kw = doc.getTextWidth(k);
-      text(k, x1 + boxW - 3, ly, { size: 8.5, bold: true });
-      text(fit(v, boxW - kw - 8, 8.5), x1 + boxW - 3 - kw - 1.5, ly, { size: 8.5 });
+      const ly = y + 10.5 + i * 4.4;
+      text(k, x1 + boxW - 3, ly, { size: 8.5, color: 85 });
+      text(fit(v, boxW - 26, 8.5), x1 + boxW - 23, ly, { size: 8.5, bold: true });
     });
   };
-  drawBox(RIGHT - boxW, 'פרטי לקוח', [
-    ['שם:', cu.name || cert.customer_name || 'לא צוין'],
-    ['כתובת:', cu.address || 'לא צוין'],
-    ['טלפון:', cu.phone || 'לא צוין'],
-    ['איש קשר:', cu.contact_person || 'לא צוין'],
-  ]);
-  drawBox(LEFT, 'פרטי הובלה', [
-    ['נהג:', cert.driver_name || 'לא צוין'],
-    ['סוג רכב:', VEHICLE_TYPES[cert.vehicle_type] || cert.vehicle_type || 'לא צוין'],
-    ['מספר רכב:', cert.vehicle_number || 'לא צוין'],
-    ['סטטוס:', STATUSES[cert.status] || cert.status || ''],
-  ]);
-  y += boxH + 6;
+  drawBox(RIGHT - boxW, 'לקוח', custLines);
+  drawBox(LEFT, 'הובלה', transLines);
+  y += boxH + 5;
 
   // ---- הערות ----
   if (cert.notes && String(cert.notes).trim()) {
     const lines = wrap(String(cert.notes).trim(), CONTENT_W - 22, 8.5);
-    const h = 6 + lines.length * 4.4;
+    const h = 4.5 + lines.length * 4.4;
     ensureSpace(h);
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(LEFT, y, CONTENT_W, h);
-    text('הערות:', RIGHT - 3, y + 5, { size: 8.5, bold: true });
+    doc.setDrawColor(156, 163, 175); doc.setLineWidth(0.25); doc.roundedRect(LEFT, y, CONTENT_W, h, 1.5, 1.5, 'S');
+    text('הערות:', RIGHT - 3, y + 5, { size: 8.5, bold: true, color: 85 });
     lines.forEach((l, i) => text(l, RIGHT - 17, y + 5 + i * 4.4, { size: 8.5 }));
     y += h + 5;
   }
@@ -231,18 +228,29 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
   // הערה: כתיבת טקסט ב-jsPDF משנה את צבע המילוי (אותו אופרטור ב-PDF), לכן מגדירים
   // צבע מילוי לפני כל מלבן, ומציירים קודם את כל המלבנים ורק אחר כך את הטקסטים
   // (אחרת תא שצויר אחרי טקסט רחב מכסה אותו).
+  // סגנון: כותרת אפורה עם קווים שחורים מעל ומתחת, שורות מופרדות בקו דק, בלי קווים אנכיים
   const drawHeadRow = () => {
-    doc.setDrawColor(0); doc.setLineWidth(0.25);
-    for (const c of COLUMNS) { doc.setFillColor(240, 240, 240); doc.rect(c.x1, y, c.w, HEAD_H, 'FD'); }
-    for (const c of COLUMNS) text(fit(c.label, c.w - 2, 7.5), c.x1 + c.w / 2, y + 5, { align: 'center', size: 7.5, bold: true });
+    doc.setFillColor(229, 231, 235); doc.rect(LEFT, y, CONTENT_W, HEAD_H, 'F');
+    doc.setDrawColor(17); doc.setLineWidth(0.3);
+    doc.line(LEFT, y, RIGHT, y); doc.line(LEFT, y + HEAD_H, RIGHT, y + HEAD_H);
+    for (const c of COLUMNS) {
+      const x = c.align === 'right' ? c.x2 - 1.5 : c.x1 + c.w / 2;
+      text(fit(c.label, c.w - 2, 7.5), x, y + 5, { align: c.align === 'right' ? 'right' : 'center', size: 7.5, bold: true });
+    }
     y += HEAD_H;
   };
-  const drawRow = (cells, { fill = null, bold = false, size = 8 } = {}) => {
+  let rowIndex = 0;
+  const drawRow = (cells, { fill = null, bold = false, size = 8, strong = false } = {}) => {
     if (ensureSpace(ROW_H)) drawHeadRow();
-    doc.setDrawColor(0); doc.setLineWidth(0.2);
-    for (const c of COLUMNS) {
-      if (fill) doc.setFillColor(...fill);
-      doc.rect(c.x1, y, c.w, ROW_H, fill ? 'FD' : 'S');
+    const bg = fill || (rowIndex++ % 2 === 1 ? [250, 250, 250] : null);
+    if (bg) { doc.setFillColor(...bg); doc.rect(LEFT, y, CONTENT_W, ROW_H, 'F'); }
+    if (strong) {
+      doc.setDrawColor(17); doc.setLineWidth(0.5);
+      doc.line(LEFT, y, RIGHT, y); doc.line(LEFT, y + ROW_H, RIGHT, y + ROW_H);
+    } else {
+      if (fill) doc.setDrawColor(156, 163, 175); else doc.setDrawColor(209, 213, 219);
+      doc.setLineWidth(fill ? 0.3 : 0.2);
+      doc.line(LEFT, y + ROW_H, RIGHT, y + ROW_H);
     }
     for (const c of COLUMNS) {
       const cell = cells[c.key];
@@ -263,43 +271,47 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
   if (groups.length === 0) {
     drawRow({ product: { v: 'אין פריטים בתעודה זו', span: 10, align: 'center' } });
   }
+  const multiGroup = groups.length > 1 || groups.some((g) => g.items.length > 1);
   for (const g of groups) {
     for (const it of g.items) {
+      const disc = parseFloat(it.discount_percentage || 0);
       drawRow({
         product: it.product_name || '',
         quality: it.quality || '',
-        packaging: it.packaging_type || 'לא צוין',
+        packaging: it.packaging_type || '-',
         count: String(it.package_count || 0),
         gross: num(it.gross_weight),
         tare: num(it.tare_weight),
         net: num(it.net_weight),
-        price: money(it.price_per_unit),
-        discount: `${parseFloat(it.discount_percentage || 0)}%`,
+        price: `${money(it.price_per_unit)}${it.pricing_method === 'per_kg' ? '/ק"ג' : ''}`,
+        discount: disc > 0 ? `${disc}%` : '-',
         total: money(it.item_total),
       });
     }
-    drawRow({
-      product: { v: `סיכום ביניים - ${g.product_name} איכות ${g.quality}`, span: 3 },
-      count: String(g.p),
-      net: num(g.w),
-      total: money(g.a),
-    }, { fill: [245, 245, 245], bold: true });
+    if (multiGroup) {
+      drawRow({
+        product: { v: `סה"כ ${g.product_name} · ${g.quality}`, span: 3 },
+        count: String(g.p),
+        net: num(g.w),
+        total: money(g.a),
+      }, { fill: [243, 244, 246], bold: true });
+    }
   }
   drawRow({
-    product: { v: 'סיכום כללי', span: 3 },
+    product: { v: 'סה"כ תעודה', span: 3 },
     count: String(cert.total_packages || 0),
     net: num(cert.total_weight),
     total: money(cert.total_amount),
-  }, { fill: [224, 224, 224], bold: true, size: 8.5 });
+  }, { fill: [229, 231, 235], bold: true, size: 9, strong: true });
 
   // ---- חתימות ----
-  ensureSpace(34);
-  y += 12;
-  const sigW = (CONTENT_W - 2 * 10) / 3;
+  ensureSpace(30);
+  y += 14;
+  const sigGap = 10, sigW = (CONTENT_W - 2 * sigGap) / 3;
   ['חתימת השוקל', 'חתימת הנהג', 'חתימת הלקוח'].forEach((label, i) => {
-    const x1 = RIGHT - i * (sigW + 10) - sigW;
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.line(x1, y + 10, x1 + sigW, y + 10);
-    text(label, x1 + sigW / 2, y + 15, { align: 'center', size: 8.5, bold: true });
+    const x1 = RIGHT - i * (sigW + sigGap) - sigW;
+    doc.setDrawColor(17); doc.setLineWidth(0.3); doc.line(x1, y, x1 + sigW, y);
+    text(label, x1 + sigW / 2, y + 4.5, { align: 'center', size: 8.5, bold: true });
   });
 
   // ---- תחתית בכל עמוד ----
@@ -307,7 +319,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);
     doc.setDrawColor(200); doc.setLineWidth(0.2); doc.line(LEFT, PAGE_H - 11, RIGHT, PAGE_H - 11);
-    text('תעודה זו נוצרה באמצעות מערכת FarmFlow', PAGE_W / 2, PAGE_H - 7, { align: 'center', size: 7.5, color: 110 });
+    text('הופק באמצעות FarmFlow', PAGE_W / 2, PAGE_H - 7, { align: 'center', size: 7.5, color: 110 });
     text(`תעודת שקילה ${certNum}`, RIGHT, PAGE_H - 7, { size: 7.5, color: 110 });
     text(`עמוד ${p} מתוך ${pages}`, LEFT, PAGE_H - 7, { align: 'left', size: 7.5, color: 110 });
   }

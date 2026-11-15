@@ -1,284 +1,169 @@
 import React from 'react';
 import { format } from 'date-fns';
-import QRCode from './QRCode';
+import { A4_DOC_CSS } from '../print/a4';
 
-const safeArray = (arr) => (Array.isArray(arr) ? arr : []);
-const safeObject = (obj) => {
-  if (obj === null || typeof obj !== 'object') {
-    return {};
-  }
-  if (Object.prototype.hasOwnProperty.call(obj, 'hasOwnProperty') === false || typeof obj.hasOwnProperty !== 'function') {
-    return { ...obj };
-  }
-  return obj;
+// פריסת תעודת שקילה להדפסה ב-A4 (186 מ"מ רוחב תוכן, שוליים 12 מ"מ).
+// WeighingDetail מרנדר אותה ל-HTML ומדפיס דרך printA4 — בלי תפריטי האפליקציה.
+// ה-PDF לשיתוף נבנה בנפרד (certificatePdf.js) באותו מבנה.
+
+const VEHICLE_TYPES = { truck: 'משאית', van: 'מסחרית', pickup: 'טנדר', trailer: 'נגרר' };
+const STATUSES = { draft: 'טיוטה', completed: 'הושלם', shipped: 'נשלח' };
+
+const obj = (o) => (o && typeof o === 'object' ? o : {});
+const num = (v, d = 1) => (parseFloat(v) || 0).toLocaleString('he-IL', { maximumFractionDigits: d });
+const money = (v) => `₪${(parseFloat(v) || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtDate = (d) => {
+  if (!d) return 'לא צוין';
+  const p = new Date(d);
+  return Number.isNaN(p.getTime()) ? String(d) : format(p, 'dd/MM/yyyy');
 };
 
-// פריסת תעודת שקילה להדפסה ולשיתוף כ-PDF. משמשת גם את WeighingDetail (הדפסה)
-// וגם את useCertificateShare (צילום לפריסה נסתרת ושיתוף).
-export default function CertificatePrintLayout({ certificate, items, companySettings, customer }) {
-  const safeCertificate = safeObject(certificate);
-  const safeCompanySettings = safeObject(companySettings);
-  const safeCustomer = safeObject(customer);
-  const safeItems = safeArray(items);
+// רוחב עמודות במ"מ (סה"כ 186)
+const COLS = [
+  ['מוצר', 34, 'r'], ['איכות', 14], ['אריזה', 22], ['אריזות', 14], ['ברוטו ק"ג', 18],
+  ['טרה ק"ג', 16], ['נטו ק"ג', 18], ['מחיר', 18], ['הנחה', 12], ['סה"כ', 20],
+];
 
-  if (!safeCertificate || safeItems.length === 0) {
-    return (
-      <div className="p-8 text-center">
-        <h2>טוען נתונים להדפסה...</h2>
-      </div>
-    );
+export function certificateNumber(cert) {
+  return cert?.reference_number || String(cert?.id || '').slice(-5) || 'לא זמין';
+}
+
+function groupItems(items) {
+  const map = new Map();
+  for (const raw of items) {
+    const it = obj(raw);
+    if (!Object.keys(it).length) continue;
+    const key = `${it.product_name || 'ללא שם'}_${it.quality || 'לא צוין'}`;
+    if (!map.has(key)) map.set(key, { product: it.product_name || 'ללא שם מוצר', quality: it.quality || 'לא צוין', items: [], w: 0, p: 0, a: 0 });
+    const g = map.get(key);
+    g.items.push(it);
+    g.w += parseFloat(it.net_weight) || 0;
+    g.p += parseInt(it.package_count, 10) || 0;
+    g.a += parseFloat(it.item_total) || 0;
   }
+  return [...map.values()];
+}
 
-  const groupedItems = safeItems.reduce((acc, item) => {
-    const currentItem = safeObject(item);
-    if (Object.keys(currentItem).length === 0) return acc;
-
-    const key = `${currentItem.product_name || 'ללא שם'}_${currentItem.quality || 'לא צוין'}`;
-
-    if (!(key in acc)) {
-      acc[key] = {
-        product_name: currentItem.product_name || 'ללא שם מוצר',
-        quality: currentItem.quality || 'לא צוין',
-        items: [],
-        subtotal_weight: 0,
-        subtotal_packages: 0,
-        subtotal_amount: 0
-      };
-    }
-
-    acc[key].items.push(currentItem);
-    acc[key].subtotal_weight += parseFloat(currentItem.net_weight || 0);
-    acc[key].subtotal_packages += parseInt(currentItem.package_count || 0);
-    acc[key].subtotal_amount += parseFloat(currentItem.item_total || 0);
-
-    return acc;
-  }, {});
-
-  const groups = Object.values(groupedItems);
+export default function CertificatePrintLayout({ certificate, items, companySettings, customer }) {
+  const cert = obj(certificate), co = obj(companySettings), cu = obj(customer);
+  const list = Array.isArray(items) ? items : [];
+  const groups = groupItems(list);
+  const multiGroup = groups.length > 1 || groups.some(g => g.items.length > 1);
+  const qr = cert.barcode
+    ? `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(cert.barcode)}&size=240x240&qzone=1`
+    : null;
+  const address = [co.address, co.city].filter(Boolean).join(', ');
 
   return (
-    <div dir="rtl" style={{
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '12px',
-      lineHeight: '1.4',
-      color: '#000',
-      backgroundColor: '#fff',
-      padding: '20px'
-    }}>
-      <style>{`
-        @media print {
-          @page {
-            size: A4;
-            margin: 1cm;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-            -webkit-print-color-adjust: exact !important;
-            color-adjust: exact !important;
-            background-color: #fff !important;
-          }
-          * {
-            -webkit-print-color-adjust: exact !important;
-            color-adjust: exact !important;
-          }
-        }
-        .print-table {
-          border-collapse: collapse;
-          width: 100%;
-          margin: 10px 0;
-        }
-        .print-table th, .print-table td {
-          border: 1px solid #000;
-          padding: 6px 4px;
-          font-size: 10px;
-          text-align: right;
-        }
-        .print-table th {
-          background-color: #f0f0f0 !important;
-          font-weight: bold;
-          text-align: center;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-        .subtotal-row {
-          background-color: #f5f5f5 !important;
-          font-weight: bold;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-        .total-row {
-          background-color: #e0e0e0 !important;
-          font-weight: bold;
-          font-size: 11px;
-          -webkit-print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-      `}</style>
+    <div className="ff-doc" dir="rtl">
+      <style dangerouslySetInnerHTML={{ __html: A4_DOC_CSS }} />
 
-      {/* Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #000', paddingBottom: '15px', marginBottom: '20px' }}>
-        <div style={{ flex: '1', textAlign: 'right' }}>
-          <h1 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 10px 0' }}>
-            {safeCompanySettings.company_name || 'שם המשק'}
-          </h1>
-          <div style={{ fontSize: '10px', lineHeight: '1.5' }}>
-            <div>ע.מ/ח.פ: {safeCompanySettings.business_number || 'לא צוין'}</div>
-            <div>{safeCompanySettings.address || ''}{safeCompanySettings.city ? `, ${safeCompanySettings.city}` : ''}</div>
-            <div>טלפון: {safeCompanySettings.phone || 'לא צוין'}</div>
-            {safeCompanySettings.email && <div>אימייל: {safeCompanySettings.email}</div>}
+      <header className="ff-head">
+        <div className="ff-brand">
+          <h1>{co.company_name || 'שם המשק'}</h1>
+          <div className="ff-sub">
+            {co.business_number && <div>ע.מ/ח.פ {co.business_number}</div>}
+            {address && <div>{address}</div>}
+            {(co.phone || co.email) && <div>{[co.phone && `טלפון ${co.phone}`, co.email].filter(Boolean).join(' · ')}</div>}
           </div>
         </div>
-
-        <div style={{ flex: '1', textAlign: 'center' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', margin: '0 0 15px 0' }}>תעודת שקילה</h2>
-          <div style={{ backgroundColor: '#f5f5f5', padding: '10px', border: '1px solid #ccc' }}>
-            <div style={{ fontWeight: 'bold' }}>מס' תעודה: {safeCertificate.reference_number || safeCertificate.id?.toString().slice(-5) || 'לא זמין'}</div>
-            <div>תאריך: {safeCertificate.date ? format(new Date(safeCertificate.date), 'dd/MM/yyyy') : 'לא צוין'}</div>
-            <div>שעה: {safeCertificate.time || 'לא צוין'}</div>
+        <div className="ff-title">
+          <div className="ff-title-text">
+            <h2>תעודת שקילה</h2>
+            <div className="ff-doc-no">מס' {certificateNumber(cert)}</div>
+            <div className="ff-sub">{fmtDate(cert.date)}{cert.time ? ` · ${cert.time}` : ''}</div>
+            {cert.status && <div className="ff-sub">סטטוס: {STATUSES[cert.status] || cert.status}</div>}
           </div>
-        </div>
-
-        <div style={{ flex: '1', textAlign: 'left', display: 'flex', justifyContent: 'flex-end' }}>
-          {safeCertificate.barcode && (
-            <div style={{ textAlign: 'center' }}>
-              <QRCode data={safeCertificate.barcode} size={60} />
-              <div style={{ fontSize: '8px', marginTop: '5px', fontFamily: 'monospace' }}>{safeCertificate.barcode}</div>
+          {qr && (
+            <div className="ff-qr">
+              <img src={qr} alt="" />
+              <div>{cert.barcode}</div>
             </div>
           )}
         </div>
       </header>
 
-      {/* Customer and Transport Details */}
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-        <div style={{ border: '1px solid #000', padding: '10px' }}>
-          <h3 style={{ fontWeight: 'bold', margin: '0 0 10px 0', backgroundColor: '#f0f0f0', padding: '5px', textAlign: 'center' }}>פרטי לקוח</h3>
-          <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
-            <div><strong>שם:</strong> {safeCustomer.name || safeCertificate.customer_name || 'לא צוין'}</div>
-            <div><strong>כתובת:</strong> {safeCustomer.address || 'לא צוין'}</div>
-            <div><strong>טלפון:</strong> {safeCustomer.phone || 'לא צוין'}</div>
-            <div><strong>איש קשר:</strong> {safeCustomer.contact_person || 'לא צוין'}</div>
-          </div>
+      <section className="ff-boxes">
+        <div className="ff-box">
+          <h3>לקוח</h3>
+          <table className="ff-kv"><tbody>
+            <tr><th>שם</th><td>{cu.name || cert.customer_name || 'לא צוין'}</td></tr>
+            {cu.address && <tr><th>כתובת</th><td>{cu.address}</td></tr>}
+            {cu.phone && <tr><th>טלפון</th><td>{cu.phone}</td></tr>}
+            {cu.contact_person && <tr><th>איש קשר</th><td>{cu.contact_person}</td></tr>}
+          </tbody></table>
         </div>
-
-        <div style={{ border: '1px solid #000', padding: '10px' }}>
-          <h3 style={{ fontWeight: 'bold', margin: '0 0 10px 0', backgroundColor: '#f0f0f0', padding: '5px', textAlign: 'center' }}>פרטי הובלה</h3>
-          <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
-            <div><strong>נהג:</strong> {safeCertificate.driver_name || 'לא צוין'}</div>
-            <div><strong>סוג רכב:</strong> {{
-              truck: 'משאית',
-              van: 'מסחרית',
-              pickup: 'טנדר',
-              trailer: 'נגרר'
-            }[safeCertificate.vehicle_type] || safeCertificate.vehicle_type || 'לא צוין'}</div>
-            <div><strong>מספר רכב:</strong> {safeCertificate.vehicle_number || 'לא צוין'}</div>
-            <div><strong>סטטוס:</strong> {{
-              draft: 'טיוטה',
-              completed: 'הושלם',
-              shipped: 'נשלח'
-            }[safeCertificate.status] || safeCertificate.status}</div>
-          </div>
+        <div className="ff-box">
+          <h3>הובלה</h3>
+          <table className="ff-kv"><tbody>
+            <tr><th>נהג</th><td>{cert.driver_name || 'לא צוין'}</td></tr>
+            <tr><th>רכב</th><td>{[VEHICLE_TYPES[cert.vehicle_type] || cert.vehicle_type, cert.vehicle_number].filter(Boolean).join(' · ') || 'לא צוין'}</td></tr>
+          </tbody></table>
         </div>
       </section>
 
-      {safeCertificate.notes && (
-        <section style={{ border: '1px solid #000', padding: '8px 10px', marginBottom: '15px', fontSize: '10px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-          <strong>הערות:</strong> {String(safeCertificate.notes)}
-        </section>
+      {cert.notes && String(cert.notes).trim() && (
+        <div className="ff-notes"><b>הערות: </b>{String(cert.notes).trim()}</div>
       )}
 
-      {/* Items Details */}
-      <div>
-        <table className="print-table">
-          <thead>
-            <tr>
-              <th>מוצר</th>
-              <th>איכות</th>
-              <th>סוג אריזה</th>
-              <th>כמות אריזות</th>
-              <th>משקל ברוטו (ק"ג)</th>
-              <th>משקל טרה (ק"ג)</th>
-              <th>משקל נטו (ק"ג)</th>
-              <th>מחיר</th>
-              <th>הנחה %</th>
-              <th>סה"כ ₪</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.length === 0 ? (
-              <tr>
-                <td colSpan="10" style={{ textAlign: 'center', fontStyle: 'italic' }}>
-                  אין פריטים בתעודה זו
-                </td>
-              </tr>
-            ) : (
-              groups.map((group, groupIndex) => {
-                const safeGroup = safeObject(group);
-                return (
-                  <React.Fragment key={`group-${groupIndex}`}>
-                    {safeArray(safeGroup.items).map((item, itemIndex) => {
-                      const safeItem = safeObject(item);
-                      return (
-                        <tr key={safeItem.id || `item-${itemIndex}`}>
-                          <td>{safeItem.product_name || ''}</td>
-                          <td>{safeItem.quality || ''}</td>
-                          <td>{safeItem.packaging_type || 'לא צוין'}</td>
-                          <td style={{ textAlign: 'center' }}>{safeItem.package_count || 0}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.gross_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.tare_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.net_weight || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>₪{parseFloat(safeItem.price_per_unit || 0).toLocaleString()}</td>
-                          <td style={{ textAlign: 'center' }}>{parseFloat(safeItem.discount_percentage || 0)}%</td>
-                          <td style={{ textAlign: 'center' }}>₪{parseFloat(safeItem.item_total || 0).toLocaleString()}</td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="subtotal-row">
-                      <td colSpan="3" style={{ textAlign: 'right' }}>
-                        סיכום ביניים - {safeGroup.product_name} איכות {safeGroup.quality}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>{safeGroup.subtotal_packages}</td>
-                      <td colSpan="2"></td>
-                      <td style={{ textAlign: 'center' }}>{safeGroup.subtotal_weight.toLocaleString()}</td>
-                      <td colSpan="2"></td>
-                      <td style={{ textAlign: 'center' }}>₪{safeGroup.subtotal_amount.toLocaleString()}</td>
-                    </tr>
-                  </React.Fragment>
-                );
-              })
-            )}
-            <tr className="total-row">
-              <td colSpan="3" style={{ textAlign: 'right' }}><strong>סיכום כללי</strong></td>
-              <td style={{ textAlign: 'center' }}><strong>{safeCertificate.total_packages || 0}</strong></td>
-              <td colSpan="2"></td>
-              <td style={{ textAlign: 'center' }}><strong>{parseFloat(safeCertificate.total_weight || 0).toLocaleString()}</strong></td>
-              <td colSpan="2"></td>
-              <td style={{ textAlign: 'center' }}><strong>₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString()}</strong></td>
-            </tr>
-          </tbody>
-        </table>
+      <table className="ff-table">
+        <colgroup>{COLS.map(([l, w]) => <col key={l} style={{ width: `${w}mm` }} />)}</colgroup>
+        <thead>
+          <tr>{COLS.map(([l, , a]) => <th key={l} className={a || undefined}>{l}</th>)}</tr>
+        </thead>
+        <tbody>
+          {groups.length === 0 && (
+            <tr><td colSpan={COLS.length} className="ff-muted">אין פריטים בתעודה זו</td></tr>
+          )}
+          {groups.map((g, gi) => (
+            <React.Fragment key={gi}>
+              {g.items.map((it, i) => (
+                <tr key={it.id || `${gi}-${i}`}>
+                  <td className="r">{it.product_name || ''}</td>
+                  <td>{it.quality || ''}</td>
+                  <td>{it.packaging_type || '-'}</td>
+                  <td>{it.package_count || 0}</td>
+                  <td>{num(it.gross_weight)}</td>
+                  <td>{num(it.tare_weight)}</td>
+                  <td className="b">{num(it.net_weight)}</td>
+                  <td>{money(it.price_per_unit)}{it.pricing_method === 'per_kg' ? <span className="ff-muted">/ק"ג</span> : null}</td>
+                  <td>{parseFloat(it.discount_percentage) > 0 ? `${parseFloat(it.discount_percentage)}%` : '-'}</td>
+                  <td className="b">{money(it.item_total)}</td>
+                </tr>
+              ))}
+              {multiGroup && (
+                <tr className="ff-sub">
+                  <td className="r" colSpan={3}>סה"כ {g.product} · {g.quality}</td>
+                  <td>{g.p}</td>
+                  <td colSpan={2}></td>
+                  <td>{num(g.w)}</td>
+                  <td colSpan={2}></td>
+                  <td>{money(g.a)}</td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+          <tr className="ff-total">
+            <td className="r" colSpan={3}>סה"כ תעודה</td>
+            <td>{cert.total_packages || 0}</td>
+            <td colSpan={2}></td>
+            <td>{num(cert.total_weight)}</td>
+            <td colSpan={2}></td>
+            <td>{money(cert.total_amount)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="ff-sign">
+        <div>חתימת השוקל</div>
+        <div>חתימת הנהג</div>
+        <div>חתימת הלקוח</div>
       </div>
 
-      {/* Signatures */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginTop: '30px' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת השוקל</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת הנהג</div>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '40px', borderBottom: '1px solid #000', marginBottom: '10px' }}></div>
-          <div style={{ fontSize: '10px', fontWeight: 'bold' }}>חתימת הלקוח</div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div style={{ textAlign: 'center', fontSize: '9px', color: '#666', marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #ccc' }}>
-        <div>תעודה זו נוצרה באמצעות מערכת FarmFlow</div>
-      </div>
+      <footer className="ff-foot">
+        <span>תעודת שקילה {certificateNumber(cert)}</span>
+        <span>הופק באמצעות FarmFlow · {format(new Date(), 'dd/MM/yyyy HH:mm')}</span>
+      </footer>
     </div>
   );
 }

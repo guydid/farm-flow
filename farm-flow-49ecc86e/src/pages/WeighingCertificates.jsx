@@ -31,6 +31,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFoo
 import useCertificateShare from "../components/weighing/useCertificateShare";
 import { getMeCached, getFarmCached, getListCached, invalidateList } from "@/api/cachedReads";
 import CustomerOpenReportLayout, { groupEntriesByProduct } from "../components/weighing/CustomerOpenReport";
+import { printA4, elementToA4Pdf, escapeHtml } from "@/components/print/a4";
 
 
 import { DateInput } from "@/components/ui/date-input";
@@ -194,93 +195,73 @@ export default function WeighingCertificates() {
       return;
     }
 
-    const selected = certificates.filter(cert => certificateIdsToPrint.includes(cert.id));
+    const selected = certificates
+      .filter(cert => certificateIdsToPrint.includes(cert.id))
+      .sort((a, b) => `${a.date || ''} ${a.time || ''}`.localeCompare(`${b.date || ''} ${b.time || ''}`));
 
-    const totalWeight = selected.reduce((sum, cert) => sum + (cert.total_weight || 0), 0);
-    const totalPackages = selected.reduce((sum, cert) => sum + (cert.total_packages || 0), 0);
+    const n = (v, d = 1) => (parseFloat(v) || 0).toLocaleString('he-IL', { maximumFractionDigits: d });
+    const m = (v) => `₪${(parseFloat(v) || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const totalWeight = selected.reduce((sum, cert) => sum + (parseFloat(cert.total_weight) || 0), 0);
+    const totalPackages = selected.reduce((sum, cert) => sum + (parseInt(cert.total_packages) || 0), 0);
+    const totalAmount = selected.reduce((sum, cert) => sum + (parseFloat(cert.total_amount) || 0), 0);
+    const dates = selected.map(c => c.date).filter(Boolean).sort();
+    const fd = (d) => { const p = new Date(d); return Number.isNaN(p.getTime()) ? String(d) : format(p, 'dd/MM/yyyy'); };
+    const range = dates.length ? (fd(dates[0]) === fd(dates[dates.length - 1]) ? fd(dates[0]) : `${fd(dates[0])} – ${fd(dates[dates.length - 1])}`) : '';
+    const customersCount = new Set(selected.map(c => c.customer_id || c.customer_name)).size;
 
-    try {
-      const printWindow = window.open('', '_blank');
-      
-      if (!printWindow) {
-        toast({ 
-          title: "שגיאה בהדפסה", 
-          description: "לא ניתן לפתוח חלון הדפסה. יתכן שחוסם pop-ups חוסם את הפעולה. אנא אפשר pop-ups לאתר זה.", 
-          variant: "destructive" 
-        });
-        return;
-      }
-    
-      const tableRows = selected.map(cert => `
-        <tr>
-          <td>${cert.id.slice(-5)}</td>
-          <td>${cert.date ? format(new Date(cert.date), 'dd/MM/yyyy') : ''}</td>
-          <td>${cert.customer_name || ''}</td>
-          <td>${cert.vehicle_number || ''}</td>
-          <td>${(cert.total_weight || 0).toLocaleString()}</td>
-          <td>${cert.total_packages || 0}</td>
-          <td>${translateStatus(cert.status)}</td>
-        </tr>
-      `).join('');
+    // רוחבי עמודות במ"מ (סה"כ 186)
+    const cols = [['אסמכתא', 18], ['תאריך', 22], ['לקוח', 40, 'r'], ['מס\' רכב', 24], ['נטו ק"ג', 24], ['אריזות', 18], ['סה"כ', 24], ['סטטוס', 16]];
+    const rows = selected.map(cert => `
+      <tr>
+        <td>${escapeHtml(cert.reference_number || String(cert.id).slice(-5))}</td>
+        <td>${cert.date ? escapeHtml(fd(cert.date)) : ''}</td>
+        <td class="r">${escapeHtml(cert.customer_name || '')}</td>
+        <td>${escapeHtml(cert.vehicle_number || '')}</td>
+        <td class="b">${n(cert.total_weight)}</td>
+        <td>${parseInt(cert.total_packages) || 0}</td>
+        <td class="b">${m(cert.total_amount)}</td>
+        <td>${escapeHtml(translateStatus(cert.status))}</td>
+      </tr>`).join('');
 
-      const printContent = `
-        <html dir="rtl">
-          <head>
-            <title>סיכום תעודות שקילה</title>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 20px; }
-              h1, h2 { text-align: center; }
-              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
-              th { background-color: #f2f2f2; }
-              .summary { display: flex; justify-content: space-around; padding: 10px; border: 1px solid #ccc; margin-bottom: 20px; background-color: #fafafa; }
-              @media print {
-                body { -webkit-print-color-adjust: exact; }
-                .no-print { display: none; }
-              }
-            </style>
-          </head>
-          <body>
-            <h1>סיכום תעודות שקילה</h1>
-            ${currentFarm ? `<h2>${currentFarm.name}</h2>` : ''}
-            <div class="summary">
-              <div><strong>סה"כ תעודות:</strong> ${selected.length}</div>
-              <div><strong>סה"כ משקל (ק"ג):</strong> ${totalWeight.toLocaleString()}</div>
-              <div><strong>סה"כ אריזות:</strong> ${totalPackages.toLocaleString()}</div>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>אסמכתא</th>
-                  <th>תאריך</th>
-                  <th>לקוח</th>
-                  <th>מס' רכב</th>
-                  <th>משקל (ק"ג)</th>
-                  <th>אריזות</th>
-                  <th>סטטוס</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${tableRows}
-              </tbody>
-            </table>
-            <div style="text-align: center; margin-top: 20px;" class="no-print">
-              <button onclick="window.print()">הדפס</button>
-            </div>
-          </body>
-        </html>
-      `;
+    const html = `
+      <div class="ff-doc" dir="rtl">
+        <header class="ff-head">
+          <div class="ff-brand">
+            <h1>${escapeHtml(currentFarm?.name || 'FarmFlow')}</h1>
+            <div class="ff-sub">הופק: ${format(new Date(), 'dd/MM/yyyy HH:mm')}</div>
+          </div>
+          <div class="ff-title"><div class="ff-title-text">
+            <h2>סיכום תעודות שקילה</h2>
+            ${range ? `<div class="ff-sub">${escapeHtml(range)}</div>` : ''}
+          </div></div>
+        </header>
+        <div class="ff-kpis">
+          <div class="ff-kpi"><div class="v">${selected.length}</div><div class="l">תעודות</div></div>
+          <div class="ff-kpi"><div class="v">${n(totalWeight)} ק"ג</div><div class="l">משקל נטו</div></div>
+          <div class="ff-kpi"><div class="v">${totalPackages.toLocaleString('he-IL')}</div><div class="l">אריזות</div></div>
+          <div class="ff-kpi"><div class="v">${m(totalAmount)}</div><div class="l">סה"כ</div></div>
+        </div>
+        <table class="ff-table">
+          <colgroup>${cols.map(([, w]) => `<col style="width:${w}mm">`).join('')}</colgroup>
+          <thead><tr>${cols.map(([l, , a]) => `<th${a ? ` class="${a}"` : ''}>${escapeHtml(l)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${rows}
+            <tr class="ff-total">
+              <td class="r" colspan="4">סה"כ ${selected.length} תעודות · ${customersCount} לקוחות</td>
+              <td>${n(totalWeight)}</td>
+              <td>${totalPackages.toLocaleString('he-IL')}</td>
+              <td>${m(totalAmount)}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        <footer class="ff-foot"><span>סיכום תעודות שקילה</span><span>הופק באמצעות FarmFlow</span></footer>
+      </div>`;
 
-      printWindow.document.write(printContent);
-      printWindow.document.close();
-    } catch (error) {
+    printA4({ title: `סיכום תעודות שקילה${range ? ` ${range}` : ''}`, bodyHtml: html }).catch((error) => {
       console.error("Error in bulk print:", error);
-      toast({ 
-        title: "שגיאה בהדפסה", 
-        description: "אירעה שגיאה במהלך הכנת הדוח להדפסה. נסה שוב מאוחר יותר.", 
-        variant: "destructive" 
-      });
-    }
+      toast({ title: "שגיאה בהדפסה", description: "אירעה שגיאה במהלך הכנת הדוח להדפסה. נסה שוב מאוחר יותר.", variant: "destructive" });
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -431,22 +412,9 @@ export default function WeighingCertificates() {
     if (!el || !reportData) return;
     setReportSharing(true);
     try {
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
-      const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
-      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-      const pageW = 210, pageH = 297;
-      const imgH = canvas.height * pageW / canvas.width;
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
-      let offset = 0, page = 0;
-      while (offset < imgH) {
-        if (page > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -offset, pageW, imgH);
-        offset += pageH;
-        page++;
-      }
       const modeLabel = reportMode === 'product' ? 'לפי_פריט' : 'לפי_יום';
       const fileName = `דוח_תעודות_פתוחות_${modeLabel}_${reportData.customer.name}.pdf`;
-      const blob = pdf.output('blob');
+      const blob = await elementToA4Pdf(el, { footerText: `דוח תעודות פתוחות · ${reportData.customer.name}` });
       const file = new File([blob], fileName, { type: 'application/pdf' });
       const text = `דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -475,14 +443,13 @@ export default function WeighingCertificates() {
   const printReport = () => {
     const el = reportRef.current;
     if (!el) return;
-    const w = window.open('', '_blank');
-    if (!w) {
-      toast({ title: "שגיאה", description: "יש לאפשר חלונות קופצים להדפסה", variant: "destructive" });
-      return;
-    }
-    w.document.write(`<html dir="rtl"><head><title>דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'}</title></head><body style="margin:0">${el.outerHTML}</body></html>`);
-    w.document.close();
-    setTimeout(() => { w.focus(); w.print(); }, 300);
+    printA4({
+      title: `דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} - ${reportData?.customer?.name || ''}`,
+      bodyHtml: el.innerHTML,
+    }).catch((err) => {
+      console.error("Report print failed:", err);
+      toast({ title: "שגיאה", description: "הדפסת הדוח נכשלה", variant: "destructive" });
+    });
   };
 
   const exitSelectMode = () => {
@@ -1567,8 +1534,8 @@ export default function WeighingCertificates() {
               </div>
 
               {/* תצוגה מקדימה — היא גם מה שמצולם ל-PDF ומודפס */}
-              <div className="border rounded-xl overflow-x-auto bg-white">
-                <div style={{ minWidth: '640px' }} ref={reportRef}>
+              <div className="border rounded-xl overflow-x-auto bg-white p-4">
+                <div style={{ width: 'max-content', margin: '0 auto' }} ref={reportRef}>
                   <CustomerOpenReportLayout
                     customer={reportData.customer}
                     groups={reportData.groups}

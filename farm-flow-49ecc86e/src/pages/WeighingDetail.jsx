@@ -21,7 +21,8 @@ import { Badge } from "@/components/ui/badge";
 import QRCode from "../components/weighing/QRCode";
 import WeighingItemForm from '../components/weighing/WeighingItemForm';
 import PalletSticker, { generateZPL } from "../components/weighing/PalletSticker"; // Added generateZPL import
-import CertificatePrintLayout from "../components/weighing/CertificatePrintLayout";
+import CertificatePrintLayout, { certificateNumber } from "../components/weighing/CertificatePrintLayout";
+import { printA4 } from "@/components/print/a4";
 import useCertificateShare from "../components/weighing/useCertificateShare";
 import MavenDocumentsCard from "../components/weighing/MavenDocumentsCard";
 import { getMeCached, getFarmCached, getListCached } from "@/api/cachedReads";
@@ -60,7 +61,6 @@ export default function WeighingDetail() {
   // הדפסת מדבקה ישירה: בלי חלון תצוגה מקדימה — המדבקה מרונדרת מחוץ למסך ונשלחת להדפסה כשהיא מוכנה
   const [pendingStickerPrint, setPendingStickerPrint] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [isPrinting, setIsPrinting] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false); // עריכת פרטי תעודה בנייד (מכווץ כברירת מחדל)
   const [printerConfig, setPrinterConfig] = useState(null); // New state for printer configuration
   const [certificateFormData, setCertificateFormData] = useState({
@@ -435,12 +435,22 @@ export default function WeighingDetail() {
       toast({ title: "שגיאה", description: "לא ניתן להדפיס תעודה ריקה.", variant: "destructive" });
       return;
     }
-    setIsPrinting(true);
-    setTimeout(() => {
-      window.print();
-      setIsPrinting(false);
-    }, 500);
-  }, [certificate, weighingItems, toast]);
+    (async () => {
+      const { renderToStaticMarkup } = await import('react-dom/server');
+      const html = renderToStaticMarkup(
+        <CertificatePrintLayout
+          certificate={safeObject(certificate)}
+          items={safeArray(weighingItems)}
+          companySettings={safeObject(companySettings)}
+          customer={safeFind(customers, c => safeObject(c).id === safeObject(certificate).customer_id)}
+        />
+      );
+      await printA4({ title: `תעודת שקילה ${certificateNumber(certificate)}`, bodyHtml: html });
+    })().catch((err) => {
+      console.error('Certificate print failed:', err);
+      toast({ title: "שגיאה", description: "הדפסת התעודה נכשלה", variant: "destructive" });
+    });
+  }, [certificate, weighingItems, companySettings, customers, toast]);
 
   const handleShareCertificate = useCallback(() => {
     if (!certificate || weighingItems.length === 0) {
@@ -564,18 +574,7 @@ export default function WeighingDetail() {
 
   const safeItems = safeArray(weighingItems);
   const safeCertificate = safeObject(certificate);
-  const safeCompanySettings = safeObject(companySettings);
 
-  if (isPrinting) {
-    return (
-      <CertificatePrintLayout
-        certificate={safeCertificate}
-        items={safeItems}
-        companySettings={safeCompanySettings}
-        customer={safeFind(customers, c => safeObject(c).id === safeCertificate.customer_id)}
-      />
-    );
-  }
 
   if (isLoading) {
     return (

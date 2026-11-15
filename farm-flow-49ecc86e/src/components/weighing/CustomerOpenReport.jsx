@@ -1,16 +1,13 @@
 import React from 'react';
 import { format } from 'date-fns';
 import { he } from 'date-fns/locale';
+import { A4_DOC_CSS } from '../print/a4';
 
 // דוח תעודות פתוחות ללקוח. שני מצבי תצוגה:
 //   mode="product" (ברירת מחדל) — מקובץ לפי פריט: כל פריט עם שורה לכל תעודה (תאריך + מס' תעודה) וסיכום לפריט.
 //   mode="day"                  — מקובץ לפי יום, עם פירוט פריטים לכל תעודה.
-// מעוצב ב-inline styles כדי שגם צילום ל-PDF (html2canvas) וגם חלון הדפסה
-// יראו זהה, בלי תלות ב-Tailwind.
-const cell = { border: '1px solid #ddd', padding: '5px 6px', fontSize: '11px', textAlign: 'right' };
-const cellC = { ...cell, textAlign: 'center' };
-const sumCell = { ...cell, fontWeight: 'bold', backgroundColor: '#f3f3f3' };
-const sumCellC = { ...sumCell, textAlign: 'center' };
+// מעוצב ל-A4 (186 מ"מ, מחלקות ff-* מ-print/a4) כך שתצוגה מקדימה, צילום ל-PDF
+// (elementToA4Pdf, חיתוך בין שורות) והדפסה (printA4) נראים זהה.
 
 const fmtNum = (n, digits = 1) => (parseFloat(n) || 0).toLocaleString(undefined, { maximumFractionDigits: digits });
 const fmtMoney = (n) => (parseFloat(n) || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -49,57 +46,53 @@ export function groupEntriesByProduct(entries) {
     }));
 }
 
+// רוחבי עמודות במ"מ (סה"כ 186)
+const Cols = ({ widths }) => <colgroup>{widths.map((w, i) => <col key={i} style={{ width: `${w}mm` }} />)}</colgroup>;
+const priceText = (it) => (
+  <>
+    ₪{fmtNum(it.price_per_unit, 2)}<span className="ff-muted">{it.pricing_method === 'per_kg' ? '/ק"ג' : '/יח׳'}</span>
+    {parseFloat(it.discount_percentage) > 0 ? <span className="ff-muted"> (-{it.discount_percentage}%)</span> : null}
+  </>
+);
+
 function ProductGroups({ productGroups }) {
   if (!productGroups || productGroups.length === 0) {
-    return <div style={{ padding: '12px', fontSize: '11px', color: '#666', textAlign: 'center' }}>אין פריטים בתעודות הפתוחות</div>;
+    return <div className="ff-empty">אין פריטים בתעודות הפתוחות</div>;
   }
   return productGroups.map(({ product, rows, sums }) => (
-    <section key={product} style={{ marginBottom: '18px', pageBreakInside: 'avoid' }}>
-      <div style={{ backgroundColor: '#f0f0f0', border: '1px solid #ccc', padding: '6px 10px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
-        <span style={{ fontWeight: 'bold' }}>{product}</span>
-        <span style={{ fontSize: '11px' }}>
-          {sums.certs} תעודות · {fmtNum(sums.packages, 0)} אריזות · {fmtNum(sums.weight)} ק"ג · ₪{fmtMoney(sums.amount)}
-        </span>
+    <section key={product} className="ff-group">
+      <div className="ff-group-head">
+        <span className="t">{product}</span>
+        <span className="s">{sums.certs} תעודות · {fmtNum(sums.packages, 0)} אריזות · {fmtNum(sums.weight)} ק"ג · ₪{fmtMoney(sums.amount)}</span>
       </div>
-      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+      <table className="ff-table">
+        <Cols widths={[26, 18, 16, 26, 16, 22, 30, 32]} />
         <thead>
-          <tr style={{ backgroundColor: '#f7f7f7' }}>
-            <th style={cellC}>תאריך</th>
-            <th style={cellC}>תעודה</th>
-            <th style={cellC}>איכות</th>
-            <th style={cellC}>אריזה</th>
-            <th style={cellC}>כמות</th>
-            <th style={cellC}>נטו (ק"ג)</th>
-            <th style={cellC}>מחיר</th>
-            <th style={cellC}>סה"כ ₪</th>
+          <tr>
+            <th>תאריך</th><th>תעודה</th><th>איכות</th><th>אריזה</th><th>כמות</th><th>נטו ק"ג</th><th>מחיר</th><th>סה"כ</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(({ item, cert }, idx) => (
             <tr key={item.id || `${cert.id}-${idx}`}>
-              <td style={cellC}>{fmtDate(cert.date)}{cert.time ? ` ${cert.time}` : ''}</td>
-              <td style={cellC}>#{certNumber(cert)}</td>
-              <td style={cellC}>{item.quality || ''}</td>
-              <td style={cellC}>{item.packaging_type || '-'}</td>
-              <td style={cellC}>{item.package_count || 0}</td>
-              <td style={cellC}>{fmtNum(item.net_weight)}</td>
-              <td style={cellC}>
-                ₪{fmtNum(item.price_per_unit, 2)}{item.pricing_method === 'per_kg' ? '/ק"ג' : '/יח׳'}
-                {parseFloat(item.discount_percentage) > 0 ? ` (-${item.discount_percentage}%)` : ''}
-              </td>
-              <td style={{ ...cellC, fontWeight: 'bold' }}>₪{fmtMoney(item.item_total)}</td>
+              <td>{fmtDate(cert.date)}{cert.time ? <span className="ff-muted"> {cert.time}</span> : null}</td>
+              <td>#{certNumber(cert)}</td>
+              <td>{item.quality || ''}</td>
+              <td>{item.packaging_type || '-'}</td>
+              <td>{item.package_count || 0}</td>
+              <td className="b">{fmtNum(item.net_weight)}</td>
+              <td>{priceText(item)}</td>
+              <td className="b">₪{fmtMoney(item.item_total)}</td>
             </tr>
           ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td style={sumCell} colSpan={4}>סה"כ {product}</td>
-            <td style={sumCellC}>{fmtNum(sums.packages, 0)}</td>
-            <td style={sumCellC}>{fmtNum(sums.weight)}</td>
-            <td style={sumCellC}></td>
-            <td style={sumCellC}>₪{fmtMoney(sums.amount)}</td>
+          <tr className="ff-sub">
+            <td className="r" colSpan={4}>סה"כ {product}</td>
+            <td>{fmtNum(sums.packages, 0)}</td>
+            <td>{fmtNum(sums.weight)}</td>
+            <td></td>
+            <td>₪{fmtMoney(sums.amount)}</td>
           </tr>
-        </tfoot>
+        </tbody>
       </table>
     </section>
   ));
@@ -110,64 +103,45 @@ function DayGroups({ groups }) {
     const dayWeight = entries.reduce((s, e) => s + (parseFloat(e.cert.total_weight) || 0), 0);
     const dayAmount = entries.reduce((s, e) => s + (parseFloat(e.cert.total_amount) || 0), 0);
     return (
-      <section key={date} style={{ marginBottom: '18px' }}>
-        <div style={{ backgroundColor: '#f0f0f0', border: '1px solid #ccc', padding: '6px 10px', fontWeight: 'bold', fontSize: '12px', display: 'flex', justifyContent: 'space-between' }}>
-          <span>
-            {date !== 'ללא תאריך' ? format(new Date(date), 'EEEE, dd/MM/yyyy', { locale: he }) : 'ללא תאריך'}
-          </span>
-          <span style={{ fontWeight: 'normal', fontSize: '11px' }}>
-            {entries.length} תעודות · {fmtNum(dayWeight)} ק"ג · ₪{fmtMoney(dayAmount)}
-          </span>
+      <section key={date} className="ff-group">
+        <div className="ff-group-head">
+          <span className="t">{date !== 'ללא תאריך' ? format(new Date(date), 'EEEE, dd/MM/yyyy', { locale: he }) : 'ללא תאריך'}</span>
+          <span className="s">{entries.length} תעודות · {fmtNum(dayWeight)} ק"ג · ₪{fmtMoney(dayAmount)}</span>
         </div>
-
         {entries.map(({ cert, items }) => (
-          <div key={cert.id} style={{ border: '1px solid #ddd', borderTop: 'none' }}>
-            {/* שורת תעודה */}
-            <div style={{ padding: '6px 10px', backgroundColor: '#fafafa', fontSize: '11px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px' }}>
+          <React.Fragment key={cert.id}>
+            <div className="ff-cert-head">
               <span>
-                <strong>תעודה #{certNumber(cert)}</strong>
+                <b>תעודה #{certNumber(cert)}</b>
                 {cert.time ? ` · ${cert.time}` : ''}
                 {cert.vehicle_number ? ` · רכב ${cert.vehicle_number}` : ''}
                 {cert.driver_name ? ` · נהג: ${cert.driver_name}` : ''}
-                {` · ${STATUS_HE[cert.status] || cert.status || ''}`}
+                {STATUS_HE[cert.status] ? ` · ${STATUS_HE[cert.status]}` : ''}
               </span>
-              <span style={{ fontWeight: 'bold' }}>
-                {fmtNum(cert.total_weight)} ק"ג · ₪{fmtMoney(cert.total_amount)}
-              </span>
+              <b style={{ whiteSpace: 'nowrap' }}>{fmtNum(cert.total_weight)} ק"ג · ₪{fmtMoney(cert.total_amount)}</b>
             </div>
-            {/* פריטי התעודה */}
             {items.length > 0 && (
-              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <table className="ff-table" style={{ marginBottom: '2mm' }}>
+                <Cols widths={[44, 16, 28, 16, 22, 28, 32]} />
                 <thead>
-                  <tr style={{ backgroundColor: '#f7f7f7' }}>
-                    <th style={cell}>מוצר</th>
-                    <th style={cellC}>איכות</th>
-                    <th style={cellC}>אריזה</th>
-                    <th style={cellC}>כמות</th>
-                    <th style={cellC}>נטו (ק"ג)</th>
-                    <th style={cellC}>מחיר</th>
-                    <th style={cellC}>סה"כ ₪</th>
-                  </tr>
+                  <tr><th className="r">מוצר</th><th>איכות</th><th>אריזה</th><th>כמות</th><th>נטו ק"ג</th><th>מחיר</th><th>סה"כ</th></tr>
                 </thead>
                 <tbody>
                   {items.map((it, idx) => (
                     <tr key={it.id || idx}>
-                      <td style={cell}>{it.product_name || ''}</td>
-                      <td style={cellC}>{it.quality || ''}</td>
-                      <td style={cellC}>{it.packaging_type || '-'}</td>
-                      <td style={cellC}>{it.package_count || 0}</td>
-                      <td style={cellC}>{fmtNum(it.net_weight)}</td>
-                      <td style={cellC}>
-                        ₪{fmtNum(it.price_per_unit, 2)}{it.pricing_method === 'per_kg' ? '/ק"ג' : '/יח׳'}
-                        {parseFloat(it.discount_percentage) > 0 ? ` (-${it.discount_percentage}%)` : ''}
-                      </td>
-                      <td style={{ ...cellC, fontWeight: 'bold' }}>₪{fmtMoney(it.item_total)}</td>
+                      <td className="r">{it.product_name || ''}</td>
+                      <td>{it.quality || ''}</td>
+                      <td>{it.packaging_type || '-'}</td>
+                      <td>{it.package_count || 0}</td>
+                      <td className="b">{fmtNum(it.net_weight)}</td>
+                      <td>{priceText(it)}</td>
+                      <td className="b">₪{fmtMoney(it.item_total)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
-          </div>
+          </React.Fragment>
         ))}
       </section>
     );
@@ -189,48 +163,44 @@ export default function CustomerOpenReportLayout({ customer, groups, productGrou
   })();
 
   return (
-    <div dir="rtl" style={{ fontFamily: 'Arial, sans-serif', color: '#000', backgroundColor: '#fff', padding: '20px', lineHeight: 1.4 }}>
-      {/* כותרת */}
-      <header style={{ borderBottom: '2px solid #000', paddingBottom: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div>
-          <h1 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>דוח תעודות פתוחות {byProduct ? 'לפי פריט' : 'לפי יום'}</h1>
-          <div style={{ fontSize: '13px', marginTop: '4px' }}>
-            לקוח: <strong>{customer.name}</strong>
-            {dateRange && <span style={{ color: '#444' }}> · תעודות מהתאריכים {dateRange}</span>}
-          </div>
+    <div className="ff-doc" dir="rtl">
+      <style dangerouslySetInnerHTML={{ __html: A4_DOC_CSS }} />
+      <header className="ff-head">
+        <div className="ff-brand">
+          <h1>{farmName || 'FarmFlow'}</h1>
+          <div className="ff-sub">הופק: {format(new Date(), 'dd/MM/yyyy HH:mm')}</div>
         </div>
-        <div style={{ textAlign: 'left', fontSize: '10px', color: '#444' }}>
-          {farmName && <div style={{ fontWeight: 'bold', fontSize: '12px' }}>{farmName}</div>}
-          <div>הופק: {format(new Date(), 'dd/MM/yyyy HH:mm')}</div>
+        <div className="ff-title">
+          <div className="ff-title-text">
+            <h2>דוח תעודות פתוחות</h2>
+            <div className="ff-doc-no">{customer.name}</div>
+            <div className="ff-sub">{byProduct ? 'לפי פריט' : 'לפי יום'}{dateRange ? ` · ${dateRange}` : ''}</div>
+          </div>
         </div>
       </header>
 
-      {/* סיכום עליון */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+      <div className="ff-kpis">
         {[
           [totals.certs, 'תעודות'],
           [`${fmtNum(totals.weight)} ק"ג`, 'משקל נטו'],
           [fmtNum(totals.packages, 0), 'אריזות'],
           [`₪${fmtMoney(totals.amount)}`, 'סה"כ'],
         ].map(([v, l], i) => (
-          <div key={i} style={{ flex: 1, border: '1px solid #ccc', borderRadius: '6px', padding: '8px', textAlign: 'center', backgroundColor: '#fafafa' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{v}</div>
-            <div style={{ fontSize: '10px', color: '#666' }}>{l}</div>
-          </div>
+          <div key={i} className="ff-kpi"><div className="v">{v}</div><div className="l">{l}</div></div>
         ))}
       </div>
 
       {byProduct ? <ProductGroups productGroups={resolvedProductGroups} /> : <DayGroups groups={groups} />}
 
-      {/* סיכום תחתון */}
-      <div style={{ borderTop: '2px solid #000', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold' }}>
+      <div className="ff-grand">
         <span>סה"כ {totals.certs} תעודות פתוחות{byProduct && resolvedProductGroups ? ` · ${resolvedProductGroups.length} פריטים` : ''}</span>
         <span>{fmtNum(totals.weight)} ק"ג · {fmtNum(totals.packages, 0)} אריזות · ₪{fmtMoney(totals.amount)}</span>
       </div>
 
-      <div style={{ textAlign: 'center', fontSize: '9px', color: '#666', marginTop: '14px' }}>
-        הופק באמצעות מערכת FarmFlow
-      </div>
+      <footer className="ff-foot">
+        <span>דוח תעודות פתוחות · {customer.name}</span>
+        <span>הופק באמצעות FarmFlow</span>
+      </footer>
     </div>
   );
 }
