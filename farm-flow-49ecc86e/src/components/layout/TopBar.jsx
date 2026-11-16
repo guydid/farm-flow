@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bell, Menu, User as UserIcon, LogOut, ShieldCheck, ArrowRight, Rocket } from "lucide-react";
+import { Bell, BellOff, Menu, User as UserIcon, LogOut, ShieldCheck, ArrowRight, Rocket } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,8 +24,10 @@ export default function TopBar({
   currentFarm,
   companySettings,
   getUserInitials, 
-  notifications, 
-  onDismissNotification, 
+  notifications,
+  notificationsEnabled = true,
+  onToggleNotifications,
+  onDismissNotification,
   onSnoozeNotification,
   farmSelector 
 }) {
@@ -99,10 +102,12 @@ export default function TopBar({
             size="icon"
             onClick={() => setShowNotifications(!showNotifications)}
             className="relative h-9 w-9 lg:h-10 lg:w-10"
-            aria-label={notifications.length ? `התראות (${notifications.length})` : "התראות"}
+            aria-label={!notificationsEnabled ? "התראות (כבויות)" : notifications.length ? `התראות (${notifications.length})` : "התראות"}
             aria-expanded={showNotifications}
           >
-            <Bell className="h-4 w-4 lg:h-5 lg:w-5" />
+            {notificationsEnabled
+              ? <Bell className="h-4 w-4 lg:h-5 lg:w-5" />
+              : <BellOff className="h-4 w-4 lg:h-5 lg:w-5 text-gray-400" />}
             {notifications.length > 0 && (
               <Badge className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full p-0 text-[10px] bg-red-500">
                 {notifications.length > 9 ? "9+" : notifications.length}
@@ -113,6 +118,7 @@ export default function TopBar({
           <NotificationPanel
             notifications={notifications}
             isOpen={showNotifications}
+            enabled={notificationsEnabled}
             onClose={() => setShowNotifications(false)}
             onDismiss={onDismissNotification}
             onSnooze={onSnoozeNotification}
@@ -150,6 +156,23 @@ export default function TopBar({
               <UserIcon className="h-4 w-4 mr-2" />
               הפרופיל שלי
             </DropdownMenuItem>
+            {onToggleNotifications && (
+              <DropdownMenuItem
+                onSelect={(e) => { e.preventDefault(); onToggleNotifications(!notificationsEnabled); }}
+                className="justify-between gap-3"
+              >
+                <span className="flex items-center">
+                  {notificationsEnabled ? <Bell className="h-4 w-4 mr-2" /> : <BellOff className="h-4 w-4 mr-2" />}
+                  קבלת התראות
+                </span>
+                <Switch
+                  checked={notificationsEnabled}
+                  aria-label="קבלת התראות"
+                  tabIndex={-1}
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
+            )}
             {currentFarm && (
               <DropdownMenuItem onClick={() => window.dispatchEvent(new Event('open-onboarding'))}>
                 <Rocket className="h-4 w-4 mr-2" />

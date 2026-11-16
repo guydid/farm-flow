@@ -145,6 +145,8 @@ const migrateColumns = [
   "ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0",
   // משתמשים קיימים נחשבים מאומתים (DEFAULT 1); הרשמה עצמית חדשה נוצרת עם 0
   "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 1",
+  // כורר "קבלת התראות" בתפריט המשתמש (ברירת מחדל: פעיל)
+  "ALTER TABLE users ADD COLUMN notifications_enabled INTEGER DEFAULT 1",
 ];
 for (const sql of migrateColumns) {
   try { db.exec(sql); } catch (_) {}
@@ -396,6 +398,7 @@ function formatUser(user) {
     is_active: user.is_active !== 0,
     field_worker: !!user.field_worker,
     language: user.language || null,
+    notifications_enabled: user.notifications_enabled !== 0,
     role,
     created_at: user.created_at,
     updated_at: user.updated_at,
@@ -3382,7 +3385,7 @@ app.put('/api/auth/me', authMiddleware, (req, res) => {
 
   // farm_ids לא ניתן לעריכה כאן — הגישה למשקים נקבעת רק ע"י farm_members.
   // farm_ids שנשלח משמש רק לסדר התצוגה של משקים שהמשתמש כבר חבר בהם.
-  const { full_name, avatar_url, current_farm_id, farm_ids, language } = req.body || {};
+  const { full_name, avatar_url, current_farm_id, farm_ids, language, notifications_enabled } = req.body || {};
   if (current_farm_id !== undefined && current_farm_id !== null && !user.farm_ids.includes(current_farm_id)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
@@ -3394,10 +3397,11 @@ app.put('/api/auth/me', authMiddleware, (req, res) => {
     current_farm_id: current_farm_id !== undefined ? current_farm_id : user.current_farm_id,
     farm_ids_str: JSON.stringify(order),
     language: language !== undefined ? (language ? String(language).slice(0, 8) : null) : user.language,
+    notifications_enabled: notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : (user.notifications_enabled === 0 ? 0 : 1),
   };
 
-  db.prepare('UPDATE users SET full_name=?, avatar_url=?, current_farm_id=?, farm_ids=?, language=?, updated_at=? WHERE id=?').run(
-    updated.full_name, updated.avatar_url, updated.current_farm_id, updated.farm_ids_str, updated.language, NOW(), user.id
+  db.prepare('UPDATE users SET full_name=?, avatar_url=?, current_farm_id=?, farm_ids=?, language=?, notifications_enabled=?, updated_at=? WHERE id=?').run(
+    updated.full_name, updated.avatar_url, updated.current_farm_id, updated.farm_ids_str, updated.language, updated.notifications_enabled, NOW(), user.id
   );
 
   res.json(formatUser(getUser(user.id)));
@@ -4149,6 +4153,8 @@ app.delete('/api/farm-members/:id', authMiddleware, (req, res) => {
 // Get my notifications (direct + farm-wide + system-wide), excluding dismissed
 app.get('/api/notifications', authMiddleware, (req, res) => {
   const user = getUser(req.user.id);
+  // המשתמש כיבה "קבלת התראות" בתפריט המשתמש
+  if (user.notifications_enabled === 0) return res.json([]);
   const farmIds = user.farm_ids;
 
   let rows;

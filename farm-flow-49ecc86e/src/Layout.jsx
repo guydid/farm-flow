@@ -377,6 +377,19 @@ export default function Layout({ children, currentPageName }) {
     }
   };
 
+  // כורר "קבלת התראות" בתפריט המשתמש — נשמר על המשתמש בשרת (חל בכל המכשירים)
+  const notificationsEnabled = currentUser?.notifications_enabled !== false;
+  const handleToggleNotifications = async (enabled) => {
+    setCurrentUser(prev => (prev ? { ...prev, notifications_enabled: enabled } : prev));
+    try {
+      await User.updateMyUserData({ notifications_enabled: enabled });
+      if (enabled) fetchBackendNotifications();
+    } catch (e) {
+      console.error('Failed to update notification preference:', e);
+      setCurrentUser(prev => (prev ? { ...prev, notifications_enabled: !enabled } : prev));
+    }
+  };
+
   const handleFarmChange = async (farm) => {
     console.log('Layout - Changing farm to:', farm);
     
@@ -515,7 +528,9 @@ export default function Layout({ children, currentPageName }) {
             currentFarm={currentFarm}
             companySettings={companySettings}
             getUserInitials={getUserInitials}
-            notifications={[...backendNotifications, ...notifications]}
+            notifications={notificationsEnabled ? [...backendNotifications, ...notifications] : []}
+            notificationsEnabled={notificationsEnabled}
+            onToggleNotifications={handleToggleNotifications}
             onDismissNotification={handleDismissNotification}
             onSnoozeNotification={handleSnoozeNotification}
             farmSelector={

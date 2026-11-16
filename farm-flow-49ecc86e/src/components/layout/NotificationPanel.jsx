@@ -3,7 +3,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Bell, X, Clock, MoreVertical, Megaphone } from 'lucide-react';
+import { Bell, BellOff, X, Clock, MoreVertical, Megaphone } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { ALERT_SEGMENT_ORDER, segmentMeta, segmentForType } from './alertSegments';
 
@@ -77,6 +77,7 @@ function NotificationItem({ notification, onClose, onDismiss, onSnooze }) {
 export default function NotificationPanel({
   notifications,
   isOpen,
+  enabled = true,
   onClose,
   onDismiss,
   onSnooze
@@ -104,7 +105,13 @@ export default function NotificationPanel({
 
       <ScrollArea className="h-[400px] relative z-0">
         <div className="p-2 space-y-4">
-          {notifications.length === 0 ? (
+          {!enabled ? (
+            <div className="text-center py-8 text-gray-500">
+              <BellOff className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>ההתראות כבויות</p>
+              <p className="text-xs mt-1">אפשר להפעיל אותן מתפריט המשתמש ← קבלת התראות</p>
+            </div>
+          ) : notifications.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <Bell className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p>אין התראות חדשות</p>
