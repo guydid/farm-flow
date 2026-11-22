@@ -68,6 +68,9 @@ export const A4_DOC_CSS = `
 .ff-table tr.ff-total td { background: #e5e7eb; font-weight: 700; font-size: 9pt;
   border-top: 0.5mm solid #111; border-bottom: 0.5mm solid #111; }
 .ff-table .ff-muted { color: #666; font-weight: 400; }
+/* סכומים ומספרים מודגשים לא נשברים באמצע (גם כשהטבלה מתכווצת בהדפסה) */
+.ff-table td.b, .ff-table tr.ff-total td, .ff-table tr.ff-sub td { word-break: normal; overflow-wrap: normal; white-space: nowrap; }
+.ff-table tr.ff-total td.r, .ff-table tr.ff-sub td.r { white-space: normal; }
 
 /* קבוצות (פריט / יום) */
 .ff-group { margin-bottom: 5mm; }
@@ -108,12 +111,23 @@ export async function printA4({ title, bodyHtml }) {
   html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; }
   body > *:not(#${PRINT_ROOT_ID}) { display: none !important; }
   #${PRINT_ROOT_ID} { display: block !important; }
-  #${PRINT_ROOT_ID} .ff-doc { padding: 0 !important; }
+  #${PRINT_ROOT_ID} .ff-doc { padding: 0 !important; width: 100% !important; max-width: 186mm; }
 }`;
   const root = document.createElement('div');
   root.id = PRINT_ROOT_ID;
   root.setAttribute('dir', 'rtl');
   root.innerHTML = bodyHtml;
+  // רוחב גמיש: דפדפנים/מדפסות עם שוליים רחבים מ-12 מ"מ (Firefox, Safari, דרייברים)
+  // משאירים פחות מ-186 מ"מ — עמודות ברוחב קבוע במ"מ היו נחתכות בצד שמאל.
+  // ממירים את רוחבי העמודות לאחוזים כך שהטבלה מתכווצת לשטח ההדפסה בפועל.
+  root.querySelectorAll('colgroup').forEach((cg) => {
+    const cols = [...cg.querySelectorAll('col')];
+    const mm = cols.map((c) => parseFloat((c.style.width || '').replace('mm', '')) || 0);
+    const sum = mm.reduce((s, v) => s + v, 0);
+    if (sum > 0 && cols.every((c) => /mm$/.test(c.style.width || ''))) {
+      cols.forEach((c, i) => { c.style.width = `${((mm[i] / sum) * 100).toFixed(3)}%`; });
+    }
+  });
   document.head.appendChild(style);
   document.body.appendChild(root);
 

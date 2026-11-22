@@ -54,6 +54,8 @@ export default function WeighingCertificates() {
   const [reportBusy, setReportBusy] = useState(false);
   const [reportSharing, setReportSharing] = useState(false);
   const [reportMode, setReportMode] = useState('product'); // 'product' = לפי פריט (ברירת מחדל), 'day' = לפי יום
+  // סטטוסי תעודות בדוח הלקוח: 'open' = כל מה שלא הושלם/נשלח (ברירת מחדל), 'completed', 'shipped'
+  const [reportStatuses, setReportStatuses] = useState(['open']);
   const reportRef = useRef(null);
   const [salesSummary, setSalesSummary] = useState(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -363,18 +365,33 @@ export default function WeighingCertificates() {
     }
   };
 
-  // דוח תעודות פתוחות ללקוח: כל התעודות שאינן בארכיון (לא הושלם/נשלח), מקובצות לפי יום עם פריטים
-  const buildCustomerReport = async (customerId) => {
+  const REPORT_STATUS_OPTIONS = [['open', 'פתוחות'], ['completed', 'הושלמו'], ['shipped', 'נשלחו']];
+  const reportStatusText = (statuses) => {
+    const labels = REPORT_STATUS_OPTIONS.filter(([v]) => statuses.includes(v)).map(([, l]) => l);
+    if (labels.length === REPORT_STATUS_OPTIONS.length) return { title: 'דוח תעודות', noun: 'תעודות' };
+    return { title: `דוח תעודות ${labels.join(' + ')}`, noun: `תעודות ${labels.join(' / ')}` };
+  };
+  const toggleReportStatus = (value) => {
+    const next = reportStatuses.includes(value) ? reportStatuses.filter(v => v !== value) : [...reportStatuses, value];
+    if (next.length === 0) return; // חייב להישאר לפחות סטטוס אחד
+    setReportStatuses(next);
+    if (reportData?.customer?.id) buildCustomerReport(reportData.customer.id, next);
+  };
+
+  // דוח תעודות ללקוח לפי הסטטוסים שנבחרו (ברירת מחדל: פתוחות = לא הושלם/נשלח), מקובצות לפי יום עם פריטים
+  const buildCustomerReport = async (customerId, statuses = reportStatuses) => {
     const customer = (customers || []).find(c => c.id === customerId);
     if (!customer || !currentFarm?.id) return;
     setReportBusy(true);
     setReportData(null);
     try {
+      const sel = new Set(statuses);
+      const statusOk = (st) => (st === 'completed' || st === 'shipped') ? sel.has(st) : sel.has('open');
       const openCerts = (certificates || []).filter(c =>
-        c && c.customer_id === customerId && c.status !== 'completed' && c.status !== 'shipped'
+        c && c.customer_id === customerId && statusOk(c.status)
       );
       if (openCerts.length === 0) {
-        toast({ title: "אין תעודות", description: `אין תעודות פתוחות ללקוח ${customer.name}` });
+        toast({ title: "אין תעודות", description: `אין ${reportStatusText(statuses).noun} ללקוח ${customer.name}` });
         return;
       }
       const allItems = await WeighingItem.filter({ farm_id: currentFarm.id });
@@ -398,7 +415,7 @@ export default function WeighingCertificates() {
         packages: openCerts.reduce((s, c) => s + (parseInt(c.total_packages) || 0), 0),
         amount: openCerts.reduce((s, c) => s + (parseFloat(c.total_amount) || 0), 0),
       };
-      setReportData({ customer, groups, productGroups, totals });
+      setReportData({ customer, groups, productGroups, totals, statuses: [...statuses] });
     } catch (error) {
       console.error("Failed to build customer report:", error);
       toast({ title: "שגיאה", description: "הפקת הדוח נכשלה", variant: "destructive" });
@@ -413,10 +430,11 @@ export default function WeighingCertificates() {
     setReportSharing(true);
     try {
       const modeLabel = reportMode === 'product' ? 'לפי_פריט' : 'לפי_יום';
-      const fileName = `דוח_תעודות_פתוחות_${modeLabel}_${reportData.customer.name}.pdf`;
-      const blob = await elementToA4Pdf(el, { footerText: `דוח תעודות פתוחות · ${reportData.customer.name}` });
+      const st = reportStatusText(reportData.statuses || ['open']);
+      const fileName = `${st.title.replace(/[\s+]+/g, '_')}_${modeLabel}_${reportData.customer.name}.pdf`;
+      const blob = await elementToA4Pdf(el, { footerText: `${st.title} · ${reportData.customer.name}` });
       const file = new File([blob], fileName, { type: 'application/pdf' });
-      const text = `דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
+      const text = `${st.title} ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} — ${reportData.customer.name}\n${reportData.totals.certs} תעודות · ${reportData.totals.weight.toLocaleString()} ק"ג · ₪${reportData.totals.amount.toLocaleString()}`;
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ files: [file], title: fileName, text });
@@ -444,7 +462,7 @@ export default function WeighingCertificates() {
     const el = reportRef.current;
     if (!el) return;
     printA4({
-      title: `דוח תעודות פתוחות ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} - ${reportData?.customer?.name || ''}`,
+      title: `${reportStatusText(reportData?.statuses || ['open']).title} ${reportMode === 'product' ? 'לפי פריט' : 'לפי יום'} - ${reportData?.customer?.name || ''}`,
       bodyHtml: el.innerHTML,
     }).catch((err) => {
       console.error("Report print failed:", err);
@@ -1479,8 +1497,30 @@ export default function WeighingCertificates() {
       <Dialog open={reportOpen} onOpenChange={(open) => { if (!open) { setReportOpen(false); setReportData(null); } }}>
         <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
-            <DialogTitle>דוח תעודות פתוחות ללקוח</DialogTitle>
+            <DialogTitle>דוח תעודות ללקוח</DialogTitle>
           </DialogHeader>
+
+          {/* בחירת סטטוס תעודות (אפשר כמה) */}
+          <div>
+            <Label className="text-sm font-semibold">סטטוס תעודות</Label>
+            <div className="flex flex-wrap gap-2 mt-2" role="group" aria-label="סטטוס תעודות">
+              {REPORT_STATUS_OPTIONS.map(([value, label]) => {
+                const on = reportStatuses.includes(value);
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleReportStatus(value)}
+                    className={`min-h-[40px] px-3 rounded-xl border text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${on ? 'bg-indigo-50 text-indigo-700 border-indigo-400' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                  >
+                    <span className={`w-4 h-4 rounded border flex items-center justify-center text-[11px] leading-none ${on ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-300'}`}>{on ? '✓' : ''}</span>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {/* בחירת לקוח */}
           <div>
@@ -1543,6 +1583,9 @@ export default function WeighingCertificates() {
                     totals={reportData.totals}
                     farmName={currentFarm?.name}
                     mode={reportMode}
+                    title={reportStatusText(reportData.statuses || ['open']).title}
+                    certsNoun={reportStatusText(reportData.statuses || ['open']).noun}
+                    showStatus={!(reportData.statuses || ['open']).every(v => v === 'open')}
                   />
                 </div>
               </div>

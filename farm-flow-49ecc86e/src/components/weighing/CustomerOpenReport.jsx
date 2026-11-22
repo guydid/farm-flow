@@ -55,9 +55,9 @@ const priceText = (it) => (
   </>
 );
 
-function ProductGroups({ productGroups }) {
+function ProductGroups({ productGroups, showStatus }) {
   if (!productGroups || productGroups.length === 0) {
-    return <div className="ff-empty">אין פריטים בתעודות הפתוחות</div>;
+    return <div className="ff-empty">אין פריטים בתעודות</div>;
   }
   return productGroups.map(({ product, rows, sums }) => (
     <section key={product} className="ff-group">
@@ -76,7 +76,7 @@ function ProductGroups({ productGroups }) {
           {rows.map(({ item, cert }, idx) => (
             <tr key={item.id || `${cert.id}-${idx}`}>
               <td>{fmtDate(cert.date)}{cert.time ? <span className="ff-muted"> {cert.time}</span> : null}</td>
-              <td>#{certNumber(cert)}</td>
+              <td>#{certNumber(cert)}{showStatus && STATUS_HE[cert.status] ? <div className="ff-muted" style={{ fontSize: '7pt' }}>{STATUS_HE[cert.status]}</div> : null}</td>
               <td>{item.quality || ''}</td>
               <td>{item.packaging_type || '-'}</td>
               <td>{item.package_count || 0}</td>
@@ -148,7 +148,7 @@ function DayGroups({ groups }) {
   });
 }
 
-export default function CustomerOpenReportLayout({ customer, groups, productGroups, totals, farmName, mode = 'product' }) {
+export default function CustomerOpenReportLayout({ customer, groups, productGroups, totals, farmName, mode = 'product', title = 'דוח תעודות פתוחות', certsNoun = 'תעודות פתוחות', showStatus = false }) {
   if (!customer || !groups) return null;
   const byProduct = mode === 'product';
   const resolvedProductGroups = byProduct
@@ -172,7 +172,7 @@ export default function CustomerOpenReportLayout({ customer, groups, productGrou
         </div>
         <div className="ff-title">
           <div className="ff-title-text">
-            <h2>דוח תעודות פתוחות</h2>
+            <h2>{title}</h2>
             <div className="ff-doc-no">{customer.name}</div>
             <div className="ff-sub">{byProduct ? 'לפי פריט' : 'לפי יום'}{dateRange ? ` · ${dateRange}` : ''}</div>
           </div>
@@ -190,15 +190,15 @@ export default function CustomerOpenReportLayout({ customer, groups, productGrou
         ))}
       </div>
 
-      {byProduct ? <ProductGroups productGroups={resolvedProductGroups} /> : <DayGroups groups={groups} />}
+      {byProduct ? <ProductGroups productGroups={resolvedProductGroups} showStatus={showStatus} /> : <DayGroups groups={groups} />}
 
       <div className="ff-grand">
-        <span>סה"כ {totals.certs} תעודות פתוחות{byProduct && resolvedProductGroups ? ` · ${resolvedProductGroups.length} פריטים` : ''}</span>
+        <span>סה"כ {totals.certs} {certsNoun}{byProduct && resolvedProductGroups ? ` · ${resolvedProductGroups.length} פריטים` : ''}</span>
         <span>{fmtNum(totals.weight)} ק"ג · {fmtNum(totals.packages, 0)} אריזות · ₪{fmtMoney(totals.amount)}</span>
       </div>
 
       <footer className="ff-foot">
-        <span>דוח תעודות פתוחות · {customer.name}</span>
+        <span>{title} · {customer.name}</span>
         <span>הופק באמצעות FarmFlow</span>
       </footer>
     </div>
