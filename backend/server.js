@@ -769,6 +769,7 @@ Extract ONLY these fields as a JSON object — do not invent values, use null wh
 - currency: "ILS" | "USD" | "EUR" (default "ILS" if shekel sign ₪ or "ש"ח" appears)
 - items: array of { description: string, qty: number, unit_price: number, total: number }. May be empty if line items aren't clear.
 - notes: string or null (any other notable text — e.g. "תשלום במזומן")
+Inside JSON strings write Hebrew abbreviations with the gershayim character ״ (e.g. בע״מ, ש״ח) or escape the quote as \\" — never a bare ".
 Return ONLY valid JSON. No markdown, no explanation.`;
 
 // ─── ENCRYPTION HELPER (for Gmail refresh tokens) ─────────────────────────────
@@ -1377,28 +1378,60 @@ Return ONLY the JSON object, no other text.`
   const text = (Array.isArray(result.content) ? result.content : [])
     .filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
   if (result.stop_reason === 'max_tokens') console.warn(`[Claude Vision] response cut at max_tokens (${maxTokens}) for ${path.basename(filePath)}`);
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
+  if (!/\{[\s\S]*\}/.test(text)) {
     throw new Error(result.stop_reason === 'max_tokens'
       ? 'תשובת Claude נקטעה לפני שהתקבלו נתונים'
       : 'Claude לא החזיר נתונים מהמסמך');
   }
-  let extracted = {};
-  if (jsonMatch) {
-    try {
-      extracted = JSON.parse(jsonMatch[0]);
-    } catch {
-      // ניקוי שגיאות JSON נפוצות של LLM: פסיקים עוקבים ותווי בקרה
-      try {
-        const cleaned = jsonMatch[0].replace(/,\s*([}\]])/g, '$1').replace(/[\u0000-\u001F]+/g, ' ');
-        extracted = JSON.parse(cleaned);
-      } catch { extracted = {}; }
-    }
+  const extracted = parseLlmJson(text);
+  if (!extracted) {
+    // בעבר: JSON שבור → {} בשקט, והחשבונית נשמרה ריקה בלי שום הודעה
+    console.error(`[Claude Vision] unparseable JSON for ${path.basename(filePath)}: ${text.slice(0, 300)}`);
+    throw new Error(result.stop_reason === 'max_tokens'
+      ? 'תשובת Claude נקטעה לפני שהתקבלו נתונים'
+      : 'תשובת Claude לא הייתה JSON תקין');
   }
   for (const k of Object.keys(extracted)) {
     if (extracted[k] === null || extracted[k] === '' || extracted[k] === undefined) delete extracted[k];
   }
+  if (documentType === 'invoice' && !['supplier_name', 'invoice_number', 'total', 'date', 'subtotal'].some(k => extracted[k] != null)) {
+    throw new Error('Claude לא זיהה פרטי חשבונית במסמך');
+  }
   return extracted;
+}
+
+// פענוח JSON מתשובת מודל: מסיר ```json, לוקח את האובייקט הראשון השלם, ומתקן שגיאות נפוצות:
+// מירכאה לא מוברחת בראשי תיבות עבריים (בע"מ, ש"ח, סה"כ, מע"מ → גרשיים ״), פסיקים עוקבים, תווי בקרה.
+// מחזיר null אם אין אובייקט תקין.
+function parseLlmJson(text) {
+  const src = String(text || '').replace(/```(?:json)?/gi, '');
+  const start = src.indexOf('{');
+  if (start < 0) return null;
+  const candidates = [];
+  // האובייקט הראשון לפי איזון סוגריים (מתעלם מסוגריים בתוך מחרוזות תקינות)
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < src.length; i++) {
+    const c = src[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) { candidates.push(src.slice(start, i + 1)); break; }
+  }
+  const greedy = src.slice(start, src.lastIndexOf('}') + 1);
+  if (greedy && !candidates.includes(greedy)) candidates.push(greedy);
+  const repair = (s) => s
+    .replace(/([א-ת])"(?=[א-ת])/g, '$1״')
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/[\u0000-\u001F]+/g, ' ');
+  for (const c of candidates) {
+    for (const s of [c, repair(c)]) {
+      try {
+        const v = JSON.parse(s);
+        if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+      } catch { /* next */ }
+    }
+  }
+  return null;
 }
 
 // ─── DOCUMENT EXTRACTION (Claude → Groq Vision → HuggingFace → Tesseract) ──────
