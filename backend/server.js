@@ -1252,6 +1252,19 @@ async function hfVisionExtract(filePath, documentType) {
   return extracted;
 }
 
+// שגיאת Claude API → הודעה ברורה למשתמש (מה לבדוק), עם ההודעה המקורית בסוגריים
+function claudeErrorHe(status, err) {
+  const msg = String(err?.message || 'Claude API error');
+  const type = String(err?.type || '');
+  let he = null;
+  if (status === 401 || type === 'authentication_error') he = 'מפתח ה-API של Claude אינו תקף (הגדרות מערכת)';
+  else if (status === 403 || type === 'permission_error') he = 'למפתח ה-API של Claude אין הרשאה למודל';
+  else if (/credit balance/i.test(msg)) he = 'נגמרה יתרת הקרדיט בחשבון ה-Anthropic';
+  else if (status === 429 || type === 'rate_limit_error') he = 'חריגה ממגבלת הקצב של Claude, נסו שוב בעוד דקה';
+  else if (status === 529 || type === 'overloaded_error' || status >= 500) he = 'שירות Claude עמוס כרגע, נסו שוב מאוחר יותר';
+  return he ? `${he} (${msg.slice(0, 160)})` : `Claude: ${msg.slice(0, 200)}`;
+}
+
 // ─── CLAUDE VISION EXTRACT (callable from any handler) ────────────────────────
 async function claudeVisionExtract(filePath, documentType) {
   const apiKey = getAiApiKey();
@@ -1311,12 +1324,17 @@ Return ONLY the JSON object, no other text.`
   const contentBlock = isPdf ? { type: 'document', source } : { type: 'image', source };
 
   // Invoices need more tokens (line items can be long); PDFs can have multiple pages
-  const maxTokens = documentType === 'invoice' ? (isPdf ? 3000 : 2000) : 512;
+  const maxTokens = documentType === 'invoice' ? 8000 : 2000;
 
-  const callModel = (model) => {
+  // Claude Haiku 5.5 (ודגמי 5.x) חושבים כברירת מחדל: התשובה נפתחת בבלוק thinking ריק, וה-JSON
+  // מגיע רק בבלוק text שאחריו. חילוץ שדות לא צריך חשיבה → מכבים (מותר ב-Haiku 5.5 עד effort high).
+  // דגמי 4.x לא חושבים בלי בקשה מפורשת, ולכן לא שולחים להם את השדה.
+  const thinkingOffFor = (model) => /^claude-[a-z]+-5/.test(model);
+  const callModel = (model, { thinkingOff = thinkingOffFor(model) } = {}) => {
     const body = JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...(thinkingOff ? { thinking: { type: 'disabled' } } : {}),
       messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }]
     });
     return httpsRequest({
@@ -1335,6 +1353,11 @@ Return ONLY the JSON object, no other text.`
   console.log(`[Claude Vision] model=${CLAUDE_VISION_MODEL} file=${path.basename(filePath)} type=${documentType} mediaType=${mediaType} size=${fileBuffer.length}B`);
 
   let rawResult = await callModel(CLAUDE_VISION_MODEL);
+  // אם ה-API דוחה את כיבוי החשיבה — שולחים שוב בלעדיו (ואז קוראים את בלוק ה-text שאחרי ה-thinking)
+  if (rawResult.status === 400 && /thinking/i.test(rawResult.body || '') && thinkingOffFor(CLAUDE_VISION_MODEL)) {
+    console.warn(`[Claude Vision] thinking:disabled rejected for ${CLAUDE_VISION_MODEL} — retrying with default thinking`);
+    rawResult = await callModel(CLAUDE_VISION_MODEL, { thinkingOff: false });
+  }
   // מודל לא זמין לחשבון (404 / not_found / invalid model) → נסיון חוזר במודל הקודם, כדי שהסריקה לא תיעצר
   if ((rawResult.status === 404 || rawResult.status === 400) && /not_found|model/i.test(rawResult.body || '') && CLAUDE_VISION_FALLBACK !== CLAUDE_VISION_MODEL) {
     console.warn(`[Claude Vision] model ${CLAUDE_VISION_MODEL} rejected (HTTP ${rawResult.status}) — falling back to ${CLAUDE_VISION_FALLBACK}`);
@@ -1347,10 +1370,19 @@ Return ONLY the JSON object, no other text.`
   let result;
   try { result = JSON.parse(rawResult.body); }
   catch { throw new Error(`Claude API non-JSON response (HTTP ${rawResult.status})`); }
-  if (result.error) throw new Error(result.error.message || 'Claude API error');
+  if (result.error) throw new Error(claudeErrorHe(rawResult.status, result.error));
+  if (result.stop_reason === 'refusal') throw new Error('Claude סירב לעבד את המסמך');
 
-  const text = result.content?.[0]?.text || '{}';
+  // כל בלוקי ה-text (בלוק thinking יכול להופיע ראשון — content[0] אינו בהכרח הטקסט)
+  const text = (Array.isArray(result.content) ? result.content : [])
+    .filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
+  if (result.stop_reason === 'max_tokens') console.warn(`[Claude Vision] response cut at max_tokens (${maxTokens}) for ${path.basename(filePath)}`);
   const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(result.stop_reason === 'max_tokens'
+      ? 'תשובת Claude נקטעה לפני שהתקבלו נתונים'
+      : 'Claude לא החזיר נתונים מהמסמך');
+  }
   let extracted = {};
   if (jsonMatch) {
     try {
@@ -1511,6 +1543,10 @@ async function runDocumentExtraction(filePath, documentType) {
   const isInvoice = documentType === 'invoice';
   const isPdf = path.extname(filePath).toLowerCase() === '.pdf';
 
+  // השגיאה של Claude נשמרת כדי שההודעה הסופית תסביר את הסיבה האמיתית (מפתח/קרדיט/עומס)
+  let claudeErr = null;
+  const withCause = (msg) => (claudeErr ? `${msg} · ${claudeErr}` : msg);
+
   if (isPdf) {
     // 1) Claude vision (הכי מדויק) — אם מוגדר מפתח
     if (apiKey) {
@@ -1518,7 +1554,8 @@ async function runDocumentExtraction(filePath, documentType) {
         const data = await claudeVisionExtract(filePath, documentType);
         return { method: 'claude', data };
       } catch (err) {
-        console.error('[Claude PDF] error, trying text extraction:', String(err?.message || err));
+        claudeErr = String(err?.message || err);
+        console.error('[Claude PDF] error, trying text extraction:', claudeErr);
       }
     }
     // 2) חילוץ שכבת טקסט מה-PDF + פרסר עברי (חינמי, ללא מפתח) — לחשבוניות בלבד
@@ -1533,7 +1570,9 @@ async function runDocumentExtraction(filePath, documentType) {
         console.error('[pdf-text] error:', String(err?.message || err));
       }
     }
-    throw new Error('עיבוד PDF נכשל: אין שכבת טקסט לחילוץ ואין מפתח Claude. החשבונית תישמר למילוי ידני.');
+    throw new Error(claudeErr
+      ? withCause('זיהוי הפרטים נכשל')
+      : 'עיבוד PDF נכשל: אין שכבת טקסט לחילוץ ואין מפתח Claude. החשבונית תישמר למילוי ידני.');
   }
 
   if (apiKey) {
@@ -1541,7 +1580,8 @@ async function runDocumentExtraction(filePath, documentType) {
       const data = await claudeVisionExtract(filePath, documentType);
       return { method: 'claude', data };
     } catch (err) {
-      console.error('[Claude Vision] error, trying next:', String(err?.message || err));
+      claudeErr = String(err?.message || err);
+      console.error('[Claude Vision] error, trying next:', claudeErr);
     }
   }
   if (groqKey) {
@@ -1561,7 +1601,9 @@ async function runDocumentExtraction(filePath, documentType) {
     }
   }
   if (isInvoice) {
-    throw new Error('חילוץ חשבונית דורש מפתח AI (Anthropic / Groq / HuggingFace). אין חזרה ל-OCR מקומי.');
+    throw new Error(claudeErr
+      ? withCause('זיהוי הפרטים נכשל')
+      : 'חילוץ חשבונית דורש מפתח AI (Anthropic / Groq / HuggingFace). אין חזרה ל-OCR מקומי.');
   }
   // Tesseract fallback only for passport/vehicle docs that have hand-coded parsers
   const data = await ocrExtractDocument(filePath, documentType);
