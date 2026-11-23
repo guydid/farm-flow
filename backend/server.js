@@ -1818,6 +1818,80 @@ function saveInvoiceFromExtraction(farmId, supplierId, extracted, fileInfo, sour
   return { id, farm_id: farmId, ...data };
 }
 
+// ─── זיהוי פרטים מחדש לחשבונית קיימת ─────────────────────────────────────────
+// מריץ שוב את חילוץ ה-AI על קובץ החשבונית. ברירת מחדל: ממלא רק שדות ריקים (לא דורס תיקונים
+// ידניים); overwrite=true מחליף את כל השדות שזוהו. מגבלה נפרדת מ-aiLimiter (20 לשעה) כדי
+// שאפשר יהיה לעדכן חודש שלם בבת אחת — Haiku זול, והפעולה מוגבלת לחשבוניות קיימות במשק.
+const reextractLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 300, message: { error: 'חריגה ממגבלת הזיהוי מחדש לשעה. נסו שוב מאוחר יותר' } });
+const REEXTRACT_FIELDS = ['supplier_name', 'invoice_number', 'invoice_type', 'date', 'due_date', 'subtotal', 'vat_rate', 'vat_amount', 'total', 'currency', 'notes'];
+const isBlank = (v) => v === null || v === undefined || v === '';
+
+// פונקציה טהורה: מיזוג תוצאת החילוץ לתוך החשבונית. מחזירה את השדות לעדכון ואת רשימת השדות שמולאו.
+function mergeExtractedIntoInvoice(inv, extracted, { overwrite = false } = {}) {
+  const patch = {}; const filled = [];
+  for (const f of REEXTRACT_FIELDS) {
+    const v = extracted[f];
+    if (isBlank(v)) continue;
+    // מטבע ILS הוא ברירת מחדל שנשמרת גם בחשבונית ריקה — אינו "ערך של המשתמש"
+    const current = inv[f];
+    const empty = isBlank(current) || (f === 'currency' && current === 'ILS');
+    if ((overwrite || empty) && current !== v) { patch[f] = v; filled.push(f); }
+  }
+  const items = Array.isArray(extracted.items) ? extracted.items : [];
+  if (items.length && (overwrite || !Array.isArray(inv.items) || inv.items.length === 0)) { patch.items = items; filled.push('items'); }
+  return { patch, filled };
+}
+
+app.post('/api/invoices/:id/reextract', authMiddleware, reextractLimiter, async (req, res) => {
+  const user = getUser(req.user.id);
+  if (!user?.current_farm_id) return res.status(400).json({ error: 'משתמש ללא חוות ברירת מחדל' });
+  const row = db.prepare("SELECT farm_id, data FROM entities WHERE entity_type='invoices' AND id=?").get(req.params.id);
+  if (!row || !(user.is_admin || user.farm_ids.includes(row.farm_id))) return res.status(404).json({ error: 'חשבונית לא נמצאה' });
+  const member = getFarmMember(row.farm_id, req.user.id);
+  if (!user.is_admin && (!member || member.role === 'viewer')) return res.status(403).json({ error: 'אין הרשאת עריכה' });
+  let inv = {}; try { inv = JSON.parse(row.data || '{}'); } catch { /* ignore */ }
+
+  if (!inv.file_name && !inv.file_url) return res.status(400).json({ error: 'לחשבונית אין קובץ מצורף', code: 'no_file' });
+  const filename = path.basename(String(inv.file_name || String(inv.file_url).split('?')[0]));
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (!/^[A-Za-z0-9._-]+$/.test(filename) || path.dirname(filePath) !== UPLOADS_DIR) return res.status(400).json({ error: 'שם קובץ לא תקין' });
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'קובץ החשבונית לא נמצא בשרת', code: 'no_file' });
+
+  let method, extracted;
+  try {
+    ({ method, data: extracted } = await runDocumentExtraction(filePath, 'invoice'));
+  } catch (e) {
+    const msg = String(e?.message || e);
+    console.error(`[invoices/reextract] ${req.params.id} failed:`, msg);
+    return res.status(422).json({ success: false, error: msg });
+  }
+  extracted = extracted || {};
+
+  // קריאה טרייה לפני הכתיבה — החילוץ איטי, וייתכן שהמשתמש ערך בינתיים
+  const fresh = db.prepare("SELECT data FROM entities WHERE entity_type='invoices' AND id=?").get(req.params.id);
+  let cur = inv; try { cur = JSON.parse(fresh?.data || '{}'); } catch { /* ignore */ }
+  const { patch, filled } = mergeExtractedIntoInvoice(cur, extracted, { overwrite: !!req.body?.overwrite });
+
+  // ספק: רק אם החשבונית עוד לא מקושרת לספק במערכת
+  let supplier = null;
+  if (!cur.supplier_id && (extracted.supplier_name || extracted.supplier_vat_id)) {
+    supplier = findOrCreateSupplier(row.farm_id, {
+      name: extracted.supplier_name, vat_id: extracted.supplier_vat_id,
+      phone: extracted.supplier_phone, address: extracted.supplier_address,
+      email: cur.source === 'gmail' ? (String(cur.source_meta?.from || '').match(/<([^>]+)>/)?.[1] || cur.source_meta?.from) : null,
+    });
+    if (supplier?.id) { patch.supplier_id = supplier.id; filled.push('supplier_id'); }
+  }
+
+  const sourceMeta = { ...(cur.source_meta || {}), method, reextracted_at: NOW() };
+  delete sourceMeta.extraction_error;
+  const updated = { ...cur, ...patch, extracted_raw: extracted, source_meta: sourceMeta };
+  db.prepare("UPDATE entities SET data=?, updated_at=? WHERE entity_type='invoices' AND id=?").run(JSON.stringify(updated), NOW(), req.params.id);
+  const found = Object.keys(extracted).filter(k => !isBlank(extracted[k])).length;
+  console.log(`[invoices/reextract] ${req.params.id} method=${method} found=${found} filled=${filled.join(',') || '-'}`);
+  res.json({ success: true, method, filled, found, invoice: { id: req.params.id, farm_id: row.farm_id, ...updated }, supplier });
+});
+
 // POST /api/invoices/scan
 //   multipart: pages=<jpg> × N  — עמודי סריקה מהמצלמה (כבר חתוכים/מיושרים בדפדפן) → PDF אחד
 //          או: file=<image|pdf> — העלאת קובץ בודד (תמונה מומרת ל-PDF, PDF נשמר כמו שהוא)

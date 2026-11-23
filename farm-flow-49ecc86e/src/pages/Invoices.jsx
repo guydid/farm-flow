@@ -14,9 +14,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import {
   Plus, Search, FileText, Camera, Upload, Loader2, Mail,
   CheckCircle2, Clock, AlertTriangle, SlidersHorizontal, ChevronDown, ChevronUp,
-  RefreshCw, Trash2, Send, CheckSquare, Square, X, Ban, List, LayoutGrid, Receipt
+  RefreshCw, Trash2, Send, CheckSquare, Square, X, Ban, List, LayoutGrid, Receipt, Sparkles
 } from 'lucide-react';
 import { getMavenConfig, uploadInvoiceToMaven, mavenExpenseLabel } from '@/api/mavenExpense';
+import { reextractInvoice, isMissingData } from '@/api/invoiceReextract';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
 import PageHeader from "@/components/common/PageHeader";
@@ -143,6 +144,7 @@ export default function Invoices({ embedded = false }) {
       if (supplierFilter !== 'all' && inv.supplier_id !== supplierFilter) return false;
       if (statusFilter === 'sent_mail') { if (!inv.sent_to_bookkeeper_at) return false; }
       else if (statusFilter === 'unsent_mail') { if (inv.sent_to_bookkeeper_at) return false; }
+      else if (statusFilter === 'missing_data') { if (!isMissingData(inv)) return false; }
       else if (statusFilter === 'in_maven') { if (!inMaven(inv)) return false; }
       else if (statusFilter === 'not_in_maven') { if (inMaven(inv)) return false; }
       else if (statusFilter !== 'all' && (inv.status || 'pending') !== statusFilter) return false;
@@ -515,6 +517,36 @@ export default function Invoices({ embedded = false }) {
     await load();
   };
 
+  // זיהוי פרטים מחדש למסומנות — ממלא רק שדות ריקים. נעצר אחרי 3 כשלונות ברצף (מפתח/קרדיט/עומס).
+  const [reextractProgress, setReextractProgress] = useState(null);
+  const bulkReextract = async () => {
+    const todo = invoices.filter(inv => selected.has(inv.id) && (inv.file_name || inv.file_url));
+    if (!todo.length) { toast({ title: 'אין קבצים לזיהוי', description: 'למסומנות אין קובץ מצורף' }); return; }
+    if (!confirm(`לזהות מחדש את הפרטים ב-${todo.length} חשבוניות?\nימולאו רק שדות ריקים. שדות שכבר מילאת לא ישתנו.`)) return;
+    setBulkBusy(true);
+    let updated = 0, nothing = 0, fail = 0, streak = 0, firstErr = '', stopped = false;
+    for (let i = 0; i < todo.length; i++) {
+      setReextractProgress({ done: i, total: todo.length });
+      try {
+        const data = await reextractInvoice(todo[i].id);
+        if (data.filled?.length) updated++; else nothing++;
+        streak = 0;
+      } catch (e) {
+        fail++; streak++; if (!firstErr) firstErr = e.message;
+        if (streak >= 3 || e.status === 429) { stopped = true; break; }
+      }
+    }
+    setReextractProgress(null);
+    setBulkBusy(false);
+    toast({
+      title: `עודכנו ${updated} חשבוניות`,
+      description: [nothing ? `${nothing} ללא שינוי` : '', fail ? `${fail} נכשלו${stopped ? ' (נעצר)' : ''} · ${firstErr}` : ''].filter(Boolean).join(' · ') || undefined,
+      variant: fail ? 'destructive' : undefined,
+    });
+    exitSelect();
+    await load();
+  };
+
   // העלאה מרוכזת ל-Invoice Maven כהוצאות. חשבוניות שכבר הועלו (לא במצב בדיקה) מדולגות.
   const bulkMaven = async () => {
     const picked = invoices.filter(inv => selected.has(inv.id));
@@ -704,6 +736,7 @@ export default function Invoices({ embedded = false }) {
                   <SelectItem value="sent">{STATUS_LABEL.sent}</SelectItem>
                   <SelectItem value="sent_mail">✉ נשלח לחשבונות</SelectItem>
                   <SelectItem value="unsent_mail">✉ טרם נשלח לחשבונות</SelectItem>
+                  <SelectItem value="missing_data">⚠ חסרים פרטים (ספק / סכום)</SelectItem>
                   {mavenCfg?.enabled && <SelectItem value="in_maven">הועלה ל-Maven</SelectItem>}
                   {mavenCfg?.enabled && <SelectItem value="not_in_maven">טרם הועלה ל-Maven</SelectItem>}
                 </SelectContent>
@@ -997,10 +1030,13 @@ export default function Invoices({ embedded = false }) {
       {selectMode && selected.size > 0 && (
         <div className="fixed bottom-16 sm:bottom-4 inset-x-0 z-40 px-4">
           <div className="max-w-xl mx-auto bg-white rounded-xl shadow-2xl border p-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700 px-1">נבחרו {selected.size}</span>
+            <span className="text-sm font-semibold text-gray-700 px-1">{reextractProgress ? `מזהה ${reextractProgress.done + 1}/${reextractProgress.total}…` : `נבחרו ${selected.size}`}</span>
             <div className="flex-1" />
             <Button onClick={bulkSend} disabled={bulkBusy} size="sm" className="flex items-center gap-1.5">
               {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} שלח מסומנים
+            </Button>
+            <Button onClick={bulkReextract} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5" title="הרצת זיהוי הפרטים שוב על קובץ החשבונית. ממלא רק שדות ריקים">
+              {reextractProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} זהה פרטים מחדש
             </Button>
             {mavenCfg?.enabled && (
               <Button onClick={bulkMaven} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5 text-violet-700 border-violet-300 hover:bg-violet-50" title={mavenCfg.test_mode ? 'מצב בדיקה: נבדק מול Maven בלי לשמור' : 'העלאה למסך ההוצאות ב-Invoice Maven'}>

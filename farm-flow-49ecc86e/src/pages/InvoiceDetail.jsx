@@ -13,8 +13,9 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Loader2, Save, Trash2, CheckCircle2, XCircle,
-  Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2, Receipt, FlaskConical
+  Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2, Receipt, FlaskConical, Sparkles
 } from 'lucide-react';
+import { reextractInvoice } from '@/api/invoiceReextract';
 import { getMavenConfig, uploadInvoiceToMaven, mavenExpenseLabel } from '@/api/mavenExpense';
 import { useToast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -62,6 +63,7 @@ export default function InvoiceDetail() {
   // Invoice Maven: העלאת החשבונית כהוצאה (מוצג רק כשהאינטגרציה מופעלת במשק)
   const [mavenCfg, setMavenCfg] = useState(null);
   const [mavenBusy, setMavenBusy] = useState(false);
+  const [reextracting, setReextracting] = useState(false);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -216,6 +218,23 @@ export default function InvoiceDetail() {
     }
   };
 
+  // זיהוי פרטים מחדש מהקובץ — ממלא רק שדות ריקים (שינויים שלא נשמרו בטופס יוחלפו בטעינה מחדש)
+  const reextract = async () => {
+    setReextracting(true);
+    try {
+      const data = await reextractInvoice(id);
+      toast({
+        title: data.filled?.length ? 'הפרטים עודכנו מהקובץ' : 'לא נמצאו פרטים חדשים',
+        description: data.filled?.length ? `מולאו ${data.filled.length} שדות. שדות שכבר היו מלאים לא שונו.` : 'כל השדות שזוהו כבר מלאים בחשבונית.',
+      });
+      load();
+    } catch (e) {
+      toast({ title: 'הזיהוי נכשל', description: e.message, variant: 'destructive' });
+    } finally {
+      setReextracting(false);
+    }
+  };
+
   const uploadToMaven = async (force = false) => {
     setMavenBusy(true);
     try {
@@ -322,6 +341,12 @@ export default function InvoiceDetail() {
                     <ExternalLink className="w-3 h-3" /> פתח בגודל מלא
                   </a>
                 </div>
+              )}
+              {previewUrl && (
+                <Button size="sm" variant="outline" onClick={reextract} disabled={reextracting} className="mt-2 h-8 text-xs" title="הרצת זיהוי הפרטים שוב על הקובץ. ממלא רק שדות ריקים">
+                  {reextracting ? <Loader2 className="w-3.5 h-3.5 animate-spin ml-1" /> : <Sparkles className="w-3.5 h-3.5 ml-1" />}
+                  זהה פרטים מחדש מהקובץ
+                </Button>
               )}
               {invoice.source === 'gmail' && invoice.source_meta && (
                 <div className="mt-3 p-2 bg-gray-50 rounded text-xs space-y-0.5">
