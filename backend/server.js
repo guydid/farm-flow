@@ -5186,6 +5186,62 @@ const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role
 const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);
 const canDeleteRole = (role) => ['owner', 'manager'].includes(role);
 
+// ─── העברת פעילויות / קטיפים / הדברות בין מזרעים ─────────────────────────────
+// POST /api/seedings/move-events { target_seeding_id, events: [{ type: 'activity'|'harvest'|'spraying', id }] }
+// אותו משק בלבד. החלקה של האירוע נשמרת אם היא שייכת גם למזרע היעד; אחרת — החלקה היחידה של
+// היעד, או ריק כשיש לו כמה חלקות. תאריכי וסטטוס המזרעים (שתילה/קטיף ראשון/עקירה) מחושבים
+// מחדש גם במקור וגם ביעד, בטרנזקציה אחת.
+const MOVE_EVENT_ENTITY = { activity: 'activities', harvest: 'harvests', spraying: 'sprayings' };
+function plotForMovedEvent(plotId, targetPlotIds) {
+  if (plotId && targetPlotIds.includes(plotId)) return plotId;
+  return targetPlotIds.length === 1 ? targetPlotIds[0] : null;
+}
+app.post('/api/seedings/move-events', authMiddleware, (req, res) => {
+  const user = getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { target_seeding_id: targetId, events } = req.body || {};
+  if (!targetId || !Array.isArray(events) || events.length === 0) return res.status(400).json({ error: 'בחרו מזרע יעד ואירועים להעברה' });
+  if (events.length > 500) return res.status(400).json({ error: 'אפשר להעביר עד 500 אירועים בבת אחת' });
+
+  const target = db.prepare("SELECT id, farm_id, data FROM entities WHERE entity_type='seedings' AND id=?").get(targetId);
+  if (!target || !user.farm_ids.includes(target.farm_id)) return res.status(404).json({ error: 'מזרע היעד לא נמצא' });
+  if (!canWriteRole(roleOf(target.farm_id, req.user.id))) return res.status(403).json({ error: 'אין הרשאת עריכה במשק' });
+  const targetPlotIds = db.prepare("SELECT data FROM entities WHERE entity_type='plot_seedings' AND json_extract(data,'$.seeding_id')=?")
+    .all(targetId).map(r => { try { return JSON.parse(r.data).plot_id; } catch { return null; } }).filter(Boolean);
+
+  const rows = [];
+  for (const ev of events) {
+    const entity = MOVE_EVENT_ENTITY[ev?.type];
+    if (!entity || !ev.id) return res.status(400).json({ error: 'אירוע לא תקין' });
+    const row = db.prepare('SELECT id, farm_id, data FROM entities WHERE entity_type=? AND id=?').get(entity, ev.id);
+    // רשומה לא עוברת בין משקים
+    if (!row || row.farm_id !== target.farm_id) return res.status(404).json({ error: 'אירוע לא נמצא במשק של מזרע היעד' });
+    let data; try { data = JSON.parse(row.data || '{}'); } catch { data = {}; }
+    rows.push({ entity, id: row.id, data });
+  }
+
+  const by = user.full_name || user.email;
+  const now = NOW();
+  const sources = new Set();
+  let moved = 0, plotChanged = 0;
+  const upd = db.prepare('UPDATE entities SET data=?, updated_at=? WHERE entity_type=? AND id=?');
+  db.transaction(() => {
+    for (const r of rows) {
+      if (r.data.seeding_id === targetId) continue;
+      if (r.data.seeding_id) sources.add(r.data.seeding_id);
+      const plot_id = plotForMovedEvent(r.data.plot_id || null, targetPlotIds);
+      if ((r.data.plot_id || null) !== plot_id) plotChanged++;
+      const next = { ...r.data, seeding_id: targetId, plot_id, moved_from_seeding_id: r.data.seeding_id || null, moved_at: now, _by: by };
+      upd.run(JSON.stringify(next), now, r.entity, r.id);
+      moved++;
+    }
+    for (const s of sources) syncSeedingDates(s);
+    syncSeedingDates(targetId);
+  })();
+  console.log(`[seedings/move-events] farm=${target.farm_id} → ${targetId} moved=${moved} from=${[...sources].join(',')} by=${by}`);
+  res.json({ success: true, moved, plot_changed: plotChanged, target_seeding_id: targetId, sources: [...sources] });
+});
+
 function listEntities(user, entity, query) {
   if (INTERNAL_ENTITIES.has(entity)) return { status: 404, body: { error: 'Not found' } };
   if (!/^[a-z_]+$/.test(String(entity))) return { status: 400, body: { error: 'Bad entity' } };

@@ -2,7 +2,7 @@
 import React from 'react';
 import { Button } from "@/components/ui/button";
 import { format, parseISO } from "date-fns";
-import { Tractor, Droplets, Leaf, Edit, Trash2, Copy, MoreVertical } from "lucide-react";
+import { Tractor, Droplets, Leaf, Edit, Trash2, Copy, MoreVertical, ArrowLeftRight, CheckSquare, Square } from "lucide-react";
 import {
     DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
     DropdownMenuItem, DropdownMenuSeparator,
@@ -17,8 +17,9 @@ const eventConfig = {
 const TREATMENT_HE = { mechanized: 'ממוכן', spray_gun: 'אקדח ריסוס', backpack: 'ריסוס גב', drench: 'הגמעה' };
 
 // כרטיס אירוע קומפקטי: שורה אחת עיקרית + שורת פרטים. לחיצה על הכרטיס = עריכה,
-// תפריט ⋮ לשכפול/מחיקה.
-export default function EventItem({ event, onEdit, onDelete, onDuplicate }) {
+// תפריט ⋮ לשכפול/העברה/מחיקה. במצב בחירה (selectable) לחיצה מסמנת את האירוע.
+export default function EventItem({ event, onEdit, onDelete, onDuplicate, onMove, selectable = false, selected: selectedProp = false, selectedKeys, onToggleSelect }) {
+    const selected = selectedProp || !!selectedKeys?.has(`${event.type}:${event.id}`);
     const config = eventConfig[event.type];
     if (!config) return null;
     const Icon = config.icon;
@@ -58,9 +59,16 @@ export default function EventItem({ event, onEdit, onDelete, onDuplicate }) {
 
     return (
         <div
-            onClick={() => onEdit(event)}
-            className="flex items-center gap-3 px-3 py-2.5 bg-white border border-gray-200 rounded-xl cursor-pointer transition-colors hover:shadow-sm active:bg-gray-50"
+            onClick={() => (selectable ? onToggleSelect?.(event) : onEdit(event))}
+            role={selectable ? "checkbox" : undefined}
+            aria-checked={selectable ? selected : undefined}
+            className={`flex items-center gap-3 px-3 py-2.5 border rounded-xl cursor-pointer transition-colors hover:shadow-sm active:bg-gray-50 ${selectable && selected ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-400' : 'bg-white border-gray-200'}`}
         >
+            {selectable && (
+                <span className="shrink-0 text-indigo-600" aria-hidden="true">
+                    {selected ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5 text-gray-300" />}
+                </span>
+            )}
             <div className={`w-9 h-9 rounded-lg flex-shrink-0 flex items-center justify-center ${config.color}`}>
                 <Icon className={`w-5 h-5 ${config.iconColor}`} />
             </div>
@@ -79,7 +87,7 @@ export default function EventItem({ event, onEdit, onDelete, onDuplicate }) {
             {amount && (
                 <span className={`text-sm font-bold tabular-nums shrink-0 ${amountColor}`}>{amount}</span>
             )}
-            <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+            {!selectable && <div onClick={(e) => e.stopPropagation()} className="shrink-0">
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" aria-label="פעולות נוספות" className="h-8 w-8 text-gray-400">
@@ -93,13 +101,18 @@ export default function EventItem({ event, onEdit, onDelete, onDuplicate }) {
                         <DropdownMenuItem onClick={() => onDuplicate(event)}>
                             <Copy className="w-4 h-4 ml-2" /> שכפל
                         </DropdownMenuItem>
+                        {onMove && (
+                            <DropdownMenuItem onClick={() => onMove(event)}>
+                                <ArrowLeftRight className="w-4 h-4 ml-2" /> העבר למזרע אחר
+                            </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => onDelete(event)} className="text-red-600">
                             <Trash2 className="w-4 h-4 ml-2" /> מחק
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
-            </div>
+            </div>}
         </div>
     );
 }

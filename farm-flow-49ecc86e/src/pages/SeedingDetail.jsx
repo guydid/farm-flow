@@ -11,7 +11,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useToast } from "@/components/ui/use-toast";
 import { format, parseISO } from "date-fns";
 import { he } from "date-fns/locale";
-import { Loader2, Calendar, Droplets, Tractor, MapPin, TrendingUp, Activity as ActivityIcon, Edit, Plus, ExternalLink, Archive, Trash2, MoreVertical, Leaf } from "lucide-react";
+import { Loader2, Calendar, Droplets, Tractor, MapPin, TrendingUp, Activity as ActivityIcon, Edit, Plus, ExternalLink, Archive, Trash2, MoreVertical, Leaf, ArrowLeftRight, CheckSquare, X } from "lucide-react";
+import MoveEventsDialog from "../components/seedings/MoveEventsDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // NEW IMPORT
 
 import SeedingSummary from "../components/seedings/SeedingSummary";
@@ -46,6 +47,10 @@ export default function SeedingDetail() {
   const [plotSeedings, setPlotSeedings] = useState([]);
   const { toast } = useToast();
   const [activeEventsTab, setActiveEventsTab] = useState("all"); // NEW STATE
+  // העברת אירועים למזרע אחר: מצב בחירה + דיאלוג
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+  const [moveEvents, setMoveEvents] = useState(null);
 
   const seedingId = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -352,6 +357,26 @@ export default function SeedingDetail() {
     setEditingEvent({ type: event.type, data: duplicatedData });
   };
   
+  const eventKey = (e) => `${e.type}:${e.id}`;
+  const toggleSelect = (e) => setSelectedKeys(prev => {
+    const next = new Set(prev);
+    const k = eventKey(e);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+  const exitSelect = () => { setSelectMode(false); setSelectedKeys(new Set()); };
+  const visibleEvents = { all: allEvents, activities: activitiesOnly, sprayings: sprayingsOnly, harvests: harvestsOnly }[activeEventsTab] || allEvents;
+  const allVisibleSelected = visibleEvents.length > 0 && visibleEvents.every(e => selectedKeys.has(eventKey(e)));
+  const toggleSelectAllVisible = () => setSelectedKeys(prev => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleEvents.forEach(e => next.delete(eventKey(e)));
+    else visibleEvents.forEach(e => next.add(eventKey(e)));
+    return next;
+  });
+  const selectedEvents = allEvents.filter(e => selectedKeys.has(eventKey(e)));
+  // מאפייני בחירה/העברה משותפים לכל רשימות האירועים
+  const selectProps = { onMove: (ev) => setMoveEvents([ev]), selectable: selectMode, selectedKeys, onToggleSelect: toggleSelect };
+
   if (isLoading) return <div className="flex justify-center items-center h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>;
   if (!seeding) return <div className="p-6 text-center">לא נמצא מזרע.</div>;
 
@@ -571,6 +596,25 @@ export default function SeedingDetail() {
                   </div>
                 </div>
 
+                {/* העברה למזרע אחר: כניסה למצב בחירה */}
+                {allEvents.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap text-sm">
+                    {!selectMode ? (
+                      <Button variant="ghost" size="sm" onClick={() => setSelectMode(true)} className="text-gray-600 h-8 px-2">
+                        <ArrowLeftRight className="w-4 h-4 ml-1" /> העברת אירועים למזרע אחר
+                      </Button>
+                    ) : (
+                      <>
+                        <button type="button" onClick={toggleSelectAllVisible} className="flex items-center gap-1.5 py-1 font-medium text-indigo-700">
+                          <CheckSquare className="w-4 h-4" /> {allVisibleSelected ? 'בטל בחירה' : `בחר הכל (${visibleEvents.length})`}
+                        </button>
+                        <span className="text-gray-400">·</span>
+                        <span className="text-gray-600">לחצו על אירועים כדי לסמן אותם</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 <TabsContent value="all" className="mt-3">
                   <div className="space-y-2">
                     {allEvents.map(event => (
@@ -580,6 +624,7 @@ export default function SeedingDetail() {
                         onEdit={handleEditEvent}
                         onDelete={handleDeleteEvent}
                         onDuplicate={handleDuplicateEvent}
+                        {...selectProps}
                       />
                     ))}
                     {allEvents.length === 0 && (
@@ -599,6 +644,7 @@ export default function SeedingDetail() {
                         onEdit={handleEditEvent}
                         onDelete={handleDeleteEvent}
                         onDuplicate={handleDuplicateEvent}
+                        {...selectProps}
                       />
                     ))}
                     {activitiesOnly.length === 0 && (
@@ -627,6 +673,7 @@ export default function SeedingDetail() {
                         onEdit={handleEditEvent}
                         onDelete={handleDeleteEvent}
                         onDuplicate={handleDuplicateEvent}
+                        {...selectProps}
                       />
                     ))}
                     {sprayingsOnly.length === 0 && (
@@ -656,6 +703,7 @@ export default function SeedingDetail() {
                         onEdit={handleEditEvent}
                         onDelete={handleDeleteEvent}
                         onDuplicate={handleDuplicateEvent}
+                        {...selectProps}
                       />
                     ))}
                     {harvestsOnly.length === 0 && (
@@ -680,6 +728,27 @@ export default function SeedingDetail() {
         </div>
       </div>
       
+      {selectMode && (
+        <div className="fixed bottom-16 sm:bottom-4 inset-x-0 z-40 px-4">
+          <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl border p-3 flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700 px-1">נבחרו {selectedEvents.length}</span>
+            <div className="flex-1" />
+            <Button size="sm" disabled={selectedEvents.length === 0} onClick={() => setMoveEvents(selectedEvents)} className="flex items-center gap-1.5">
+              <ArrowLeftRight className="w-4 h-4" /> העבר למזרע…
+            </Button>
+            <Button size="sm" variant="ghost" onClick={exitSelect} aria-label="ביטול בחירה"><X className="w-4 h-4" /></Button>
+          </div>
+        </div>
+      )}
+
+      <MoveEventsDialog
+        open={!!moveEvents}
+        events={moveEvents || []}
+        seeding={seeding}
+        onClose={() => setMoveEvents(null)}
+        onMoved={() => { setMoveEvents(null); exitSelect(); loadData(); }}
+      />
+
       <EditSeedingForm
         seeding={seeding}
         isOpen={isEditFormOpen}
