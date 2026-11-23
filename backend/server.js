@@ -1141,15 +1141,53 @@ async function ocrExtractDocument(filePath, documentType) {
 }
 
 // ─── Groq Vision OCR ──────────────────────────────────────────────────────────
-// Uses llama-3.2-11b-vision (free tier) — better than Tesseract for documents
+// llama-4-scout כובה ב-Groq ב-17/07/2026. מודל הראייה הנוכחי: qwen/qwen3.8-27b (עד 3 תמונות לבקשה).
+// ניתן לעקוף ב-GROQ_VISION_MODEL. PDF מרונדר ל-JPEG (pdftoppm, עד 3 עמודים) כי Groq לא מקבל PDF.
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.8-27b';
+const GROQ_MAX_IMAGES = 3;
+
+function pdfToJpegPages(pdfPath, maxPages = GROQ_MAX_IMAGES) {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ff-groq-'));
+  return new Promise((resolve, reject) => {
+    require('child_process').execFile('pdftoppm',
+      ['-jpeg', '-r', '150', '-f', '1', '-l', String(maxPages), pdfPath, path.join(dir, 'p')],
+      { timeout: 60_000 },
+      (err) => {
+        if (err) {
+          try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+          return reject(new Error(err.code === 'ENOENT' ? 'pdftoppm לא מותקן בשרת' : `המרת PDF לתמונה נכשלה: ${err.message}`));
+        }
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.jpg')).sort().map(f => path.join(dir, f));
+        resolve({ files, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} } });
+      });
+  });
+}
+
 async function groqVisionExtract(filePath, documentType) {
   const GROQ_KEY = getGroqApiKey();
   if (!GROQ_KEY) throw new Error('GROQ_API_KEY not configured');
 
-  const fileBuffer = fs.readFileSync(filePath);
-  const base64Data = fileBuffer.toString('base64');
-  const ext = path.extname(filePath).toLowerCase();
-  const mediaType = ext === '.png' ? 'image/png' : 'image/jpeg';
+  const isPdf = path.extname(filePath).toLowerCase() === '.pdf';
+  let pages = [filePath], cleanup = () => {};
+  if (isPdf) {
+    ({ files: pages, cleanup } = await pdfToJpegPages(filePath));
+    if (!pages.length) { cleanup(); throw new Error('ה-PDF לא הומר לתמונה'); }
+  }
+  let imageParts;
+  try {
+    imageParts = [];
+    for (const p of pages.slice(0, GROQ_MAX_IMAGES)) {
+      let buf;
+      try {
+        const Jimp = require('jimp');
+        const img = await Jimp.read(p);
+        if (Math.max(img.bitmap.width, img.bitmap.height) > 1568) img.scaleToFit(1568, 1568);
+        img.quality(80);
+        buf = await img.getBufferAsync(Jimp.MIME_JPEG);
+      } catch { buf = fs.readFileSync(p); }
+      imageParts.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${buf.toString('base64')}` } });
+    }
+  } finally { cleanup(); }
 
   const prompt = documentType === 'vehicle_license'
     ? 'This is an Israeli vehicle license (רישיון רכב). Extract ONLY these fields as a JSON object: license_plate (string), manufacturer (string), model (string), year (number), last_test_date (YYYY-MM-DD), next_test_date (YYYY-MM-DD). Return ONLY valid JSON, nothing else.'
@@ -1157,43 +1195,55 @@ async function groqVisionExtract(filePath, documentType) {
     ? INVOICE_EXTRACTION_PROMPT
     : 'This is a passport photo page. Extract ONLY these fields as a JSON object: first_name (Latin letters as printed), last_name (Latin letters as printed), passport_number (string), passport_expiry (YYYY-MM-DD), country_of_origin (in Hebrew, e.g. תאילנד פיליפינים הודו), birth_date (YYYY-MM-DD). Return ONLY valid JSON, nothing else.';
 
-  const body = JSON.stringify({
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64Data}` } },
-        { type: 'text', text: prompt }
-      ]
-    }],
-    max_tokens: 300,
-    temperature: 0.1
-  });
+  const call = (jsonMode) => {
+    const body = JSON.stringify({
+      model: GROQ_VISION_MODEL,
+      messages: [{ role: 'user', content: [...imageParts, { type: 'text', text: prompt }] }],
+      max_tokens: documentType === 'invoice' ? 4000 : 1000,
+      temperature: 0.1,
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    });
+    return httpsRequest({
+      hostname: 'api.groq.com',
+      path: '/openai/v1/chat/completions',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_KEY}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, body);
+  };
 
-  console.log('[Groq Vision] calling API, model: llama-4-scout-17b');
-  const result = await httpsRequest({
-    hostname: 'api.groq.com',
-    path: '/openai/v1/chat/completions',
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_KEY}`,
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body)
-    }
-  }, body);
-
+  console.log(`[Groq Vision] model=${GROQ_VISION_MODEL} file=${path.basename(filePath)} images=${imageParts.length} type=${documentType}`);
+  let result = await call(true);
+  // JSON mode נדחה (או JSON לא תקין שנחסם ע"י Groq) → שוב בלי, ומפענחים בעצמנו
+  if (result.status === 400) {
+    console.warn('[Groq Vision] 400 in JSON mode, retrying without:', String(result.body || '').slice(0, 200));
+    result = await call(false);
+  }
   if (result.status !== 200) {
-    console.error('[Groq Vision] API error:', result.status, result.body.slice(0, 200));
-    throw new Error(`Groq Vision API error: ${result.status}`);
+    console.error('[Groq Vision] API error:', result.status, String(result.body || '').slice(0, 300));
+    let msg = '';
+    try { msg = JSON.parse(result.body)?.error?.message || ''; } catch {}
+    const he = result.status === 401 ? 'מפתח Groq אינו תקף'
+      : result.status === 429 ? 'חריגה ממכסת Groq — נסו שוב מאוחר יותר'
+      : (result.status === 404 || /model/i.test(msg)) ? `מודל Groq ${GROQ_VISION_MODEL} לא זמין`
+      : `Groq HTTP ${result.status}`;
+    throw new Error(msg ? `${he} (${msg.slice(0, 140)})` : he);
   }
 
   const data = JSON.parse(result.body);
-  const text = data.choices?.[0]?.message?.content || '{}';
+  const text = String(data.choices?.[0]?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '');
   console.log('[Groq Vision] raw response:', text.slice(0, 300));
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON in Groq Vision response');
-  const extracted = JSON.parse(jsonMatch[0]);
-  for (const k of Object.keys(extracted)) { if (!extracted[k]) delete extracted[k]; }
+  const extracted = parseLlmJson(text);
+  if (!extracted) throw new Error('Groq לא החזיר JSON תקין');
+  for (const k of Object.keys(extracted)) {
+    if (extracted[k] === null || extracted[k] === '' || extracted[k] === undefined) delete extracted[k];
+  }
+  if (documentType === 'invoice' && !['supplier_name', 'invoice_number', 'total', 'date', 'subtotal'].some(k => extracted[k] != null)) {
+    throw new Error('Groq לא זיהה פרטי חשבונית במסמך');
+  }
   return extracted;
 }
 
@@ -1577,8 +1627,18 @@ async function runDocumentExtraction(filePath, documentType) {
   const isPdf = path.extname(filePath).toLowerCase() === '.pdf';
 
   // השגיאה של Claude נשמרת כדי שההודעה הסופית תסביר את הסיבה האמיתית (מפתח/קרדיט/עומס)
-  let claudeErr = null;
-  const withCause = (msg) => (claudeErr ? `${msg} · ${claudeErr}` : msg);
+  let claudeErr = null, groqErr = null;
+  const withCause = (msg) => [msg, claudeErr && `Claude: ${claudeErr}`, groqErr && `Groq: ${groqErr}`].filter(Boolean).join(' · ');
+  const tryGroq = async () => {
+    if (!groqKey) return null;
+    try {
+      return { method: 'groq_vision', data: await groqVisionExtract(filePath, documentType) };
+    } catch (err) {
+      groqErr = String(err?.message || err);
+      console.error('[Groq Vision] error, trying next:', groqErr);
+      return null;
+    }
+  };
 
   if (isPdf) {
     // 1) Claude vision (הכי מדויק) — אם מוגדר מפתח
@@ -1588,10 +1648,13 @@ async function runDocumentExtraction(filePath, documentType) {
         return { method: 'claude', data };
       } catch (err) {
         claudeErr = String(err?.message || err);
-        console.error('[Claude PDF] error, trying text extraction:', claudeErr);
+        console.error('[Claude PDF] error, trying Groq / text extraction:', claudeErr);
       }
     }
-    // 2) חילוץ שכבת טקסט מה-PDF + פרסר עברי (חינמי, ללא מפתח) — לחשבוניות בלבד
+    // 2) Groq vision על עמודי ה-PDF כתמונות — אם מוגדר מפתח Groq
+    const groqRes = await tryGroq();
+    if (groqRes) return groqRes;
+    // 3) חילוץ שכבת טקסט מה-PDF + פרסר עברי (חינמי, ללא מפתח) — לחשבוניות בלבד
     if (isInvoice) {
       try {
         const data = await pdfTextExtractInvoice(filePath);
@@ -1603,9 +1666,9 @@ async function runDocumentExtraction(filePath, documentType) {
         console.error('[pdf-text] error:', String(err?.message || err));
       }
     }
-    throw new Error(claudeErr
+    throw new Error(claudeErr || groqErr
       ? withCause('זיהוי הפרטים נכשל')
-      : 'עיבוד PDF נכשל: אין שכבת טקסט לחילוץ ואין מפתח Claude. החשבונית תישמר למילוי ידני.');
+      : 'עיבוד PDF נכשל: אין שכבת טקסט לחילוץ ואין מפתח Claude / Groq. החשבונית תישמר למילוי ידני.');
   }
 
   if (apiKey) {
@@ -1617,14 +1680,8 @@ async function runDocumentExtraction(filePath, documentType) {
       console.error('[Claude Vision] error, trying next:', claudeErr);
     }
   }
-  if (groqKey) {
-    try {
-      const data = await groqVisionExtract(filePath, documentType);
-      return { method: 'groq_vision', data };
-    } catch (err) {
-      console.error('[Groq Vision] error, trying next:', String(err?.message || err));
-    }
-  }
+  const groqRes = await tryGroq();
+  if (groqRes) return groqRes;
   if (process.env.HF_TOKEN) {
     try {
       const data = await hfVisionExtract(filePath, documentType);
@@ -1634,7 +1691,7 @@ async function runDocumentExtraction(filePath, documentType) {
     }
   }
   if (isInvoice) {
-    throw new Error(claudeErr
+    throw new Error(claudeErr || groqErr
       ? withCause('זיהוי הפרטים נכשל')
       : 'חילוץ חשבונית דורש מפתח AI (Anthropic / Groq / HuggingFace). אין חזרה ל-OCR מקומי.');
   }
