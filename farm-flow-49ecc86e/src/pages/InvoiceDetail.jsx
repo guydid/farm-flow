@@ -13,8 +13,9 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Loader2, Save, Trash2, CheckCircle2, XCircle,
-  Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2
+  Mail, Upload, FileText, ExternalLink, Plus, X, Send, CheckSquare, Undo2, Receipt, FlaskConical
 } from 'lucide-react';
+import { getMavenConfig, uploadInvoiceToMaven, mavenExpenseLabel } from '@/api/mavenExpense';
 import { useToast } from '@/components/ui/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import SupplierPicker from '@/components/invoices/SupplierPicker';
@@ -58,6 +59,9 @@ export default function InvoiceDetail() {
   const [sending, setSending] = useState(false);
   const [sendTo, setSendTo] = useState('');
   const [sendCc, setSendCc] = useState('');
+  // Invoice Maven: העלאת החשבונית כהוצאה (מוצג רק כשהאינטגרציה מופעלת במשק)
+  const [mavenCfg, setMavenCfg] = useState(null);
+  const [mavenBusy, setMavenBusy] = useState(false);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -71,6 +75,7 @@ export default function InvoiceDetail() {
       ]);
       setInvoice(inv);
       setSuppliers(supList || []);
+      getMavenConfig(inv.farm_id || user.current_farm_id).then(setMavenCfg);
       setForm({
         supplier_id: inv.supplier_id || '',
         supplier_name: inv.supplier_name || '',
@@ -211,6 +216,29 @@ export default function InvoiceDetail() {
     }
   };
 
+  const uploadToMaven = async (force = false) => {
+    setMavenBusy(true);
+    try {
+      const data = await uploadInvoiceToMaven(invoice, { force });
+      const me = data.maven_expense || {};
+      toast({
+        title: me.test ? 'נבדק מול Maven במצב בדיקה' : me.duplicate ? 'הקובץ כבר קיים כהוצאה ב-Maven' : 'הועלה ל-Maven כהוצאה',
+        description: me.test
+          ? 'לא נשמר כלום ב-Maven. כדי להעלות באמת, כבו את מצב הבדיקה בהגדרות ← אינטגרציות.'
+          : `${me.expense_id ? `הוצאה ${me.expense_id}. ` : ''}${me.ocr ? 'Maven ישלים ספק, תאריך וסכומים אוטומטית.' : 'ההוצאה נוצרה כטיוטה במסך ההוצאות ב-Maven.'}`,
+      });
+      load();
+    } catch (e) {
+      if (e.code === 'already_uploaded') {
+        if (window.confirm(`${e.message}. להעלות שוב?`)) { setMavenBusy(false); return uploadToMaven(true); }
+      } else {
+        toast({ title: 'ההעלאה ל-Maven נכשלה', description: e.message, variant: 'destructive' });
+      }
+    } finally {
+      setMavenBusy(false);
+    }
+  };
+
   const setItem = (i, key, val) => {
     setItems(arr => arr.map((it, idx) => idx === i ? { ...it, [key]: val } : it));
   };
@@ -255,6 +283,14 @@ export default function InvoiceDetail() {
                     <FileText className="w-3 h-3" /> עותק ה-PDF שנשלח
                   </a>
                 )}
+              </div>
+            )}
+            {invoice.maven_expense && (
+              <div className="flex items-center gap-2 flex-wrap mt-1">
+                <Badge className={`text-xs ${invoice.maven_expense.test ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-violet-100 text-violet-700 border-violet-200'}`}>
+                  {invoice.maven_expense.test ? <FlaskConical className="w-3 h-3 ml-1" /> : <Receipt className="w-3 h-3 ml-1" />}
+                  {mavenExpenseLabel(invoice.maven_expense)}
+                </Badge>
               </div>
             )}
           </div>
@@ -433,14 +469,27 @@ export default function InvoiceDetail() {
         </Card>
 
         {/* Actions bar */}
-        <div className="sticky bottom-16 sm:bottom-4 mt-4 flex gap-2 bg-white p-3 rounded-xl shadow-lg border z-10">
-          <Button onClick={save} disabled={saving} className="flex-1">
+        <div className="sticky bottom-16 sm:bottom-4 mt-4 flex flex-wrap gap-2 bg-white p-3 rounded-xl shadow-lg border z-10">
+          <Button onClick={save} disabled={saving} className="flex-1 min-w-[140px]">
             {saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Save className="w-4 h-4 ml-1" />}
             שמור שינויים
           </Button>
           <Button onClick={openSendDialog} variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50">
             <Send className="w-4 h-4 ml-1" /> {invoice.sent_to_bookkeeper_at ? 'שלח שוב' : 'שלח לחשבונות'}
           </Button>
+          {mavenCfg?.enabled && previewUrl && (
+            <Button
+              onClick={() => uploadToMaven(false)}
+              disabled={mavenBusy}
+              variant="outline"
+              className="text-violet-700 border-violet-300 hover:bg-violet-50"
+              title={mavenCfg.test_mode ? 'מצב בדיקה: נבדק מול Maven בלי לשמור' : 'הקובץ יועלה למסך ההוצאות ב-Invoice Maven'}
+            >
+              {mavenBusy ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <Receipt className="w-4 h-4 ml-1" />}
+              {invoice.maven_expense && !invoice.maven_expense.test ? 'הועלה ל-Maven' : 'העלה ל-Maven כהוצאה'}
+              {mavenCfg.test_mode && <span className="mr-1 text-[10px] px-1 rounded bg-amber-100 text-amber-700">בדיקה</span>}
+            </Button>
+          )}
           {!invoice.sent_to_bookkeeper_at && (
             <Button onClick={() => setMarkOpen(true)} variant="outline" title="המסמך הועבר לחשבונות בדרך אחרת — רק סימון, בלי שליחה">
               <CheckSquare className="w-4 h-4 ml-1" /> סמן כנשלח

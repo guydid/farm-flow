@@ -47,3 +47,15 @@ test('note without a linked customer record falls back to counterparty_name; fre
   assert.equal(body.description, 'תעודת משלוח OUT-0007 מתאריך 29/10/2026');
   assert.equal(body.remarks, undefined);
 });
+
+const { buildExpenseUpload } = require('./maven');
+test('supplier invoice → Maven expense upload: filename + description', () => {
+  const r = buildExpenseUpload({ supplier_name: 'דשנים כימיקלים / בע"מ', invoice_number: 'INV 77', date: '2026-11-03', total: 1170.456, notes: 'דשן לחממה 4' }, '.pdf');
+  assert.equal(r.filename, 'דשנים_כימיקלים_בעמ_INV_77_2026-11-03.pdf');
+  assert.equal(r.description, "דשנים כימיקלים / בע\"מ · מס' INV 77 · 03/11/2026 · 1170.46 ₪ · דשן לחממה 4 · מ-FarmFlow");
+});
+test('expense upload without details falls back to generic names; foreign currency shown', () => {
+  assert.deepEqual(buildExpenseUpload({}, '.jpg'), { filename: 'חשבונית.jpg', description: 'מ-FarmFlow' });
+  assert.match(buildExpenseUpload({ total: 0, currency: 'USD' }, '.pdf').description, /^0 USD · /);
+  assert.ok(buildExpenseUpload({ notes: 'x'.repeat(2000) }, '.pdf').description.length <= 1000);
+});

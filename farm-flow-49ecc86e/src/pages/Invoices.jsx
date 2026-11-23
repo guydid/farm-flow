@@ -14,8 +14,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import {
   Plus, Search, FileText, Camera, Upload, Loader2, Mail,
   CheckCircle2, Clock, AlertTriangle, SlidersHorizontal, ChevronDown, ChevronUp,
-  RefreshCw, Trash2, Send, CheckSquare, Square, X, Ban, List, LayoutGrid
+  RefreshCw, Trash2, Send, CheckSquare, Square, X, Ban, List, LayoutGrid, Receipt
 } from 'lucide-react';
+import { getMavenConfig, uploadInvoiceToMaven, mavenExpenseLabel } from '@/api/mavenExpense';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
 import PageHeader from "@/components/common/PageHeader";
@@ -44,6 +45,9 @@ const STATUS_COLOR = {
   sent: 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
 const SENT_BADGE_CLASS = 'bg-emerald-600 text-white border-emerald-600';
+const MAVEN_BADGE_CLASS = 'bg-violet-600 text-white border-violet-600';
+// הועלה באמת ל-Maven (העלאה במצב בדיקה לא נחשבת)
+const inMaven = (inv) => !!(inv.maven_expense && !inv.maven_expense.test);
 const SOURCE_LABEL = { upload: 'העלאה', gmail: 'Gmail', manual: 'ידני' };
 
 // שמות חודשים קשיחים ולא locale של date-fns — נמנע מתלות בטעינת locale שאולי לא מותקן
@@ -73,6 +77,7 @@ export default function Invoices({ embedded = false }) {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [mavenCfg, setMavenCfg] = useState(null);
   // סימון ידני "נשלח לחשבונות" — למסמכים שהועברו בוואטסאפ / מייל אחר / ביד
   const [markSentOpen, setMarkSentOpen] = useState(false);
   const [markSentForm, setMarkSentForm] = useState({ via: 'whatsapp', sent_at: new Date().toISOString().slice(0, 10), note: '' });
@@ -98,6 +103,7 @@ export default function Invoices({ embedded = false }) {
     try {
       const user = await getMeCached();
       if (!user?.current_farm_id) return;
+      getMavenConfig(user.current_farm_id).then(setMavenCfg);
       const [invList, supList] = await Promise.all([
         Invoice.filter({ farm_id: user.current_farm_id }),
         Supplier.filter({ farm_id: user.current_farm_id }),
@@ -137,6 +143,8 @@ export default function Invoices({ embedded = false }) {
       if (supplierFilter !== 'all' && inv.supplier_id !== supplierFilter) return false;
       if (statusFilter === 'sent_mail') { if (!inv.sent_to_bookkeeper_at) return false; }
       else if (statusFilter === 'unsent_mail') { if (inv.sent_to_bookkeeper_at) return false; }
+      else if (statusFilter === 'in_maven') { if (!inMaven(inv)) return false; }
+      else if (statusFilter === 'not_in_maven') { if (inMaven(inv)) return false; }
       else if (statusFilter !== 'all' && (inv.status || 'pending') !== statusFilter) return false;
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
       if (!s) return true;
@@ -507,6 +515,35 @@ export default function Invoices({ embedded = false }) {
     await load();
   };
 
+  // העלאה מרוכזת ל-Invoice Maven כהוצאות. חשבוניות שכבר הועלו (לא במצב בדיקה) מדולגות.
+  const bulkMaven = async () => {
+    const picked = invoices.filter(inv => selected.has(inv.id));
+    const todo = picked.filter(inv => !inMaven(inv) && (inv.file_name || inv.file_url));
+    const skipped = picked.length - todo.length;
+    if (!todo.length) { toast({ title: 'אין מה להעלות', description: 'כל המסומנות כבר הועלו ל-Maven או שאין להן קובץ' }); return; }
+    const testNote = mavenCfg?.test_mode ? '\n(מצב בדיקה: שום דבר לא יישמר ב-Maven)' : '';
+    if (!confirm(`להעלות ${todo.length} חשבוניות ל-Maven כהוצאות?${skipped ? `\n${skipped} ידולגו (כבר הועלו / בלי קובץ)` : ''}${testNote}`)) return;
+    setBulkBusy(true);
+    let ok = 0, dup = 0, fail = 0, firstErr = '';
+    for (const inv of todo) {
+      try {
+        const data = await uploadInvoiceToMaven(inv);
+        if (data.maven_expense?.duplicate) dup++; else ok++;
+      } catch (e) {
+        fail++; if (!firstErr) firstErr = e.message;
+        if (e.code === '109' || e.code === '63' || e.code === 'not_enabled') break; // מכסה יומית / מנוי: אין טעם להמשיך
+      }
+    }
+    setBulkBusy(false);
+    toast({
+      title: mavenCfg?.test_mode ? `נבדקו ${ok + dup} מול Maven (מצב בדיקה)` : `הועלו ${ok} חשבוניות ל-Maven`,
+      description: [dup ? `${dup} כבר היו ב-Maven וקושרו` : '', skipped ? `${skipped} דולגו` : '', fail ? `${fail} נכשלו · ${firstErr}` : ''].filter(Boolean).join(' · ') || undefined,
+      variant: fail ? 'destructive' : undefined,
+    });
+    exitSelect();
+    await load();
+  };
+
   const bulkSend = async () => {
     const ids = [...selected];
     if (!ids.length) return;
@@ -667,6 +704,8 @@ export default function Invoices({ embedded = false }) {
                   <SelectItem value="sent">{STATUS_LABEL.sent}</SelectItem>
                   <SelectItem value="sent_mail">✉ נשלח לחשבונות</SelectItem>
                   <SelectItem value="unsent_mail">✉ טרם נשלח לחשבונות</SelectItem>
+                  {mavenCfg?.enabled && <SelectItem value="in_maven">הועלה ל-Maven</SelectItem>}
+                  {mavenCfg?.enabled && <SelectItem value="not_in_maven">טרם הועלה ל-Maven</SelectItem>}
                 </SelectContent>
               </Select>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
@@ -744,6 +783,11 @@ export default function Invoices({ embedded = false }) {
                     <Badge className={`absolute top-2 left-2 text-xs ${STATUS_COLOR[inv.status || 'pending']}`}>
                       {STATUS_LABEL[inv.status || 'pending']}
                     </Badge>
+                    {inMaven(inv) && (
+                      <Badge className={`absolute bottom-2 right-2 text-xs shadow ${MAVEN_BADGE_CLASS}`} title={mavenExpenseLabel(inv.maven_expense)}>
+                        <Receipt className="w-3 h-3 ml-1" />Maven
+                      </Badge>
+                    )}
                     {inv.sent_to_bookkeeper_at && (
                       <Badge className={`absolute bottom-2 left-2 text-xs shadow ${SENT_BADGE_CLASS}`} title={`${inv.sent_manually ? 'סומן ידנית · ' : ''}נשלח אל ${inv.sent_to || ''} · ${inv.sent_to_bookkeeper_at.slice(0, 10)}`}>
                         {inv.sent_manually ? <CheckSquare className="w-3 h-3 ml-1" /> : <Mail className="w-3 h-3 ml-1" />}נשלח{inv.sent_via && inv.sent_via !== 'other' ? ` · ${SENT_VIA_SHORT[inv.sent_via] || ''}` : ''}
@@ -828,6 +872,11 @@ export default function Invoices({ embedded = false }) {
                           {inv.sent_to_bookkeeper_at && (
                             <Badge className={`text-xs ${SENT_BADGE_CLASS}`} title={`${inv.sent_manually ? 'סומן ידנית · ' : ''}נשלח אל ${inv.sent_to || ''}`}>
                               {inv.sent_manually ? <CheckSquare className="w-3 h-3 ml-1" /> : <Mail className="w-3 h-3 ml-1" />}נשלח {inv.sent_to_bookkeeper_at.slice(8, 10)}/{inv.sent_to_bookkeeper_at.slice(5, 7)}{inv.sent_via && inv.sent_via !== 'other' ? ` · ${SENT_VIA_SHORT[inv.sent_via] || ''}` : ''}
+                            </Badge>
+                          )}
+                          {inMaven(inv) && (
+                            <Badge className={`text-xs ${MAVEN_BADGE_CLASS}`} title={mavenExpenseLabel(inv.maven_expense)}>
+                              <Receipt className="w-3 h-3 ml-1" />Maven
                             </Badge>
                           )}
                         </div>
@@ -947,12 +996,17 @@ export default function Invoices({ embedded = false }) {
       {/* סרגל פעולות מרוכזות */}
       {selectMode && selected.size > 0 && (
         <div className="fixed bottom-16 sm:bottom-4 inset-x-0 z-40 px-4">
-          <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl border p-3 flex items-center gap-2">
+          <div className="max-w-xl mx-auto bg-white rounded-xl shadow-2xl border p-3 flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold text-gray-700 px-1">נבחרו {selected.size}</span>
             <div className="flex-1" />
             <Button onClick={bulkSend} disabled={bulkBusy} size="sm" className="flex items-center gap-1.5">
               {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} שלח מסומנים
             </Button>
+            {mavenCfg?.enabled && (
+              <Button onClick={bulkMaven} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5 text-violet-700 border-violet-300 hover:bg-violet-50" title={mavenCfg.test_mode ? 'מצב בדיקה: נבדק מול Maven בלי לשמור' : 'העלאה למסך ההוצאות ב-Invoice Maven'}>
+                <Receipt className="w-4 h-4" /> העלה ל-Maven{mavenCfg.test_mode ? ' (בדיקה)' : ''}
+              </Button>
+            )}
             <Button onClick={() => setMarkSentOpen(true)} disabled={bulkBusy} size="sm" variant="outline" className="flex items-center gap-1.5" title="המסמכים הועברו לחשבונות בדרך אחרת — רק סימון, בלי שליחה">
               <CheckSquare className="w-4 h-4" /> סמן כנשלח
             </Button>

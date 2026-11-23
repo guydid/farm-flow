@@ -4,8 +4,11 @@
 //   • משיכת לקוחות וספקים מ-Maven לרשומות המשק (התאמה לפי maven_id / ח.פ / שם).
 //   • סנכרון מוצרים ל-Maven כפריטים עם מק"ט משותף (FF-xxxxxxxx) — "קודים משותפים".
 //   • הפקת תעודת משלוח / חשבונית / חשבונית מס-קבלה מתוך תעודת שקילה.
+//   • העלאת חשבוניות ספק (מסך חשבוניות) כהוצאה ב-Maven (addExpense: נוצרת טיוטה, Maven קורא את המסמך).
 // ה-API של Maven: כל הקריאות POST+JSON, api_key בכותרת, test=1 לא שומר כלום.
 const { Readable } = require('stream');
+const path = require('path');
+const fs = require('fs');
 const MAVEN_HOST = 'app.invoice-maven.co.il';
 const DOC_TYPES = { 200: 'תעודת משלוח', 305: 'חשבונית מס', 320: 'חשבונית מס/קבלה', 10: 'הצעת מחיר', 100: 'הזמנה' };
 const ALLOWED_DOC_TYPES = new Set([200, 305, 320, 10, 100]);
@@ -20,6 +23,32 @@ const ddmmyyyy = (iso) => {
   return `${m[3]}/${m[2]}/${m[1]}`;
 };
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ── הוצאה ב-Maven מתוך חשבונית ספק ──
+// סוגי קבצים ש-addExpense מקבל כמו שהם; כל השאר (heic, webp…) מומר ל-PDF לפני ההעלאה.
+const EXPENSE_EXTS = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.tif', '.bmp']);
+const EXPENSE_MAX_BYTES = 10 * 1024 * 1024;
+const EXPENSE_ERRORS = {
+  107: 'הקובץ גדול מ-10 מגה, Maven לא מקבל אותו',
+  108: 'סוג הקובץ אינו נתמך ב-Maven (PDF או תמונה בלבד)',
+  109: 'הגעתם למכסת ההעלאות היומית של Maven. נסו שוב מחר',
+};
+// פונקציה טהורה: שם הקובץ והתיאור שיופיעו במסך ההוצאות של Maven
+function buildExpenseUpload(inv, ext) {
+  const supplier = String(inv.supplier_name || '').trim();
+  const nameParts = [supplier || 'חשבונית', inv.invoice_number ? String(inv.invoice_number) : null, inv.date ? String(inv.date).slice(0, 10) : null].filter(Boolean);
+  const base = nameParts.join('_').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'invoice';
+  const total = Number(inv.total);
+  const hasTotal = inv.total !== null && inv.total !== undefined && inv.total !== '' && Number.isFinite(total);
+  const desc = [
+    supplier || null,
+    inv.invoice_number ? `מס' ${inv.invoice_number}` : null,
+    inv.date ? ddmmyyyy(inv.date) : null,
+    hasTotal ? `${round2(total)} ${inv.currency && inv.currency !== 'ILS' ? inv.currency : '₪'}` : null,
+    inv.notes ? String(inv.notes).trim() : null,
+  ].filter(Boolean).join(' · ');
+  return { filename: `${base}${ext}`, description: (desc ? `${desc} · מ-FarmFlow` : 'מ-FarmFlow').slice(0, 1000) };
+}
 
 // ── מסמך ב-Maven מתוך תעודת משלוח יוצאת (מודול הרכש) ──
 // פונקציה טהורה (בלי DB) כדי שאפשר לבדוק אותה: note + items כפי שהם ב-procurement,
@@ -116,6 +145,7 @@ function makeMavenCore(deps) {
     if (String(data.status_code) !== '0') {
       const e = new Error(data.status_description || `Maven error ${data.status_code}`);
       e.code = String(data.status_code);
+      e.data = data;
       if (e.code === '63') e.message = 'המנוי ב-Invoice Maven אינו פעיל (קוד 63)';
       throw e;
     }
@@ -126,7 +156,7 @@ function makeMavenCore(deps) {
 }
 
 function registerMavenRoutes(app, deps) {
-  const { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 } = deps;
+  const { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4, UPLOADS_DIR, invoiceFileToPdf } = deps;
 
   const canManage = (user, farmId) => {
     if (!user) return false;
@@ -535,6 +565,57 @@ function registerMavenRoutes(app, deps) {
       res.status(422).json({ ok: false, error: e.message, code: e.code || null });
     }
   });
+
+  // ── חשבונית ספק → הוצאה ב-Maven (addExpense) ──
+  // Maven יוצר טיוטת הוצאה ומשלים ספק/תאריך/סכומים בקריאה אוטומטית. קובץ שכבר נקלט נדחה שם (110),
+  // ואז רק נרשם הקישור להוצאה הקיימת. במצב בדיקה לא נשמר כלום ב-Maven, ואפשר להעלות שוב.
+  app.post('/api/integrations/maven/expense', authMiddleware, async (req, res) => {
+    const ctx = farmOf(req, res, { write: true }); if (!ctx) return;
+    const invoiceId = String(req.body?.invoice_id || '');
+    if (!lockMaven(`expense:${invoiceId}`, res)) return;
+    const cfg = loadConfig(ctx.farmId);
+    if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה עם Maven אינה מופעלת במשק זה', code: 'not_enabled' });
+    const row = db.prepare("SELECT farm_id, data FROM entities WHERE entity_type = 'invoices' AND id = ?").get(invoiceId);
+    if (!row || row.farm_id !== ctx.farmId) return res.status(404).json({ error: 'חשבונית לא נמצאה' });
+    let inv = {}; try { inv = JSON.parse(row.data || '{}'); } catch { /* ignore */ }
+    const prev = inv.maven_expense;
+    if (prev && !prev.test && !req.body?.force) return res.status(409).json({ error: `החשבונית כבר הועלתה ל-Maven${prev.expense_id ? ` (הוצאה ${prev.expense_id})` : ''}`, code: 'already_uploaded', maven_expense: prev });
+
+    if (!inv.file_name && !inv.file_url) return res.status(400).json({ error: 'לחשבונית אין קובץ מצורף', code: 'no_file' });
+    const stored = path.basename(String(inv.file_name || String(inv.file_url).split('?')[0]));
+    const filePath = path.join(UPLOADS_DIR, stored);
+    if (!/^[A-Za-z0-9._-]+$/.test(stored) || path.dirname(filePath) !== UPLOADS_DIR) return res.status(400).json({ error: 'שם קובץ לא תקין' });
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'קובץ החשבונית לא נמצא בשרת', code: 'no_file' });
+
+    try {
+      let ext = path.extname(stored).toLowerCase();
+      let buf = EXPENSE_EXTS.has(ext) ? fs.readFileSync(filePath) : null;
+      // תמונה לא נתמכת או גדולה מדי → PDF דחוס
+      if (!buf || (buf.length > EXPENSE_MAX_BYTES && ext !== '.pdf')) { buf = await invoiceFileToPdf(filePath); ext = '.pdf'; }
+      if (buf.length > EXPENSE_MAX_BYTES) return res.status(422).json({ ok: false, error: EXPENSE_ERRORS[107], code: '107' });
+      const { filename, description } = buildExpenseUpload(inv, ext === '.jpeg' ? '.jpg' : ext);
+      const test = cfg.test_mode !== false;
+      const by = ctx.user.full_name || ctx.user.email;
+      let r, duplicate = false;
+      try {
+        r = await mavenCall(cfg, '/api/expenses/addExpense', { filename, description, content_base64: buf.toString('base64') });
+      } catch (e) {
+        if (e.code !== '110') throw e;
+        r = e.data || {}; duplicate = true; // הקובץ כבר קיים כהוצאה ב-Maven
+      }
+      const entry = {
+        expense_id: r.expense_id ?? r.existing_expense_id ?? null, filename: r.filename || filename,
+        ocr: r.ocr ?? null, test, duplicate, uploaded_at: NOW(), by,
+        daily_remaining: r.daily_remaining ?? null,
+      };
+      updateRow(invoiceId, { maven_expense: entry }); // updateRow קורא את הרשומה מחדש, לא דורס עריכות שנעשו בינתיים
+      console.log(`[maven] farm=${ctx.farmId} invoice=${invoiceId} expense=${entry.expense_id} test=${test} dup=${duplicate}`);
+      res.json({ ok: true, maven_expense: entry });
+    } catch (e) {
+      console.error('[maven] addExpense failed:', e.message);
+      res.status(422).json({ ok: false, error: EXPENSE_ERRORS[e.code] || e.message, code: e.code || null });
+    }
+  });
 }
 
-module.exports = { registerMavenRoutes, makeMavenCore, buildNoteDocument, DOC_TYPES };
+module.exports = { registerMavenRoutes, makeMavenCore, buildNoteDocument, buildExpenseUpload, DOC_TYPES };

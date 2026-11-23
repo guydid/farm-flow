@@ -4612,7 +4612,7 @@ const stateGuards = makeStateGuards({ procurement, NOW });
 const guardFail = (res, e) => { if (e instanceof GuardError) { res.status(e.status).json({ error: e.message }); return true; } throw e; };
 require('./mcp')(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
-require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 });
+require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4, UPLOADS_DIR, invoiceFileToPdf });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
 require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
 
