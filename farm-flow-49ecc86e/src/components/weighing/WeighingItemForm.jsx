@@ -112,6 +112,8 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     package_count: "",
     pallet_type: "",
     gross_weight: "",
+    // משקל שמוזן ידנית לפריט שנמכר לפי יחידה (למשל מגשי תות) — לא חובה
+    manual_net_weight: "",
     pricing_method: "per_kg",
     price_per_unit: "",
     discount_percentage: "",
@@ -182,6 +184,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
       const discount = parseFloat(formData.discount_percentage) || 0;
       subtotal_calc = (discount > 0 && discount < 100) ? (total_calc / (1 - discount / 100)) : total_calc;
       discountAmount_calc = subtotal_calc - total_calc;
+      net_weight_calc = Math.max(0, parseFloat(formData.manual_net_weight) || 0);
 
     } else {
       const { gross_weight, package_count, packaging_type, pallet_type, pricing_method, price_per_unit, discount_percentage } = formData;
@@ -217,6 +220,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
         package_count: item.package_count ? String(item.package_count) : "",
         pallet_type: item.pallet_type || "",
         gross_weight: item.gross_weight ? String(item.gross_weight) : "",
+        manual_net_weight: Number(item.net_weight) > 0 ? String(item.net_weight) : "",
         pricing_method: item.pricing_method || "per_kg",
         price_per_unit: item.price_per_unit ? String(item.price_per_unit) : "",
         discount_percentage: item.discount_percentage ? String(item.discount_percentage) : "",
@@ -286,16 +290,19 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
     }
 
     try {
+      const { manual_net_weight: _manualKg, ...rest } = formData;
+      const unitKg = !isWeighable ? (parseFloat(displayValues.net_weight) || 0) : 0;
       const processedData = {
-        ...formData,
+        ...rest,
         package_count: formData.package_count !== "" ? parseInt(formData.package_count, 10) : 0,
-        gross_weight: isWeighable && formData.gross_weight !== "" ? parseFloat(formData.gross_weight) : 0,
+        // פריט לפי יחידה עם ק"ג שהוזן ידנית: אין טרה, ברוטו = נטו
+        gross_weight: isWeighable ? (formData.gross_weight !== "" ? parseFloat(formData.gross_weight) : 0) : unitKg,
         price_per_unit: formData.price_per_unit !== "" ? parseFloat(formData.price_per_unit) : 0,
         discount_percentage: formData.discount_percentage !== "" ? parseFloat(formData.discount_percentage) : 0,
         pricing_method: isWeighable ? formData.pricing_method : 'per_unit',
 
         tare_weight: isWeighable && displayValues.tare_weight !== "" ? parseFloat(displayValues.tare_weight) : 0,
-        net_weight: isWeighable && displayValues.net_weight !== "" ? parseFloat(displayValues.net_weight) : 0,
+        net_weight: isWeighable ? (displayValues.net_weight !== "" ? parseFloat(displayValues.net_weight) : 0) : unitKg,
         item_total: displayValues.item_total !== "" ? parseFloat(displayValues.item_total) : 0,
         pallet_type: isWeighable ? formData.pallet_type : '',
         // גם אריזה "לא שקילה" נשמרת על הפריט — רק המשטח לא רלוונטי בלי שקילה
@@ -476,7 +483,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
               )}
 
               {/* ── 5. כמויות ומשקלים ─────────────────────────────────────── */}
-              <div className={cn("grid gap-3", isWeighable ? "grid-cols-2" : "grid-cols-1")}>
+              <div className="grid gap-3 grid-cols-2">
                 <div>
                   <Label htmlFor="package_count" className="text-sm font-semibold text-gray-800">
                     כמות אריזות {!isWeighable && '*'}
@@ -496,6 +503,27 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
                     placeholder="0"
                   />
                 </div>
+
+                {!isWeighable && (
+                  <div>
+                    <Label htmlFor="manual_net_weight" className="text-sm font-semibold text-gray-800">
+                      משקל כולל (ק"ג) <span className="font-normal text-gray-500">— לא חובה</span>
+                    </Label>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      id="manual_net_weight"
+                      name="manual_net_weight"
+                      value={formData.manual_net_weight}
+                      onChange={(e) => setFormData(prev => ({ ...prev, manual_net_weight: e.target.value }))}
+                      onBlur={handleBlur}
+                      min="0"
+                      step="0.01"
+                      className="h-12 text-lg mt-1"
+                      placeholder="0.00"
+                    />
+                  </div>
+                )}
 
                 {isWeighable && (
                   <div>
