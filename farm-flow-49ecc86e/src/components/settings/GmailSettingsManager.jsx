@@ -45,6 +45,7 @@ export default function GmailSettingsManager() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncDays, setSyncDays] = useState(30); // חלון אחורה לסנכרון ידני (שחזור חשבוניות שדולגו)
   const [label, setLabel] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [autoSync, setAutoSync] = useState(true);
@@ -161,7 +162,7 @@ export default function GmailSettingsManager() {
   const sync = async () => {
     setSyncing(true);
     try {
-      await api('/gmail/sync', { method: 'POST' });
+      await api('/gmail/sync', { method: 'POST', body: JSON.stringify({ days: syncDays }) });
       const s = await api('/gmail/status');
       setStatus(s); // מדליק את התשאול החי שב-useEffect
       if (!s.syncing) setSyncing(false);
@@ -312,6 +313,18 @@ export default function GmailSettingsManager() {
                   {syncing ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : <RefreshCw className="w-4 h-4 ml-1" />}
                   סנכרן עכשיו
                 </Button>
+                <select
+                  value={syncDays}
+                  onChange={e => setSyncDays(Number(e.target.value))}
+                  disabled={syncing}
+                  aria-label="טווח סריקה אחורה"
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value={30}>30 יום אחרונים</option>
+                  <option value={90}>3 חודשים</option>
+                  <option value={180}>חצי שנה</option>
+                  <option value={365}>שנה</option>
+                </select>
                 <Button onClick={disconnect} variant="outline" className="text-red-600 border-red-200 hover:bg-red-50">
                   <Unlink className="w-4 h-4 ml-1" /> נתק
                 </Button>

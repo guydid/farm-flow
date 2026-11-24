@@ -1833,10 +1833,15 @@ function findExistingInvoice(farmId, extracted, attachmentName, fromEmail) {
     try { d = JSON.parse(r.data || '{}'); } catch { continue; }
     if (d.total == null) continue;
 
-    // שכבה 1: אותו שם קובץ + אותו סכום
+    // שכבה 1: אותו שם קובץ + אותו סכום — אלא אם מספר החשבונית או התאריך שונים.
+    // ספקים קבועים (סלולר, חשמל, ליסינג) שולחים כל חודש קובץ באותו שם ובאותו סכום;
+    // בלי הבדיקה, כל חודש אחרי הראשון נזרק כ"כפילות".
     if (fileKey && d.source_meta?.attachment_name &&
         `${norm(d.source_meta.attachment_name)}|${d.total}` === fileKey) {
-      return { id: r.id, ...d };
+      const numA = extractedNum, numB = normNum(d.invoice_number);
+      const numsDiffer = numA && numB && numA !== numB;
+      const datesDiffer = extracted.date && d.date && extracted.date !== d.date;
+      if (!numsDiffer && !datesDiffer) return { id: r.id, ...d };
     }
 
     if (Number(d.total) !== Number(extracted.total)) continue;
