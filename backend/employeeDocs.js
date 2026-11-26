@@ -1,6 +1,6 @@
 // ─── תיק עובד: תלושי שכר, חוזה העסקה, ביטוח רפואי + חתימה מרחוק ─────────────────
-// מסמכים נשמרים כ-entity_type='employee_documents' (פנימי — לא דרך הראוטים הגנריים,
-// כי תלושי שכר רגישים: בעלים/מנהל בלבד).
+// כל סוג נשמר כישות משלו (hrDocs.js): payslips / employment_contracts / medical_insurance_policies,
+// ומסמך "אחר" ב-employee_documents. כולם פנימיים לראוטים הגנריים (תלושים רגישים): בעלים/מנהל בלבד.
 // חתימה: המנהל מפיק קישור חד-פעמי (טוקן אקראי; נשמר רק ה-hash) ושולח לעובד (וואטסאפ/העתקה).
 // העובד פותח בלי התחברות, רואה את המסמך, מקליד שם וחותם באצבע. השרת מייצר PDF חתום:
 // המקור + חותמת החתימה בעמוד האחרון + עמוד תיעוד (תאריך, IP, SHA-256 של המקור).
@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 
-const CATEGORIES = { payslip: 'תלוש שכר', contract: 'חוזה העסקה', medical_insurance: 'ביטוח רפואי', other: 'אחר' };
+const { makeHrCore, DOC_TYPES, TYPE_OF_CATEGORY, CATEGORY_LABELS: CATEGORIES } = require('./hrDocs');
 const SIGN_TTL_DAYS = 14;
 const MAX_SIG_BYTES = 1.5 * 1024 * 1024;
 const MAX_PAGES_PREVIEW = 30;
@@ -20,29 +20,19 @@ const ascii = (s, n = 200) => String(s || '').replace(/[^\x20-\x7E]/g, '?').slic
 
 function registerEmployeeDocRoutes(app, deps) {
   const { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, UPLOADS_DIR, imagesToPdf, execFile } = deps;
-  const TYPE = 'employee_documents';
+  const hr = makeHrCore({ db, NOW, uuidv4 });
+  try { const m = hr.migrate(); if (Object.values(m).some(Boolean)) console.log('[hr-docs] migrated', JSON.stringify(m)); }
+  catch (e) { console.error('[hr-docs] migration failed:', e.message); }
+  const IN_TYPES = DOC_TYPES.map(() => '?').join(',');
 
-  const parse = (r) => { try { return { id: r.id, farm_id: r.farm_id, created_at: r.created_at, updated_at: r.updated_at, ...JSON.parse(r.data) }; } catch { return { id: r.id, farm_id: r.farm_id }; } };
-  const publicDoc = (d) => {
-    const { sign, ...rest } = d;
-    const s = sign || {};
-    const expired = s.status === 'pending' && s.expires_at && s.expires_at < NOW();
-    return {
-      ...rest,
-      sign_status: expired ? 'expired' : (s.status || 'none'),
-      sign_requested_at: s.requested_at || null,
-      sign_expires_at: s.expires_at || null,
-      signed_at: s.signed_at || null,
-      signer_name: s.signer_name || null,
-      signed_file_url: s.signed_file_url || null,
-    };
-  };
-  const updateData = (id, fn) => {
-    const r = db.prepare('SELECT data FROM entities WHERE id = ? AND entity_type = ?').get(id, TYPE);
+  const parse = (r) => { try { return { id: r.id, farm_id: r.farm_id, created_at: r.created_at, updated_at: r.updated_at, entity_type: r.entity_type, ...JSON.parse(r.data) }; } catch { return { id: r.id, farm_id: r.farm_id, entity_type: r.entity_type }; } };
+  const publicDoc = (d) => { const { entity_type, ...rest } = d; return hr.view(entity_type || TYPE_OF_CATEGORY[d.category] || 'employee_documents', rest); };
+  const updateData = (row, fn) => {
+    const r = db.prepare('SELECT data FROM entities WHERE id = ? AND entity_type = ?').get(row.id, row.entity_type);
     if (!r) return null;
     let d = {}; try { d = JSON.parse(r.data); } catch { /* ignore */ }
     const next = fn(d) || d;
-    db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(next), NOW(), id);
+    db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE id = ? AND entity_type = ?').run(JSON.stringify(next), NOW(), row.id, row.entity_type);
     return next;
   };
 
@@ -57,7 +47,7 @@ function registerEmployeeDocRoutes(app, deps) {
     return { user };
   };
   const employeeRow = (id) => db.prepare("SELECT * FROM entities WHERE entity_type = 'employees' AND id = ?").get(id);
-  const docRow = (id) => db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(TYPE, id);
+  const docRow = (id) => db.prepare(`SELECT * FROM entities WHERE entity_type IN (${IN_TYPES}) AND id = ?`).get(...DOC_TYPES, id);
 
   const uploadName = (url) => {
     const m = String(url || '').match(/\/uploads\/([A-Za-z0-9._-]+)(?:[?#].*)?$/);
@@ -85,8 +75,8 @@ function registerEmployeeDocRoutes(app, deps) {
     const emp = employeeRow(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Not found' });
     if (!managerCtx(req, res, emp.farm_id)) return;
-    const rows = db.prepare(`SELECT * FROM entities WHERE entity_type = ? AND farm_id = ? AND json_extract(data, '$.employee_id') = ?`)
-      .all(TYPE, emp.farm_id, emp.id).map(parse).map(publicDoc);
+    const rows = db.prepare(`SELECT * FROM entities WHERE entity_type IN (${IN_TYPES}) AND farm_id = ? AND json_extract(data, '$.employee_id') = ?`)
+      .all(...DOC_TYPES, emp.farm_id, emp.id).map(parse).map(publicDoc);
     rows.sort((a, b) => String(b.period || b.created_at).localeCompare(String(a.period || a.created_at)));
     res.json(rows);
   });
@@ -96,27 +86,37 @@ function registerEmployeeDocRoutes(app, deps) {
     const emp = employeeRow(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Not found' });
     const ctx = managerCtx(req, res, emp.farm_id); if (!ctx) return;
-    const { category, title, period, file_url, file_name } = req.body || {};
-    if (!CATEGORIES[category]) return res.status(400).json({ error: 'סוג מסמך לא תקין' });
-    if (!uploadName(file_url)) return res.status(400).json({ error: 'קובץ חסר' });
-    if (period && !/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'חודש לא תקין' });
-    if (category === 'payslip' && !period) return res.status(400).json({ error: 'יש לבחור חודש לתלוש' });
-    const id = uuidv4(); const now = NOW();
-    const data = {
-      employee_id: emp.id, category, period: period || null,
-      title: String(title || '').trim().slice(0, 120) || CATEGORIES[category],
-      file_url, file_name: String(file_name || '').slice(0, 200) || null,
-      uploaded_by: ctx.user.full_name || null, sign: { status: 'none' },
-    };
-    db.prepare('INSERT INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, TYPE, emp.farm_id, JSON.stringify(data), now, now);
-    res.json(publicDoc(parse(docRow(id))));
+    const { category, file_url, file_name, ...fields } = req.body || {};
+    const type = TYPE_OF_CATEGORY[category];
+    if (!type) return res.status(400).json({ error: 'סוג מסמך לא תקין' });
+    // פוליסת ביטוח אפשר לרשום גם בלי קובץ; לשאר — חובה קובץ שהועלה
+    if (category !== 'medical_insurance' && !uploadName(file_url)) return res.status(400).json({ error: 'קובץ חסר' });
+    if (category === 'payslip' && !fields.period) return res.status(400).json({ error: 'יש לבחור חודש לתלוש' });
+    try {
+      const rec = hr.create(emp.farm_id, type, {
+        ...fields, employee_id: emp.id, file_url: file_url || null, file_name: String(file_name || '').slice(0, 200) || null,
+        uploaded_by: ctx.user.full_name || null, source: 'manual',
+      }, ctx.user.full_name || null);
+      res.json(publicDoc({ ...rec, entity_type: type }));
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+
+  // עדכון פרטים (תאריכים, סכומים, חברה…) — לא הקובץ של מסמך חתום
+  app.put('/api/employee-documents/:docId', authMiddleware, (req, res) => {
+    const row = docRow(req.params.docId);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
+    try {
+      const rec = hr.update(row.farm_id, row.entity_type, row.id, req.body || {}, ctx.user.full_name || null);
+      res.json(publicDoc({ ...rec, entity_type: row.entity_type }));
+    } catch (e) { res.status(400).json({ error: e.message }); }
   });
 
   app.delete('/api/employee-documents/:docId', authMiddleware, (req, res) => {
     const row = docRow(req.params.docId);
     if (!row) return res.status(404).json({ error: 'Not found' });
     if (!managerCtx(req, res, row.farm_id)) return;
-    db.prepare('DELETE FROM entities WHERE id = ? AND entity_type = ?').run(row.id, TYPE);
+    hr.remove(row.farm_id, row.entity_type, row.id);
     res.json({ success: true });
   });
 
@@ -129,7 +129,7 @@ function registerEmployeeDocRoutes(app, deps) {
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'המסמך כבר נחתם' });
     const token = crypto.randomBytes(24).toString('base64url');
     const now = new Date();
-    updateData(row.id, (x) => ({
+    updateData(row, (x) => ({
       ...x,
       sign: {
         status: 'pending', token_hash: sha256(token),
@@ -146,14 +146,14 @@ function registerEmployeeDocRoutes(app, deps) {
     if (!managerCtx(req, res, row.farm_id)) return;
     const d = parse(row);
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'המסמך כבר נחתם' });
-    updateData(row.id, (x) => ({ ...x, sign: { status: 'none' } }));
+    updateData(row, (x) => ({ ...x, sign: { status: 'none' } }));
     res.json({ success: true });
   });
 
   // ── ציבורי: לפי טוקן, ללא התחברות ────────────────────────────────────────
   const byToken = (token) => {
     if (!/^[A-Za-z0-9_-]{20,64}$/.test(String(token || ''))) return null;
-    const row = db.prepare(`SELECT * FROM entities WHERE entity_type = ? AND json_extract(data, '$.sign.token_hash') = ?`).get(TYPE, sha256(token));
+    const row = db.prepare(`SELECT * FROM entities WHERE entity_type IN (${IN_TYPES}) AND json_extract(data, '$.sign.token_hash') = ?`).get(...DOC_TYPES, sha256(token));
     return row ? parse(row) : null;
   };
   const tokenState = (d) => {
@@ -283,7 +283,7 @@ function registerEmployeeDocRoutes(app, deps) {
       fs.writeFileSync(path.join(UPLOADS_DIR, outName), out);
       registerFile(outName, d.farm_id, out.length, `${d.title || 'document'} - signed.pdf`);
       const signedUrl = fileUrlFor(req, outName);
-      updateData(d.id, (x) => ({
+      updateData({ id: d.id, entity_type: d.entity_type }, (x) => ({
         ...x,
         sign: {
           ...x.sign, status: 'signed', token_hash: x.sign.token_hash, signed_at: signedAt, signer_name: name,
@@ -299,4 +299,4 @@ function registerEmployeeDocRoutes(app, deps) {
   });
 }
 
-module.exports = { registerEmployeeDocRoutes, CATEGORIES };
+module.exports = { registerEmployeeDocRoutes };

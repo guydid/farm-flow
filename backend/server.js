@@ -4821,13 +4821,16 @@ const procurement = require('./procurement').registerProcurementRoutes(app, { db
 const { makeStateGuards, GuardError } = require('./stateGuards');
 const stateGuards = makeStateGuards({ procurement, NOW });
 const guardFail = (res, e) => { if (e instanceof GuardError) { res.status(e.status).json({ error: e.message }); return true; } throw e; };
-require('./mcp')(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement });
+require('./mcp')(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement, UPLOADS_DIR, fileLinkSecret: TOKEN_ENC_KEY });
 // Invoice Maven integration (per-farm): settings, customer/supplier pull, item push, documents from weighing certificates
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4, UPLOADS_DIR, invoiceFileToPdf });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
 require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
 // תיק עובד: תלושי שכר / חוזה / ביטוח רפואי + קישור חתימה ציבורי לעובד (/api/public/sign/:token)
 require('./employeeDocs').registerEmployeeDocRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, UPLOADS_DIR, imagesToPdf, execFile: (...a) => require('child_process').execFile(...a) });
+// ייבוא תלושי שכר מהמייל: PDF חודשי של מנהלת השכר → עמוד לעובד (לפי דרכון/שם) → תיק העובד
+require('./payslipImport').registerPayslipImportRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, UPLOADS_DIR,
+  gmail: { getGmailConnectionForUser, ensureGmailAccessToken, gmailApiGet, b64urlToBuffer, getHeader, collectInvoiceAttachments } });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in
@@ -5245,7 +5248,8 @@ const INTERNAL_ENTITIES = new Set([
   'telegram_config', 'gmail_connections', 'gmail_ignore_rules', 'gmail_dismissed',
   'bookkeeper_settings', 'attendance_alert_config', 'pusr_config', 'mcp_tokens', 'auth_tokens',
   'uploads', 'attendance_api_keys', 'maven_config',
-  'employee_documents', // תיק עובד (תלושים/חוזה/ביטוח) — בעלים/מנהל בלבד, דרך employeeDocs.js
+  // תיק עובד — בעלים/מנהל בלבד, דרך employeeDocs.js / payslipImport.js וה-MCP (hrDocs.js)
+  'employee_documents', 'payslips', 'employment_contracts', 'medical_insurance_policies',
 ]);
 const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role : null) || null;
 const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);

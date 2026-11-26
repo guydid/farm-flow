@@ -10,13 +10,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectValue, SelectTrigger } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, User as UserIcon, Filter, Search, Printer, AlertTriangle, X, Copy, Check, SlidersHorizontal, ChevronDown, ChevronUp, Users, Archive, ArchiveRestore, Loader2 } from 'lucide-react';
+import { Plus, User as UserIcon, Filter, Search, Printer, AlertTriangle, X, Copy, Check, SlidersHorizontal, ChevronDown, ChevronUp, Users, Archive, ArchiveRestore, Loader2, Mail } from 'lucide-react';
 import { isArchived, isArchivable, setArchived } from '@/components/employees/archive';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { useToast } from "@/components/ui/use-toast";
 
 import PageHeader from "@/components/common/PageHeader";
+import PayslipImportDialog from "@/components/employees/PayslipImportDialog";
 export default function Employees() {
     const [employees, setEmployees] = useState([]);
     const [manpowerCompanies, setManpowerCompanies] = useState([]);
@@ -30,6 +31,7 @@ export default function Employees() {
     const [copiedField, setCopiedField] = useState(null);
     const [me, setMe] = useState(null);
     const [archiving, setArchiving] = useState(null); // employee id | 'bulk'
+    const [payslipImportOpen, setPayslipImportOpen] = useState(false);
     const { toast } = useToast();
 
     const loadData = useCallback(async () => {
@@ -390,6 +392,11 @@ export default function Employees() {
                                 <span className="sm:hidden">{archivable.length}</span>
                             </Button>
                         )}
+                        <Button onClick={() => setPayslipImportOpen(true)} variant="outline" size="sm" className="flex items-center gap-1.5"
+                                title="ייבוא תלושי שכר מהמייל לתיקי העובדים">
+                            <Mail className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">תלושים מהמייל</span>
+                        </Button>
                         <Button
                             onClick={handlePrintReport}
                             variant="outline"
@@ -407,6 +414,7 @@ export default function Employees() {
                         </Link>
                     </>}
                 />
+                <PayslipImportDialog open={payslipImportOpen} onOpenChange={setPayslipImportOpen} farmId={currentFarm?.id} />
 
                 {/* ── Status bar ── */}
                 {employees.length > 0 && (

@@ -11,7 +11,12 @@
 // to that single farm. Write tools need a token created with can_write and a non-viewer role.
 
 const crypto = require('crypto');
-const rateLimit = require('express-rate-limit');
+const path = require('path');
+const fs = require('fs');
+// express-rate-limit — בלי תלויות מותקנות (בדיקות CI) המגביל פשוט לא פעיל
+let rateLimit;
+try { rateLimit = require('express-rate-limit'); } catch { rateLimit = () => (req, res, next) => next(); }
+const hrDocs = require('./hrDocs');
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const SERVER_INFO = { name: 'farm-flow', title: 'Farm Flow', version: '1.0.0' };
@@ -61,7 +66,10 @@ const ENTITIES = {
   order_items:             'שורות הזמנה (order_id): product_name, quantity, unit, unit_price, delivered_quantity (מחושב מתעודות המשלוח). הוספה — add_order_items',
   delivery_notes:          'תעודות משלוח נכנסות (direction=in) / יוצאות (out): note_number, order_id, invoice_id, status expected/received/checked/disputed/invoiced, file_url. יצירה — create_delivery_note',
   delivery_note_items:     'שורות תעודת משלוח (delivery_note_id, order_item_id): product_name, quantity, unit, unit_price, discrepancy_note, stock_movement_id',
+  // מסמכי משאבי אנוש (hrDocs.js) — רק לטוקן של בעלים/מנהל משק
+  ...Object.fromEntries(Object.entries(hrDocs.HR_ENTITIES).map(([k, v]) => [k, `${v.description}. בעלים/מנהלים בלבד; ב-get_record מוחזרים files[].download_url לקריאת הקובץ`])),
 };
+const HR_SET = new Set(hrDocs.HR_TYPES);
 // ישויות הרכש — הכתיבה דרך הכלים הייעודיים / הליבה ב-procurement.js (אימות, חישוב כמויות, סטטוסים, מלאי)
 const PROCUREMENT_ENTITIES = ['orders', 'order_items', 'delivery_notes', 'delivery_note_items'];
 // המלצות הדברה נכתבות רק דרך הכלים הייעודיים, שמאמתים חלקה/מזרע/תכשירים
@@ -98,11 +106,16 @@ const KNOWN_FIELDS = {
     { field: 'passport_number', types: ['string'], description: 'מספר דרכון — מזהה עיקרי לעובדים זרים' },
     { field: 'passport_expiry', types: ['string'] }, { field: 'visa_type', types: ['string'] }, { field: 'visa_expiry', types: ['string'] },
     { field: 'start_date', types: ['string'] }, { field: 'status', types: ['string'] }, { field: 'manpower_company_id', types: ['string'] },
+    { field: 'insurance_details', types: ['object'], description: 'פרטי הביטוח הרפואי בכרטיס (company, policy_number, policy_start_date, policy_end_date, policy_url, health_fund, health_fund_number). מסונכרן אוטומטית מהפוליסה הפעילה ב-medical_insurance_policies' },
   ],
+  ...Object.fromEntries(Object.entries(hrDocs.HR_ENTITIES).map(([k, v]) => [k, [...hrDocs.COMMON_FIELDS, ...v.fields]])),
 };
 const MAX_STRING = 2000; // long strings (base64 images, OCR text) are truncated in output
 
-module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement }) {
+module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, listEntities, formatEntity, getUser, getFarmMember, authMiddleware, uuidv4, NOW, syncSeedingDates, computePesticideStock, upsertPesticidePrice, procurement, UPLOADS_DIR, fileLinkSecret }) {
+  const hr = hrDocs.makeHrCore({ db, NOW, uuidv4 });
+  const linkSecret = fileLinkSecret || crypto.randomBytes(32); // בלי סוד קבוע — קישורים תקפים עד הריסטרט
+  const FILE_LINK_TTL = 3600; // שנ' — קישור הורדה חתום ב-get_record
   const knownFields = (entity) => KNOWN_FIELDS[entity] || (procurement && procurement.KNOWN_FIELDS[entity]) || [];
   const agentBy = (ctx) => `סוכן: ${ctx.tokenName}`;
   db.exec(`
@@ -182,10 +195,15 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
     db.prepare('UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?').run(NOW(), row.id);
     // תקופת ניסיון שהסתיימה → הסוכן במצב קריאה בלבד (כמו ה-REST)
     const locked = !user.is_admin && !!farmTrialExpired?.(row.farm_id);
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost').split(',')[0].trim();
     return {
       tokenId: row.id,
       tokenName: row.name || 'סוכן',
       farmId: row.farm_id,
+      role: user.is_admin ? 'admin' : (member?.role || null),
+      // מסמכי משאבי אנוש (תלושים/חוזים/ביטוח): כמו באפליקציה — בעלים/מנהל בלבד
+      hrAccess: !!user.is_admin || ['owner', 'manager'].includes(member?.role),
+      baseUrl: `${String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim()}://${host}`,
       canWrite: !locked && !!row.can_write && member?.role !== 'viewer',
       canWritePest: !locked && (!!row.can_write || !!row.pest_write) && member?.role !== 'viewer',
       // Same user object the REST routes use, narrowed to this single farm.
@@ -224,6 +242,33 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
 
   app.post('/mcp', mcpLimiter, handleMcp);
   app.post('/mcp/:token', mcpLimiter, handleMcp);
+
+  // הורדת קובץ של רשומת משאבי אנוש — באותה הרשאה של ה-MCP:
+  //   Authorization: Bearer ffmcp_…   או   ?exp=…&sig=… (הקישור החתום מ-get_record, תקף שעה)
+  app.get('/mcp/files/:entity/:id/:kind', mcpLimiter, (req, res) => {
+    const { entity, id, kind } = req.params;
+    if (!HR_SET.has(entity) || !['original', 'signed'].includes(kind)) return res.status(404).json({ error: 'Not found' });
+    const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    let allowed = false;
+    if (req.query.sig) allowed = hrDocs.verifyFileLink(linkSecret, { farmId: row.farm_id, type: entity, id, kind, exp: req.query.exp, sig: req.query.sig });
+    else {
+      const ctx = resolveContext(req);
+      allowed = !!ctx && ctx.hrAccess && ctx.farmId === row.farm_id;
+    }
+    if (!allowed) { res.set('WWW-Authenticate', 'Bearer realm="farm-flow-mcp"'); return res.status(401).json({ error: 'Invalid or expired link / token' }); }
+    let rec; try { rec = JSON.parse(row.data || '{}'); } catch { rec = {}; }
+    const f = hr.filesOf(rec).find(x => x.kind === kind);
+    if (!f) return res.status(404).json({ error: 'No file' });
+    const name = hr.uploadName(f.file_url);
+    if (!name) return res.redirect(302, f.file_url); // קובץ חיצוני — הקישור עצמו
+    const p = path.join(UPLOADS_DIR || path.join(__dirname, 'uploads'), name);
+    if (!fs.existsSync(p)) return res.status(404).json({ error: 'File missing on server' });
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', `inline; filename="${encodeURIComponent(f.file_name || name)}"`);
+    res.sendFile(p);
+  });
   // No server-initiated stream and no sessions in stateless mode.
   for (const p of ['/mcp', '/mcp/:token']) {
     app.get(p, (req, res) => res.set('Allow', 'POST').status(405).json({ error: 'Method Not Allowed — use POST (MCP Streamable HTTP)' }));
@@ -262,6 +307,9 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
       'Start with farm_overview, use describe_entity to learn a type\'s fields, then list_records / get_record.',
       'Relations use *_id fields (e.g. harvests.seeding_id → seedings.id, seedings.plot_id → plots.id).',
       ctx.canWrite ? 'This token may create and update records (no delete).' : 'This token is read-only.',
+      ctx.hrAccess
+        ? 'HR documents: payslips (period YYYY-MM, employer, gross, net), employment_contracts and medical_insurance_policies (one record per policy — full history). Filter with list_records employee_id + date_from/date_to; get_record returns files[].download_url (valid 1 hour) and download_endpoint (same Bearer token).'
+        : 'HR documents (payslips, employment_contracts, medical_insurance_policies) are available only to tokens of farm owners/managers.',
       'Pest control: inspect a plot with pest_plot_context, then propose treatments with propose_pest_action. '
         + 'Proposals appear in the app as pending until a worker executes them in the field (only the app marks them done).',
       ctx.canWritePest ? 'This token may create and update pest control recommendations, pesticide prices (pesticide_prices) and stock movements (pesticide_stock). Use pesticide_stock (tool) for current balances.' : 'This token cannot write pest control recommendations.',
@@ -303,8 +351,9 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
           type: 'object',
           properties: {
             entity: { type: 'string', enum: entityEnum },
+            employee_id: { type: 'string', description: 'Only records of this employee (same as filters.employee_id) — for payslips, employment_contracts, medical_insurance_policies, employee_events…' },
             filters: { type: 'object', description: 'Exact-match filters, e.g. {"status":"growing","plot_id":"…"}', additionalProperties: { type: ['string', 'number', 'boolean'] } },
-            date_field: { type: 'string', description: 'Field for date_from/date_to (default "date" if present, else created_at)' },
+            date_field: { type: 'string', description: 'Field for date_from/date_to (default "date" if present, else created_at; payslips: period_start, employment_contracts / medical_insurance_policies: start_date)' },
             date_from: { type: 'string', description: 'Inclusive, ISO date e.g. 2026-01-01' },
             date_to: { type: 'string', description: 'Inclusive, ISO date e.g. 2026-12-31' },
             search: { type: 'string', description: 'Case-insensitive substring match over all field values' },
@@ -761,6 +810,24 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
     return formatEntity(db.prepare("SELECT * FROM entities WHERE entity_type = 'pesticide_prices' AND id = ?").get(saved.id));
   }
 
+  function checkHr(ctx, entity) {
+    if (HR_SET.has(entity) && !ctx.hrAccess) throw new Error(`${entity} is available only to tokens of farm owners/managers`);
+  }
+  // רשומת משאבי אנוש החוצה: בלי hash טוקן החתימה, עם קישורי הורדה
+  function hrOut(ctx, entity, rec, { links = false } = {}) {
+    const v = hr.view(entity, rec);
+    v.files = hr.filesOf(rec).map(f => {
+      const out = { kind: f.kind, file_name: f.file_name, download_endpoint: `${ctx.baseUrl}/mcp/files/${entity}/${rec.id}/${f.kind}` };
+      if (links) {
+        const exp = Math.floor(Date.now() / 1000) + FILE_LINK_TTL;
+        out.download_url = `${out.download_endpoint}?exp=${exp}&sig=${hrDocs.signFileLink(linkSecret, { farmId: ctx.farmId, type: entity, id: rec.id, kind: f.kind, exp })}`;
+        out.download_url_expires_at = new Date(exp * 1000).toISOString();
+      }
+      return out;
+    });
+    return v;
+  }
+
   function checkEntity(entity, { write = false } = {}) {
     if (!Object.prototype.hasOwnProperty.call(ENTITIES, entity)) throw new Error(`Unknown or unavailable entity: ${entity}`);
     if (write && READ_ONLY.has(entity)) throw new Error(`${entity} is read-only via MCP`);
@@ -917,13 +984,16 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
         return {
           farm: clip(formatEntity(farmRow)),
           access: ctx.canWrite ? 'read-write' : ctx.canWritePest ? 'read-only + pest-control write' : 'read-only',
-          entities: entityEnum.map(e => ({ entity: e, description: ENTITIES[e], count: e === 'farms' ? 1 : (counts[e] || 0) })),
+          entities: entityEnum.map(e => ({ entity: e, description: ENTITIES[e], count: e === 'farms' ? 1 : (HR_SET.has(e) && !ctx.hrAccess ? null : (counts[e] || 0)) })),
         };
       }
 
       case 'describe_entity': {
         checkEntity(args.entity);
-        const r = listEntities(ctx.user, args.entity, { sort: '-updated_at', limit: '30' });
+        checkHr(ctx, args.entity);
+        const r = HR_SET.has(args.entity)
+          ? { status: 200, body: hr.list(ctx.farmId, args.entity, { sort: '-updated_at' }).slice(0, 30).map(x => hrOut(ctx, args.entity, x)) }
+          : listEntities(ctx.user, args.entity, { sort: '-updated_at', limit: '30' });
         if (r.status !== 200) throw new Error(r.body?.error || 'Error');
         const fields = {};
         for (const rec of r.body) {
@@ -939,6 +1009,7 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
         return {
           entity: args.entity,
           description: ENTITIES[args.entity],
+          ...(HR_SET.has(args.entity) ? { default_date_field: hrDocs.HR_ENTITIES[args.entity].dateField } : {}),
           sampled_records: r.body.length,
           fields: [...inferred.map(f => ({ ...f, ...(knownFields(args.entity).find(k => k.field === f.field) || {}), types: f.types })), ...known],
         };
@@ -946,7 +1017,19 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
 
       case 'list_records': {
         checkEntity(args.entity);
+        checkHr(ctx, args.entity);
+        if (HR_SET.has(args.entity)) {
+          const rows = hr.list(ctx.farmId, args.entity, {
+            employee_id: args.employee_id, filters: args.filters, date_field: args.date_field, date_from: args.date_from, date_to: args.date_to,
+            search: args.search, sort: args.sort,
+          });
+          const limit = Math.min(Math.max(parseInt(args.limit, 10) || 50, 1), 500);
+          const offset = Math.max(parseInt(args.offset, 10) || 0, 0);
+          const page = rows.slice(offset, offset + limit).map(x => hrOut(ctx, args.entity, x));
+          return { entity: args.entity, total: rows.length, offset, returned: page.length, records: clip(page) };
+        }
         const query = {};
+        if (args.employee_id) query.employee_id = String(args.employee_id);
         for (const [k, v] of Object.entries(args.filters || {})) {
           if (!/^[A-Za-z0-9_]+$/.test(k)) throw new Error(`Bad filter field: ${k}`);
           // farm_id is fixed by the token; sort/limit/offset have their own arguments
@@ -981,6 +1064,12 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
 
       case 'get_record': {
         checkEntity(args.entity);
+        checkHr(ctx, args.entity);
+        if (HR_SET.has(args.entity)) {
+          const rec = hr.get(ctx.farmId, args.entity, args.id);
+          if (!rec) throw new Error(`Not found: ${args.entity}/${args.id}`);
+          return clip(hrOut(ctx, args.entity, rec, { links: true }));
+        }
         return clip(formatEntity(fetchRow(ctx, args.entity, args.id)));
       }
 
@@ -990,6 +1079,12 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
         if (args.entity === 'pesticide_prices') return savePriceRecord(ctx, args.data);
         if (PROCUREMENT_ENTITIES.includes(args.entity)) return procurementCreate(ctx, args.entity, args.data);
+        if (HR_SET.has(args.entity)) {
+          checkHr(ctx, args.entity);
+          const rec = hr.create(ctx.farmId, args.entity, { source: 'agent', ...args.data }, agentBy(ctx));
+          console.log(`[MCP] token ${ctx.tokenId} created ${args.entity}/${rec.id}`);
+          return clip(hrOut(ctx, args.entity, rec, { links: true }));
+        }
         const id = uuidv4();
         const guarded = stateGuards ? stateGuards.onCreate(args.entity, args.data, { isAdmin: false, via: 'mcp', by: `סוכן: ${ctx.tokenName}` }) : args.data;
         const data = { ...(args.entity === 'pesticide_stock' ? validateStockMovement(ctx, guarded)
@@ -1008,6 +1103,12 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
         checkWriteAccess(ctx, args.entity);
         checkEntity(args.entity, { write: true });
         if (!args.data || typeof args.data !== 'object' || Array.isArray(args.data)) throw new Error('data must be an object');
+        if (HR_SET.has(args.entity)) {
+          checkHr(ctx, args.entity);
+          const rec = hr.update(ctx.farmId, args.entity, String(args.id), args.data, agentBy(ctx));
+          console.log(`[MCP] token ${ctx.tokenId} updated ${args.entity}/${rec.id}`);
+          return clip(hrOut(ctx, args.entity, rec, { links: true }));
+        }
         const row = fetchRow(ctx, args.entity, args.id);
         let existing; try { existing = JSON.parse(row.data || '{}'); } catch { existing = {}; }
         if (args.entity === 'pesticide_prices') {

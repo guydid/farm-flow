@@ -24,6 +24,22 @@ const fmtPeriod = (p) => (p ? `${MONTHS[parseInt(p.slice(5, 7), 10) - 1] || ""} 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
 const withToken = (url) => (url ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(getToken() || "")}` : null);
 const prevMonth = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); };
+const fmtDay = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+const money = (n) => (n == null ? "" : `₪${Number(n).toLocaleString("he-IL")}`);
+// זהה ל-CONTRACT_TYPES ב-backend/hrDocs.js
+const CONTRACT_TYPES = { permanent: "קבוע", fixed_term: "לתקופה קצובה", seasonal: "עונתי", foreign_worker: "עובד זר", manpower: "דרך חברת כוח אדם", temporary: "זמני", other: "אחר" };
+const emptyMeta = () => ({
+  period: prevMonth(), title: "", employer: "", gross: "", net: "",
+  contract_type: "foreign_worker", signed_date: "", start_date: "", end_date: "",
+  insurance_company: "", policy_number: "", agent: "", health_fund: "",
+});
+// שורת פרטים מתחת לשם המסמך
+function docDetails(doc) {
+  if (doc.category === "payslip") return [doc.gross != null && `ברוטו ${money(doc.gross)}`, doc.net != null && `נטו ${money(doc.net)}`].filter(Boolean).join(" · ");
+  if (doc.category === "contract") return [CONTRACT_TYPES[doc.contract_type], doc.start_date && `מ-${fmtDay(doc.start_date)}`, doc.end_date && `עד ${fmtDay(doc.end_date)}`, doc.signed_date && `נחתם ${fmtDay(doc.signed_date)}`].filter(Boolean).join(" · ");
+  if (doc.category === "medical_insurance") return [doc.policy_number && `פוליסה ${doc.policy_number}`, (doc.start_date || doc.end_date) && `${fmtDay(doc.start_date) || "?"} – ${fmtDay(doc.end_date) || "ללא סיום"}`, doc.agent, doc.health_fund && `קופ"ח ${doc.health_fund}`].filter(Boolean).join(" · ");
+  return "";
+}
 
 function SignBadge({ doc }) {
   if (doc.sign_status === "signed") return <Badge className="bg-green-100 text-green-800 gap-1"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />נחתם {fmtDate(doc.signed_at)}</Badge>;
@@ -39,7 +55,7 @@ export default function EmployeeFiles({ employee }) {
   const [denied, setDenied] = useState(false);
   const [tab, setTab] = useState("payslip");
   const [pending, setPending] = useState(null); // { file } — לפני שמירה: חודש/שם
-  const [meta, setMeta] = useState({ period: prevMonth(), title: "" });
+  const [meta, setMeta] = useState(emptyMeta);
   const [saving, setSaving] = useState(false);
   const [share, setShare] = useState(null); // { doc, url, expires_at }
   const [busyId, setBusyId] = useState(null);
@@ -64,18 +80,29 @@ export default function EmployeeFiles({ employee }) {
     const file = e.target.files?.[0];
     e.target.value = null;
     if (!file) return;
-    setMeta({ period: prevMonth(), title: tab === "other" ? file.name.replace(/\.[^.]+$/, "") : "" });
+    setMeta({ ...emptyMeta(), title: tab === "other" ? file.name.replace(/\.[^.]+$/, "") : "" });
     setPending({ file });
   };
+  // פוליסת ביטוח אפשר לרשום גם בלי קובץ
+  const addWithoutFile = () => { setMeta(emptyMeta()); setPending({ file: null }); };
+  const set = (k) => (e) => setMeta(m => ({ ...m, [k]: e.target.value }));
+  const metaPayload = () => {
+    const m = meta;
+    if (tab === "payslip") return { period: m.period, employer: m.employer || null, gross: m.gross || null, net: m.net || null };
+    if (tab === "contract") return { title: m.title, contract_type: m.contract_type, signed_date: m.signed_date || null, start_date: m.start_date || null, end_date: m.end_date || null, employer: m.employer || null };
+    if (tab === "medical_insurance") return { title: m.title, insurance_company: m.insurance_company, policy_number: m.policy_number || null, start_date: m.start_date || null, end_date: m.end_date || null, agent: m.agent || null, health_fund: m.health_fund || null };
+    return { title: m.title };
+  };
+  const canSave = tab === "payslip" ? !!meta.period : tab === "medical_insurance" ? !!meta.insurance_company.trim() : true;
 
   const save = async () => {
     if (!pending) return;
     setSaving(true);
     try {
-      const { file_url } = await UploadFile({ file: pending.file });
+      const file_url = pending.file ? (await UploadFile({ file: pending.file })).file_url : null;
       const doc = await apiFetch(`${BASE_URL}/employees/${employee.id}/documents`, {
         method: "POST",
-        body: JSON.stringify({ category: tab, period: tab === "payslip" ? meta.period : null, title: meta.title, file_url, file_name: pending.file.name }),
+        body: JSON.stringify({ category: tab, ...metaPayload(), file_url, file_name: pending.file?.name || null }),
       });
       setDocs(prev => [doc, ...prev]);
       setPending(null);
@@ -137,6 +164,7 @@ export default function EmployeeFiles({ employee }) {
             <input ref={camRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={pickFile} />
             <Button variant="outline" size="sm" className="px-2" aria-label="צלם מסמך" onClick={() => camRef.current?.click()}><Camera className="w-4 h-4" aria-hidden="true" /></Button>
             <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}><Upload className="w-4 h-4 ml-1" aria-hidden="true" />הוסף {catOf(tab).one}</Button>
+            {tab === "medical_insurance" && <Button variant="ghost" size="sm" onClick={addWithoutFile}>בלי קובץ</Button>}
           </div>
         </CardTitle>
       </CardHeader>
@@ -161,18 +189,23 @@ export default function EmployeeFiles({ employee }) {
                 <div className="flex items-start gap-3 min-w-0">
                   <FileText className="w-5 h-5 text-gray-500 shrink-0 mt-0.5" aria-hidden="true" />
                   <div className="min-w-0">
-                    <a href={withToken(doc.file_url)} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 hover:underline break-words">
-                      {doc.category === "payslip" ? `תלוש ${fmtPeriod(doc.period)}` : doc.title}
-                    </a>
+                    {doc.file_url ? (
+                      <a href={withToken(doc.file_url)} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-700 hover:underline break-words">
+                        {doc.category === "payslip" ? `תלוש ${fmtPeriod(doc.period)}` : doc.title}
+                      </a>
+                    ) : <span className="font-medium break-words">{doc.title}</span>}
+                    {doc.category === "medical_insurance" && doc.is_active && <Badge className="bg-blue-100 text-blue-800 mr-2">פעילה</Badge>}
+                    {docDetails(doc) && <div className="text-xs text-gray-600 mt-0.5">{docDetails(doc)}</div>}
                     <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-gray-500">
-                      <span>הועלה {fmtDate(doc.created_at)}</span>
+                      {doc.employer && <span>{doc.employer}</span>}
+                      <span>{doc.source === "gmail_payslip" ? "מהמייל" : "הועלה"} {fmtDate(doc.created_at)}</span>
                       <SignBadge doc={doc} />
                       {doc.sign_status === "signed" && doc.signer_name && <span>ע"י {doc.signer_name}</span>}
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1 shrink-0">
-                  {doc.sign_status === "signed" ? (
+                  {!doc.file_url ? null : doc.sign_status === "signed" ? (
                     <a href={withToken(doc.signed_file_url)} target="_blank" rel="noopener noreferrer">
                       <Button variant="outline" size="sm" className="text-green-700 border-green-200"><Download className="w-4 h-4 ml-1" aria-hidden="true" />עותק חתום</Button>
                     </a>
@@ -200,25 +233,59 @@ export default function EmployeeFiles({ employee }) {
         <DialogContent dir="rtl" className="max-w-md">
           <DialogHeader>
             <DialogTitle>הוספת {catOf(tab).one}</DialogTitle>
-            <DialogDescription className="break-words">{pending?.file?.name}</DialogDescription>
+            <DialogDescription className="break-words">{pending?.file?.name || "ללא קובץ"}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            {tab === "payslip" && (
+            {tab === "payslip" && (<>
               <div>
                 <Label htmlFor="doc-period">חודש התלוש</Label>
-                <Input id="doc-period" type="month" value={meta.period} onChange={(e) => setMeta(m => ({ ...m, period: e.target.value }))} className="mt-1" />
+                <Input id="doc-period" type="month" value={meta.period} onChange={set("period")} className="mt-1" />
               </div>
-            )}
-            {tab !== "payslip" && (
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label htmlFor="doc-gross">ברוטו (₪)</Label><Input id="doc-gross" type="number" inputMode="decimal" value={meta.gross} onChange={set("gross")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-net">נטו (₪)</Label><Input id="doc-net" type="number" inputMode="decimal" value={meta.net} onChange={set("net")} className="mt-1" /></div>
+              </div>
+            </>)}
+            {tab !== "payslip" && tab !== "medical_insurance" && (
               <div>
                 <Label htmlFor="doc-title">שם המסמך</Label>
-                <Input id="doc-title" value={meta.title} placeholder={catOf(tab).one} onChange={(e) => setMeta(m => ({ ...m, title: e.target.value }))} className="mt-1" />
+                <Input id="doc-title" value={meta.title} placeholder={catOf(tab).one} onChange={set("title")} className="mt-1" />
+              </div>
+            )}
+            {tab === "contract" && (<>
+              <div>
+                <Label htmlFor="doc-ctype">סוג החוזה</Label>
+                <select id="doc-ctype" value={meta.contract_type} onChange={set("contract_type")} className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm">
+                  {Object.entries(CONTRACT_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div><Label htmlFor="doc-signed">נחתם</Label><Input id="doc-signed" type="date" value={meta.signed_date} onChange={set("signed_date")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-start">התחלה</Label><Input id="doc-start" type="date" value={meta.start_date} onChange={set("start_date")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-end">סיום</Label><Input id="doc-end" type="date" value={meta.end_date} onChange={set("end_date")} className="mt-1" /></div>
+              </div>
+            </>)}
+            {tab === "medical_insurance" && (<>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label htmlFor="doc-company">חברת ביטוח *</Label><Input id="doc-company" value={meta.insurance_company} onChange={set("insurance_company")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-policy">מספר פוליסה</Label><Input id="doc-policy" value={meta.policy_number} onChange={set("policy_number")} className="mt-1" dir="ltr" /></div>
+                <div><Label htmlFor="doc-istart">תחילת כיסוי</Label><Input id="doc-istart" type="date" value={meta.start_date} onChange={set("start_date")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-iend">סיום כיסוי</Label><Input id="doc-iend" type="date" value={meta.end_date} onChange={set("end_date")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-agent">סוכן / מקור</Label><Input id="doc-agent" value={meta.agent} onChange={set("agent")} className="mt-1" /></div>
+                <div><Label htmlFor="doc-fund">קופת חולים</Label><Input id="doc-fund" value={meta.health_fund} onChange={set("health_fund")} className="mt-1" /></div>
+              </div>
+              <p className="text-xs text-gray-500">הפוליסה שבתוקף היום מתעדכנת אוטומטית גם בפרטי הביטוח שבכרטיס העובד.</p>
+            </>)}
+            {(tab === "payslip" || tab === "contract") && (
+              <div>
+                <Label htmlFor="doc-employer">ישות מעסיקה</Label>
+                <Input id="doc-employer" value={meta.employer} onChange={set("employer")} className="mt-1" placeholder="לא חובה" />
               </div>
             )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setPending(null)} disabled={saving}>ביטול</Button>
-            <Button onClick={save} disabled={saving || (tab === "payslip" && !meta.period)}>
+            <Button onClick={save} disabled={saving || !canSave}>
               {saving && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}שמור
             </Button>
           </DialogFooter>
