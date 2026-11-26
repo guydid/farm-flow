@@ -221,6 +221,8 @@ function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
       signed_at: s.signed_at || null,
       signer_name: s.signer_name || null,
       signed_file_url: s.signed_file_url || null,
+      sent_at: s.sent_at || null,
+      sent_via: s.sent_via || null,
     };
     if (type === 'medical_insurance_policies') out.is_active = isActivePolicy(rec);
     return out;

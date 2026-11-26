@@ -121,23 +121,79 @@ function registerEmployeeDocRoutes(app, deps) {
   });
 
   // ── בקשת חתימה: קישור חדש (מבטל קישור קודם) ──────────────────────────────
+  // נשמר רק ה-hash; הקישור עצמו מוחזר פעם אחת — לשליחה לטלפון העובד (וואטסאפ / SMS)
+  const issueSignLink = (row, by) => {
+    const token = crypto.randomBytes(24).toString('base64url');
+    const now = new Date();
+    const expires_at = new Date(now.getTime() + SIGN_TTL_DAYS * 864e5).toISOString();
+    updateData(row, (x) => ({
+      ...x,
+      sign: { status: 'pending', token_hash: sha256(token), requested_at: now.toISOString(), requested_by: by || null, expires_at },
+    }));
+    return { token, path: `/sign/${token}`, expires_at };
+  };
+  const employeeInfo = (id) => {
+    const r = employeeRow(id); if (!r) return { name: '', first_name: '', phone: '' };
+    try { const e = JSON.parse(r.data || '{}'); return { name: e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' '), first_name: e.first_name || '', phone: e.phone || '' }; }
+    catch { return { name: '', first_name: '', phone: '' }; }
+  };
+
   app.post('/api/employee-documents/:docId/sign-request', authMiddleware, (req, res) => {
     const row = docRow(req.params.docId);
     if (!row) return res.status(404).json({ error: 'Not found' });
     const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
     const d = parse(row);
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'המסמך כבר נחתם' });
-    const token = crypto.randomBytes(24).toString('base64url');
-    const now = new Date();
-    updateData(row, (x) => ({
-      ...x,
-      sign: {
-        status: 'pending', token_hash: sha256(token),
-        requested_at: now.toISOString(), requested_by: ctx.user.full_name || null,
-        expires_at: new Date(now.getTime() + SIGN_TTL_DAYS * 864e5).toISOString(),
-      },
-    }));
-    res.json({ token, path: `/sign/${token}`, expires_at: new Date(now.getTime() + SIGN_TTL_DAYS * 864e5).toISOString() });
+    res.json({ ...issueSignLink(row, ctx.user.full_name), employee: employeeInfo(d.employee_id) });
+  });
+
+  // תיעוד שליחה (וואטסאפ / SMS / העתקה) — לסטטוס "נשלח" ברשימות
+  app.post('/api/employee-documents/:docId/sign-sent', authMiddleware, (req, res) => {
+    const row = docRow(req.params.docId);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (!managerCtx(req, res, row.farm_id)) return;
+    const channel = ['whatsapp', 'sms', 'copy', 'share'].includes(req.body?.channel) ? req.body.channel : 'other';
+    const d = parse(row);
+    if (d.sign?.status !== 'pending') return res.status(409).json({ error: 'אין בקשת חתימה פתוחה' });
+    const to = String(req.body?.to || '').replace(/[^\d+]/g, '').slice(0, 20) || null;
+    updateData(row, (x) => ({ ...x, sign: { ...x.sign, sent_at: new Date().toISOString(), sent_via: channel, sent_to: to } }));
+    res.json({ success: true });
+  });
+
+  // ── שליחה מרוכזת: תלושי חודש לחתימה ─────────────────────────────────────
+  // GET  ?period=YYYY-MM  → התלושים של החודש עם שם/טלפון העובד וסטטוס
+  // POST { period, doc_ids?, renew? } → קישורים חדשים למי שלא חתם (ממתינים — רק עם renew)
+  const batchRows = (farmId, period) => db.prepare(`SELECT * FROM entities WHERE entity_type = 'payslips' AND farm_id = ? AND json_extract(data, '$.period') = ?`)
+    .all(farmId, period).map(parse).map(d => {
+      const e = employeeInfo(d.employee_id); const v = publicDoc(d);
+      return { doc_id: d.id, employee_id: d.employee_id, employee_name: e.name || d.employee_name || '', first_name: e.first_name, phone: e.phone, title: d.title, employer: d.employer || null, sign_status: v.sign_status, signed_at: v.signed_at, sent_at: d.sign?.sent_at || null, sent_via: d.sign?.sent_via || null };
+    }).sort((a, b) => a.employee_name.localeCompare(b.employee_name, 'he'));
+  const farmOf = (req) => { const u = getUser(req.user.id); return req.query.farm_id || req.body?.farm_id || u?.current_farm_id; };
+
+  app.get('/api/employee-documents/payslip-batch', authMiddleware, (req, res) => {
+    const farmId = farmOf(req);
+    if (!managerCtx(req, res, farmId)) return;
+    const periods = db.prepare(`SELECT DISTINCT json_extract(data, '$.period') AS p FROM entities WHERE entity_type = 'payslips' AND farm_id = ? ORDER BY p DESC`).all(farmId).map(r => r.p).filter(Boolean);
+    const period = /^\d{4}-\d{2}$/.test(String(req.query.period || '')) ? req.query.period : periods[0];
+    res.json({ periods, period: period || null, items: period ? batchRows(farmId, period) : [] });
+  });
+
+  app.post('/api/employee-documents/payslip-batch/sign-requests', authMiddleware, (req, res) => {
+    const farmId = farmOf(req);
+    const ctx = managerCtx(req, res, farmId); if (!ctx) return;
+    const period = String(req.body?.period || '');
+    if (!/^\d{4}-\d{2}$/.test(period)) return res.status(400).json({ error: 'חודש לא תקין' });
+    const only = Array.isArray(req.body?.doc_ids) ? new Set(req.body.doc_ids.map(String)) : null;
+    const links = {};
+    for (const it of batchRows(farmId, period)) {
+      if (only && !only.has(it.doc_id)) continue;
+      if (it.sign_status === 'signed') continue;
+      if (it.sign_status === 'pending' && !req.body?.renew && !only) continue; // כבר נשלח — לא שוברים קישור קיים
+      const row = docRow(it.doc_id);
+      links[it.doc_id] = issueSignLink(row, ctx.user.full_name);
+    }
+    const items = batchRows(farmId, period).map(it => (links[it.doc_id] ? { ...it, ...links[it.doc_id] } : it));
+    res.json({ period, issued: Object.keys(links).length, items });
   });
 
   app.post('/api/employee-documents/:docId/sign-cancel', authMiddleware, (req, res) => {
@@ -291,6 +347,11 @@ function registerEmployeeDocRoutes(app, deps) {
           signed_sha256: sha256(out), signed_file_url: signedUrl,
         },
       }));
+      try {
+        const e = employeeInfo(d.employee_id);
+        db.prepare('INSERT INTO notifications (id, recipient_id, farm_id, title, body, type, sent_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(uuidv4(), null, d.farm_id, `${CATEGORIES[d.category] || 'מסמך'} נחתם — ${e.name || name}`, `${d.title || ''} נחתם ע"י ${name}. העותק החתום נשמר בתיק העובד.`, 'success', null, NOW());
+      } catch (err) { console.error('[employee-docs] notify failed:', err.message); }
       res.json({ success: true, signed_at: signedAt });
     } catch (e) {
       console.error('[employee-docs] sign failed:', e.message);

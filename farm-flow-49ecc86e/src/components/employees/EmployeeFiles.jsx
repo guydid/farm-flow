@@ -10,6 +10,9 @@ import { UploadFile } from "@/integrations/Core";
 import { apiFetch, BASE_URL, getToken } from "@/api/localClient";
 import { Loader2, Upload, Camera, FileText, Trash2, PenLine, CheckCircle2, Clock, Copy, Share2, Download, XCircle, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Employee } from "@/entities/all";
+import { normalizePhone, displayPhone, signMessage, whatsappLink, smsLink } from "./signShare";
+import { MessageCircle, MessageSquare, Phone } from "lucide-react";
 
 // תיק עובד: תלושי שכר, חוזה העסקה, ביטוח רפואי ומסמכים נוספים — כל אחד אפשר לשלוח לעובד לחתימה בקישור.
 const CATS = [
@@ -59,6 +62,8 @@ export default function EmployeeFiles({ employee }) {
   const [saving, setSaving] = useState(false);
   const [share, setShare] = useState(null); // { doc, url, expires_at }
   const [busyId, setBusyId] = useState(null);
+  const [phone, setPhone] = useState(employee.phone || "");
+  const [phoneDraft, setPhoneDraft] = useState("");
   const fileRef = useRef(null);
   const camRef = useRef(null);
 
@@ -143,13 +148,27 @@ export default function EmployeeFiles({ employee }) {
     }
   };
 
-  const shareText = share ? `שלום ${employee.first_name || employee.full_name || ""}, נא לעיין במסמך "${share.doc.title}" ולחתום כאן / Please review and sign: ${share.url}` : "";
+  const shareText = share ? signMessage({ firstName: employee.first_name || "", title: share.doc.title, url: share.url }) : "";
+  const markSent = (channel) => {
+    if (!share) return;
+    apiFetch(`${BASE_URL}/employee-documents/${share.doc.id}/sign-sent`, { method: "POST", body: JSON.stringify({ channel, to: normalizePhone(phone) }) })
+      .then(load).catch(() => {});
+  };
+  const savePhone = async () => {
+    const n = normalizePhone(phoneDraft);
+    if (!n) { toast({ title: "מספר טלפון לא תקין", variant: "destructive" }); return; }
+    try {
+      await Employee.update(employee.id, { phone: phoneDraft.trim() });
+      setPhone(phoneDraft.trim()); setPhoneDraft("");
+      toast({ title: "הטלפון נשמר בכרטיס העובד" });
+    } catch (e) { toast({ title: "שגיאה", description: e.message, variant: "destructive" }); }
+  };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(share.url); toast({ title: "הקישור הועתק" }); }
+    try { await navigator.clipboard.writeText(share.url); toast({ title: "הקישור הועתק" }); markSent("copy"); }
     catch { toast({ title: "לא ניתן להעתיק — סמן את הקישור והעתק ידנית", variant: "destructive" }); }
   };
   const nativeShare = async () => {
-    try { await navigator.share({ title: share.doc.title, text: shareText }); } catch { /* בוטל */ }
+    try { await navigator.share({ title: share.doc.title, text: shareText }); markSent("share"); } catch { /* בוטל */ }
   };
 
   if (denied) return null;
@@ -200,6 +219,7 @@ export default function EmployeeFiles({ employee }) {
                       {doc.employer && <span>{doc.employer}</span>}
                       <span>{doc.source === "gmail_payslip" ? "מהמייל" : "הועלה"} {fmtDate(doc.created_at)}</span>
                       <SignBadge doc={doc} />
+                      {doc.sign_status === "pending" && doc.sent_at && <span>נשלח {fmtDate(doc.sent_at)}{doc.sent_via === "whatsapp" ? " בוואטסאפ" : doc.sent_via === "sms" ? " ב-SMS" : ""}</span>}
                       {doc.sign_status === "signed" && doc.signer_name && <span>ע"י {doc.signer_name}</span>}
                     </div>
                   </div>
@@ -296,17 +316,38 @@ export default function EmployeeFiles({ employee }) {
       <Dialog open={!!share} onOpenChange={(o) => !o && setShare(null)}>
         <DialogContent dir="rtl" className="max-w-md">
           <DialogHeader>
-            <DialogTitle>שליחה לחתימה</DialogTitle>
+            <DialogTitle>שליחה לחתימה בטלפון של {employee.full_name || "העובד"}</DialogTitle>
             <DialogDescription>
-              שלח לעובד את הקישור. הוא יוכל לעיין במסמך ולחתום באצבע מהטלפון, בלי התחברות.
-              הקישור בתוקף עד {fmtDate(share?.expires_at)}. כשייחתם, העותק החתום יופיע כאן.
+              העובד מקבל קישור, פותח בטלפון, מעיין במסמך וחותם באצבע — בלי התחברות.
+              הקישור בתוקף עד {fmtDate(share?.expires_at)}. אחרי החתימה העותק החתום נשמר כאן בתיק ותקבל התראה.
             </DialogDescription>
           </DialogHeader>
+          {normalizePhone(phone) ? (
+            <div className="grid grid-cols-2 gap-2">
+              <a href={whatsappLink(phone, shareText)} target="_blank" rel="noopener noreferrer" onClick={() => markSent("whatsapp")}>
+                <Button className="w-full h-12 bg-green-600 hover:bg-green-700"><MessageCircle className="w-5 h-5 ml-1" aria-hidden="true" />וואטסאפ</Button>
+              </a>
+              <a href={smsLink(phone, shareText)} onClick={() => markSent("sms")}>
+                <Button className="w-full h-12"><MessageSquare className="w-5 h-5 ml-1" aria-hidden="true" />SMS</Button>
+              </a>
+              <p className="col-span-2 text-xs text-gray-500 flex items-center gap-1"><Phone className="w-3 h-3" aria-hidden="true" />נשלח ל-<span dir="ltr">{displayPhone(phone)}</span></p>
+            </div>
+          ) : (
+            <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
+              <p className="text-sm text-amber-800">אין טלפון בכרטיס העובד. הוסף מספר כדי לשלוח ישירות אליו:</p>
+              <div className="flex gap-2">
+                <Input type="tel" inputMode="tel" dir="ltr" placeholder="050-1234567" value={phoneDraft} onChange={(e) => setPhoneDraft(e.target.value)} />
+                <Button onClick={savePhone} disabled={!phoneDraft.trim()}>שמור</Button>
+              </div>
+            </div>
+          )}
           <Input readOnly value={share?.url || ""} dir="ltr" onFocus={(e) => e.target.select()} className="text-xs" />
           <div className="grid grid-cols-2 gap-2">
-            <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer">
-              <Button className="w-full bg-green-600 hover:bg-green-700"><Share2 className="w-4 h-4 ml-1" aria-hidden="true" />וואטסאפ</Button>
-            </a>
+            {!normalizePhone(phone) && (
+              <a href={whatsappLink("", shareText)} target="_blank" rel="noopener noreferrer" onClick={() => markSent("whatsapp")}>
+                <Button className="w-full bg-green-600 hover:bg-green-700"><Share2 className="w-4 h-4 ml-1" aria-hidden="true" />וואטסאפ (בחירת איש קשר)</Button>
+              </a>
+            )}
             <Button variant="outline" onClick={copy}><Copy className="w-4 h-4 ml-1" aria-hidden="true" />העתק קישור</Button>
             {typeof navigator !== "undefined" && navigator.share && (
               <Button variant="outline" className="col-span-2" onClick={nativeShare}><Share2 className="w-4 h-4 ml-1" aria-hidden="true" />שיתוף…</Button>

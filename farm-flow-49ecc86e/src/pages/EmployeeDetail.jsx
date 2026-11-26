@@ -538,6 +538,7 @@ export default function EmployeeDetail() {
                                 {renderDetail("שם מלא", employee.full_name)}
                                 {renderDetail("מדינת מוצא", employee.country_of_origin)}
                                 {renderDetail("מספר עובד בשעון נוכחות", employee.time_clock_id)}
+                                {renderDetail("טלפון נייד", employee.phone ? <a href={`tel:${employee.phone}`} dir="ltr" className="text-blue-700 hover:underline">{employee.phone}</a> : null)}
                                 {renderDetail("פרטי בנק", `${employee.bank_details?.bank_name || ''} סניף ${employee.bank_details?.branch_number || ''} חשבון ${employee.bank_details?.account_number || ''}`)}
                                 <div>
                                     <p className="text-sm text-gray-500">הערות</p>

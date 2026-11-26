@@ -79,7 +79,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
         start_date: '', termination_date: '', entry_date: '', country_of_origin: '',
         manpower_company_id: '', manager_id: '', passport_number: '', passport_expiry: '',
         passport_url: '', visa_type: '', visa_expiry: '', visa_url: '', contract_url: '',
-        bnhc_number: '', time_clock_id: '',
+        bnhc_number: '', time_clock_id: '', phone: '',
         insurance_details: { company: '', policy_number: '', policy_start_date: '', policy_end_date: '', policy_url: '', health_fund: '', health_fund_number: '', health_fund_url: '' },
         bank_details: { bank_name: '', branch_number: '', account_number: '' },
         notes: ''
@@ -112,6 +112,7 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
             contract_url: employee?.contract_url || '',
             bnhc_number: employee?.bnhc_number || '',
             time_clock_id: employee?.time_clock_id || '',
+            phone: employee?.phone || '',
             insurance_details: {
                 company: employee?.insurance_details?.company || '',
                 policy_number: employee?.insurance_details?.policy_number || '',
@@ -420,6 +421,11 @@ export default function EmployeeForm({ employee, currentFarm, manpowerCompanies,
                     <div>
                         <Label>מספר עובד בשעון נוכחות</Label>
                         <Input name="time_clock_id" inputMode="numeric" placeholder="לדוגמה 6833" value={formData.time_clock_id || ''} onChange={handleChange} />
+                    </div>
+                    <div>
+                        <Label>טלפון נייד</Label>
+                        <Input name="phone" type="tel" inputMode="tel" dir="ltr" placeholder="050-1234567" value={formData.phone || ''} onChange={handleChange} />
+                        <p className="text-xs text-gray-500 mt-1">לשליחת תלושים ומסמכים לחתימה בוואטסאפ / SMS</p>
                     </div>
                     <div>
                         <Label>מדינת מוצא</Label>
