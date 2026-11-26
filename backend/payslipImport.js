@@ -17,6 +17,16 @@ const crypto = require('crypto');
 
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const normPassport = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+// בתלושים (ובחלק מהמסמכים) הדרכון מופיע בלי האותיות — רק הספרות. מתאימים גם לפי הספרות, כמספר שלם (לא חלק ממספר ארוך יותר)
+const passportDigits = (s) => { const d = normPassport(s).replace(/\D/g, ''); return d.length >= 6 ? d : null; };
+const hasDigitRun = (text, digits) => new RegExp(`(?<!\\d)${digits}(?!\\d)`).test(String(text || ''));
+const passportIn = (passport, flat, raw) => {
+  const p = normPassport(passport);
+  if (p.length < 6) return false;
+  if (flat.includes(p)) return true;
+  const d = passportDigits(p);
+  return !!d && hasDigitRun(raw, d);
+};
 const normName = (s) => String(s || '').toUpperCase().replace(/[^A-Z\s]/g, ' ').split(/\s+/).filter(t => t.length >= 2);
 
 function decodeShifted(s) {
@@ -116,11 +126,8 @@ const subjectEmployer = (subject) => {
 
 function matchEmployee(page, employees) {
   const flat = normPassport(page.items.join(''));
-  const itemSet = new Set(page.items.map(normPassport));
-  const byPassport = employees.filter(e => {
-    const p = normPassport(e.passport_number);
-    return p.length >= 6 && (itemSet.has(p) || flat.includes(p));
-  });
+  const raw = page.items.join(' ');
+  const byPassport = employees.filter(e => passportIn(e.passport_number, flat, raw));
   if (byPassport.length === 1) return { employee: byPassport[0], by: 'passport' };
   // שם: כל מילות השם (2 לפחות) מופיעות כפריטים בעמוד
   const tokens = new Set(page.items.flatMap(normName));
@@ -136,6 +143,7 @@ function matchEmployee(page, employees) {
 function unmatchedHint(page) {
   const names = page.items.filter(s => /^[A-Z][A-Z .'-]{2,30}$/.test(s) && !/^(PDF|TOTAL)$/.test(s));
   const passports = page.items.filter(s => /^(?=.*\d)(?=.*[A-Z])[A-Z0-9]{6,12}$/.test(s));
+  if (!passports.length) passports.push(...page.items.filter(s => /^\d{7,9}$/.test(s)));
   return { name: [...new Set(names)].slice(0, 3).join(' '), passport: passports[0] || null };
 }
 
@@ -245,7 +253,8 @@ function makePayslipImporter(deps) {
   // עובדים שמספר הדרכון שלהם מופיע בנושא המייל / בטקסט הקובץ
   const employeesByPassport = (farmId, ...texts) => {
     const flat = texts.map(t => normPassport(t)).join('|');
-    return employeesOf(farmId).filter(e => { const p = normPassport(e.passport_number); return p.length >= 6 && flat.includes(p); });
+    const raw = texts.map(t => String(t || '')).join(' | ');
+    return employeesOf(farmId).filter(e => passportIn(e.passport_number, flat, raw));
   };
   const empName = (e) => e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' ') || null;
   const docsOf = (farmId, type, employeeId) => db.prepare(`SELECT id, data FROM entities WHERE entity_type=? AND farm_id=? AND json_extract(data,'$.employee_id')=?`).all(type, farmId, employeeId)
@@ -316,7 +325,8 @@ function makePayslipImporter(deps) {
     const y = state.year;
     // מילות מפתח + מספרי הדרכון של העובדים (בנתחים — שאילתת Gmail מוגבלת באורך)
     const words = '(תלוש OR תלושי OR תלושים OR payslip OR subject:שכר OR דרכון OR passport OR ביטוח OR פוליסה OR "דף רשימה" OR הילית OR hilit OR 106 OR אשרה OR ויזה OR visa OR חוזה)';
-    const passports = [...new Set(employeesOf(farmId).map(e => normPassport(e.passport_number)).filter(x => x.length >= 6))];
+    // גם הספרות בלבד — מסמכים שבהם הדרכון כתוב בלי האותיות
+    const passports = [...new Set(employeesOf(farmId).flatMap(e => { const p = normPassport(e.passport_number); return p.length >= 6 ? [p, passportDigits(p)] : []; }).filter(Boolean))];
     const groups = [words];
     for (let i = 0; i < passports.length; i += 25) groups.push(`(${passports.slice(i, i + 25).join(' OR ')})`);
     const seen = new Set();
