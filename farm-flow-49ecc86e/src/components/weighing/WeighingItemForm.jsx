@@ -131,6 +131,8 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
 
   const grossWeightRef = useRef(null);
   const [isMobile, setIsMobile] = useState(false);
+  // ק"ג ליחידה שנלמד מהזנה ידנית (ק"ג ÷ כמות) — כדי שהמשקל יתעדכן כשמשנים את כמות היחידות
+  const [kgPerUnit, setKgPerUnit] = useState(null);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth <= 768 || 'ontouchstart' in window);
@@ -155,6 +157,13 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
   }, [packagings, formData.packaging_type]);
 
   // מוצר "לא שקיל" (דגל ישן) — ללא שקילה כלל; אחרת השקילות נקבעת לפי האריזה שנבחרה
+  // משקל נטו צפוי לאריזה (הגדרות אריזה: לפי מוצר, אחרת כללי)
+  const expectedKgPerPackage = useMemo(() => {
+    if (!selectedPackaging) return 0;
+    const v = parseFloat(selectedPackaging.product_weights?.[formData.product_id]) || parseFloat(selectedPackaging.expected_weight) || 0;
+    return v > 0 ? v : 0;
+  }, [selectedPackaging, formData.product_id]);
+
   const productWeighable = selectedProduct?.weighable !== false;
   const isWeighable = useMemo(() => {
     if (!productWeighable) return false;
@@ -226,6 +235,9 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
         discount_percentage: item.discount_percentage ? String(item.discount_percentage) : "",
       });
 
+      const n = Number(item.net_weight), c = Number(item.package_count);
+      setKgPerUnit(n > 0 && c > 0 ? n / c : null);
+
       if (isCopyMode && !isMobile && selectedProd?.weighable !== false) {
         setTimeout(() => grossWeightRef.current?.focus(), 300);
       }
@@ -254,6 +266,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
       if (!pkg) return false;
       return !Array.isArray(pkg.product_ids) || pkg.product_ids.length === 0 || pkg.product_ids.includes(product.id);
     };
+    setKgPerUnit(null);
     setFormData(prev => {
       const candidate = prefs?.packaging_type ?? prev.packaging_type ?? '';
       return {
@@ -426,7 +439,7 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
                         <Chip
                           key={pkg.id}
                           selected={formData.packaging_type === pkg.name}
-                          onClick={() => setFormData(prev => ({ ...prev, packaging_type: prev.packaging_type === pkg.name ? "" : pkg.name }))}
+                          onClick={() => { setKgPerUnit(null); setFormData(prev => ({ ...prev, packaging_type: prev.packaging_type === pkg.name ? "" : pkg.name })); }}
                         >
                           {pkg.name}
                           <div className={cn("text-[10px] mt-0.5", formData.packaging_type === pkg.name ? "text-indigo-200" : "text-gray-400")}>
@@ -494,7 +507,15 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
                     id="package_count"
                     name="package_count"
                     value={formData.package_count}
-                    onChange={(e) => setFormData(prev => ({ ...prev, package_count: e.target.value }))}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const rate = kgPerUnit || expectedKgPerPackage;
+                      setFormData(prev => {
+                        if (isWeighable || !(rate > 0)) return { ...prev, package_count: v };
+                        const cnt = parseFloat(v) || 0;
+                        return { ...prev, package_count: v, manual_net_weight: cnt > 0 ? String(Math.round(cnt * rate * 100) / 100) : "" };
+                      });
+                    }}
                     onBlur={handleBlur}
                     min="0"
                     step="1"
@@ -515,13 +536,23 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
                       id="manual_net_weight"
                       name="manual_net_weight"
                       value={formData.manual_net_weight}
-                      onChange={(e) => setFormData(prev => ({ ...prev, manual_net_weight: e.target.value }))}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const kg = parseFloat(v) || 0, cnt = parseFloat(formData.package_count) || 0;
+                        setKgPerUnit(kg > 0 && cnt > 0 ? kg / cnt : null);
+                        setFormData(prev => ({ ...prev, manual_net_weight: v }));
+                      }}
                       onBlur={handleBlur}
                       min="0"
                       step="0.01"
                       className="h-12 text-lg mt-1"
                       placeholder="0.00"
                     />
+                    {(kgPerUnit || expectedKgPerPackage) > 0 && (
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        מתעדכן לפי הכמות: {Math.round((kgPerUnit || expectedKgPerPackage) * 1000) / 1000} ק"ג ליחידה
+                      </p>
+                    )}
                   </div>
                 )}
 
