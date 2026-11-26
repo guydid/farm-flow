@@ -13,6 +13,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Login from './pages/Login';
 import GoogleAuthSuccess from './pages/GoogleAuthSuccess';
 const FieldWorker = lazy(() => import('./pages/FieldWorker'));
+const SignDocument = lazy(() => import('./pages/SignDocument'));
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -98,6 +99,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Navigate to="/login?mode=register" replace />} />
             <Route path="/auth/google/success" element={<GoogleAuthSuccess />} />
+            {/* ציבורי: חתימת עובד על מסמך מתיק העובד (קישור עם טוקן, ללא התחברות) */}
+            <Route path="/sign/:token" element={<Suspense fallback={null}><SignDocument /></Suspense>} />
             <Route path="*" element={<AuthenticatedApp />} />
           </Routes>
         </Router>

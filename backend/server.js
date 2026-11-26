@@ -4826,6 +4826,8 @@ require('./mcp')(app, { stateGuards, farmTrialExpired, db, listEntities, formatE
 require('./maven').registerMavenRoutes(app, { db, getUser, authMiddleware, getFarmMember, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4, UPLOADS_DIR, invoiceFileToPdf });
 // Leases (שכירויות): payment schedules, meter readings → charges, mark paid, summary, daily reminders
 require('./leases').registerLeaseRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, attnNow, encryptSecret, decryptSecret, httpsRequest, makeMavenCore: require('./maven').makeMavenCore });
+// תיק עובד: תלושי שכר / חוזה / ביטוח רפואי + קישור חתימה ציבורי לעובד (/api/public/sign/:token)
+require('./employeeDocs').registerEmployeeDocRoutes(app, { db, getUser, authMiddleware, getFarmMember, NOW, uuidv4, UPLOADS_DIR, imagesToPdf, execFile: (...a) => require('child_process').execFile(...a) });
 
 // ─── ATTENDANCE ABSENCE ALERTS ────────────────────────────────────────────────
 // A per-farm scheduled check that flags monitored clock workers with no punch-in
@@ -5243,6 +5245,7 @@ const INTERNAL_ENTITIES = new Set([
   'telegram_config', 'gmail_connections', 'gmail_ignore_rules', 'gmail_dismissed',
   'bookkeeper_settings', 'attendance_alert_config', 'pusr_config', 'mcp_tokens', 'auth_tokens',
   'uploads', 'attendance_api_keys', 'maven_config',
+  'employee_documents', // תיק עובד (תלושים/חוזה/ביטוח) — בעלים/מנהל בלבד, דרך employeeDocs.js
 ]);
 const roleOf = (farmId, userId) => (farmId ? getFarmMember(farmId, userId)?.role : null) || null;
 const canWriteRole = (role) => ['owner', 'manager', 'worker'].includes(role);

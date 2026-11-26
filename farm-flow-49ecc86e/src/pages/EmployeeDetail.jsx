@@ -16,6 +16,7 @@ import { Loader2, Camera, User as UserIcon, FileText, Trash2, Download, AlertTri
 import { createPageUrl } from "@/utils";
 import { Badge } from "@/components/ui/badge";
 import EmployeeTimeline from "@/components/employees/EmployeeTimeline";
+import EmployeeFiles from "@/components/employees/EmployeeFiles";
 import { isArchived, setArchived } from "@/components/employees/archive";
 import { Archive, ArchiveRestore } from "lucide-react";
 
@@ -493,6 +494,9 @@ export default function EmployeeDetail() {
                                 </div>
                             </CardContent>
                         </Card>
+
+                        {/* תיק עובד: תלושים / חוזה / ביטוח רפואי + חתימה */}
+                        <EmployeeFiles employee={employee} />
 
                         {/* General Docs */}
                         <Card>
