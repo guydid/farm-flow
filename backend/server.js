@@ -34,6 +34,12 @@ function httpsRequest(options, postBody) {
   });
 }
 
+// pdf-parse (pdf.js ישן) זורק לפעמים rejection שלא נתפס על PDF פגום — ב-Node 22 זה מפיל את התהליך.
+// מתעדים וממשיכים: בקשה בודדת נכשלת, השרת לא.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', String(reason?.stack || reason?.message || reason).slice(0, 500));
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 

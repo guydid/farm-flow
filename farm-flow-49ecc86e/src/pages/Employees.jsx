@@ -400,9 +400,9 @@ export default function Employees() {
                             <span className="hidden sm:inline">תלושים לחתימה</span>
                         </Button>
                         <Button onClick={() => setPayslipImportOpen(true)} variant="outline" size="sm" className="flex items-center gap-1.5"
-                                title="ייבוא תלושי שכר מהמייל לתיקי העובדים">
+                                title="שיוך קבצים מהמייל (תלושים, ביטוח, מסמכים) לתיקי העובדים">
                             <Mail className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">תלושים מהמייל</span>
+                            <span className="hidden sm:inline">קבצים מהמייל</span>
                         </Button>
                         <Button
                             onClick={handlePrintReport}

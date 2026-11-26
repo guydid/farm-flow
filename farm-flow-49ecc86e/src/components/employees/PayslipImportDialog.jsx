@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Mail, CheckCircle2, AlertTriangle } from "lucide-react";
 import { apiFetch, BASE_URL } from "@/api/localClient";
 
-// ייבוא תלושי שכר מהמייל: PDF חודשי של מנהלת השכר → עמוד לכל עובד → תיק העובד (לפי דרכון/שם)
+// שיוך קבצים מהמייל לתיקי העובדים: תלושי שכר (PDF חודשי → עמוד לעובד), "דף רשימה" של ביטוח רפואי
+// → פוליסה, וכל קובץ אחר עם מספר דרכון של עובד בנושא/בתוכן → "אחר" בתיק.
 const thisYear = new Date().getFullYear();
 const YEARS = [thisYear, thisYear - 1, thisYear - 2];
 const fmtMonth = (p) => `${p.slice(5, 7)}/${p.slice(0, 4)}`;
@@ -46,10 +47,11 @@ export default function PayslipImportDialog({ open, onOpenChange, farmId }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent dir="rtl" className="max-w-lg max-h-[88vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Mail className="w-5 h-5 text-primary" aria-hidden="true" />ייבוא תלושי שכר מהמייל</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><Mail className="w-5 h-5 text-primary" aria-hidden="true" />שיוך קבצים מהמייל לעובדים</DialogTitle>
           <DialogDescription>
-            מחפש ב-Gmail המחובר את מיילי התלושים של השנה, מפצל כל PDF לעמוד לכל עובד ומתייק בתיק העובד לפי מספר הדרכון (או השם המלא).
-            תלוש שכבר תויק לא ייובא שוב; תלוש מתוקן שהגיע מאוחר יותר מחליף את הקודם, אלא אם הקודם כבר נחתם.
+            סורק את המיילים של השנה ב-Gmail המחובר ומתייק בתיק של כל עובד: תלושי שכר (מפוצלים לעמוד לעובד), פוליסות ביטוח רפואי
+            (מ"דף רשימה" — חברה, מספר פוליסה, תקופה, קופ"ח), וכל קובץ אחר שמספר הדרכון של העובד מופיע בו או בנושא המייל.
+            קובץ שכבר תויק לא ייובא שוב; תלוש מתוקן מאוחר יותר מחליף את הקודם, אלא אם הקודם נחתם.
           </DialogDescription>
         </DialogHeader>
 
@@ -65,7 +67,7 @@ export default function PayslipImportDialog({ open, onOpenChange, farmId }) {
 
         {running && (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm"><Loader2 className="w-4 h-4 animate-spin" />סורק מיילים… {job.scanned}/{job.total || "?"} · {job.created + job.replaced} תלושים תויקו</div>
+            <div className="flex items-center gap-2 text-sm"><Loader2 className="w-4 h-4 animate-spin" />סורק מיילים… {job.scanned}/{job.total || "?"} · {job.created + job.replaced} תלושים · {job.policies_created || 0} פוליסות · {job.documents_created || 0} מסמכים</div>
             <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} /></div>
           </div>
         )}
@@ -76,11 +78,14 @@ export default function PayslipImportDialog({ open, onOpenChange, farmId }) {
 
         {job && job.status === "done" && (
           <div className="space-y-3 text-sm">
-            <p className="flex items-center gap-1.5 font-semibold text-green-700"><CheckCircle2 className="w-4 h-4" />הייבוא לשנת {job.year} הסתיים</p>
+            <p className="flex items-center gap-1.5 font-semibold text-green-700"><CheckCircle2 className="w-4 h-4" />השיוך לשנת {job.year} הסתיים</p>
             <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
               <li>מיילים שנסרקו: <b>{job.total}</b></li>
-              <li>עמודי תלוש: <b>{job.pages}</b></li>
+              <li>קבצים שנבדקו: <b>{job.files}</b></li>
               <li>תלושים חדשים: <b>{job.created}</b></li>
+              <li>פוליסות ביטוח: <b>{job.policies_created}</b>{job.policies_dup ? <span className="text-gray-500"> (+{job.policies_dup} קיימות)</span> : null}</li>
+              <li>מסמכים נוספים: <b>{job.documents_created}</b>{job.documents_dup ? <span className="text-gray-500"> (+{job.documents_dup} קיימים)</span> : null}</li>
+              <li>עמודי תלוש: <b>{job.pages}</b></li>
               <li>הוחלפו במתוקנים: <b>{job.replaced}</b></li>
               <li>עובדים: <b>{job.employees}</b></li>
               <li>כבר היו בתיק: <b>{job.duplicates}</b></li>
@@ -95,6 +100,14 @@ export default function PayslipImportDialog({ open, onOpenChange, farmId }) {
                   {job.unmatched.map((u, i) => (
                     <li key={i}>{fmtMonth(u.period)} · {u.name || "?"}{u.passport ? ` · ${u.passport}` : ""}{u.employer ? ` · ${u.employer}` : ""}</li>
                   ))}
+                </ul>
+              </div>
+            )}
+            {job.unmatched_files?.length > 0 && (
+              <div className="border border-gray-200 bg-gray-50 rounded-lg p-3">
+                <p className="font-semibold text-gray-800 mb-1">{job.unmatched_files.length} קבצים לא שויכו</p>
+                <ul className="text-xs space-y-0.5 max-h-32 overflow-y-auto">
+                  {job.unmatched_files.map((u, i) => <li key={i}>{u.kind}: {u.subject} · {u.file}{u.passport ? ` · ${u.passport}` : ""}</li>)}
                 </ul>
               </div>
             )}

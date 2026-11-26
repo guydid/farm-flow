@@ -1,3 +1,7 @@
+// ─── שיוך קבצים מהמייל לתיקי העובדים ────────────────────────────────────────────
+// 1. תלושי שכר (למטה)  2. "דף רשימה" של ביטוח רפואי (הילית/איילון…) → medical_insurance_policies
+// 3. כל קובץ אחר שמספר הדרכון של עובד מופיע בנושא המייל או בתוכן הקובץ → employee_documents ("אחר")
+//
 // ─── ייבוא תלושי שכר מהמייל לתיק העובד ───────────────────────────────────────────
 // מנהלת השכר שולחת פעם בחודש, לכל חברה מעסיקה, PDF אחד עם כל העובדים — עמוד לעובד.
 // כאן: חיפוש המיילים של השנה ב-Gmail המחובר, פיצול כל PDF לעמודים, זיהוי העובד בכל עמוד
@@ -39,11 +43,36 @@ async function readPdfPages(buf) {
   });
   return pages.map((its, index) => {
     const raw = its.map(i => i.str);
-    const dec = raw.map(decodeShifted);
+    // מפענחים רק מסמך בגופן המוזז (תווי U+02A0–U+02BA); מסמך רגיל נשאר כמו שהוא
+    const shifted = raw.some(t => /[ʠ-ʺ]/.test(t));
+    const dec = shifted ? raw.map(decodeShifted) : raw;
     const items = [...raw, ...dec].map(s => s.trim()).filter(Boolean);
     const pos = its.map((i, k) => ({ s: dec[k].trim(), x: i.x, y: i.y })).filter(i => i.s);
     return { index, items, text: items.join(' | '), pos };
   });
+}
+
+// גיבוי: pdftotext (poppler, מותקן בשרת) כש-pdf-parse נכשל על PDF חריג. בלי מיקומים — סכומי תלוש לא יחושבו.
+function readPdfPagesFallback(buf) {
+  const os = require('os');
+  return new Promise((resolve, reject) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ff-txt-'));
+    const f = path.join(dir, 'in.pdf');
+    fs.writeFileSync(f, buf);
+    require('child_process').execFile('pdftotext', ['-layout', '-enc', 'UTF-8', f, '-'], { timeout: 30000, maxBuffer: 20 * 1024 * 1024 }, (err, stdout) => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      if (err) return reject(err);
+      const pages = String(stdout).split('\f').filter((t, i, a) => t.trim() || i < a.length - 1).map((t, index) => {
+        const items = t.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        return { index, items, text: items.join(' | '), pos: items.map((s2, k) => ({ s: s2, x: 0, y: -k })) };
+      });
+      resolve(pages);
+    });
+  });
+}
+async function readPdfPagesSafe(buf) {
+  try { return await readPdfPages(buf); }
+  catch { try { return await readPdfPagesFallback(buf); } catch { return null; } }
 }
 
 // סכומים לפי מיקום: הערך באותה שורה (±6pt) משמאל לתווית, הקרוב ביותר אליה.
@@ -110,17 +139,44 @@ function unmatchedHint(page) {
   return { name: [...new Set(names)].slice(0, 3).join(' '), passport: passports[0] || null };
 }
 
+// ── "דף רשימה" לביטוח הוצאות רפואיות (עובד זר) ──
+const isPolicySchedule = (text) => /רשימה\s*לביטוח\s*הוצאות\s*רפואיות|ביטוח\s*רפואי\s*לעובד\s*זר/.test(text);
+const dmyToIso = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null; };
+const HEALTH_FUNDS = ['כללית', 'מכבי', 'מאוחדת', 'לאומית'];
+function parsePolicy(pages) {
+  const text = pages.map(p => p.pos.map(i => i.s).join(' | ')).join(' || ');
+  const out = {};
+  const ins = text.match(/([א-ת"'״]+(?:\s+[א-ת"'״]+)?)\s+חברה\s+לביטוח/);
+  if (ins) out.insurance_company = `${ins[1].trim()} חברה לביטוח`;
+  const pol = text.match(/פוליסה\s*:\s*([\d][\d\-\/]{4,})/);
+  if (pol) out.policy_number = pol[1];
+  const per = text.match(/מ-\s*(\d{1,2}\/\d{1,2}\/\d{4})[^|]*?עד[-\s]*(\d{1,2}\/\d{1,2}\/\d{4})/) || text.match(/מ-\s*(\d{1,2}\/\d{1,2}\/\d{4})[\s\S]{0,120}?עד-?\s*(\d{1,2}\/\d{1,2}\/\d{4})/);
+  if (per) { out.start_date = dmyToIso(per[1]); out.end_date = dmyToIso(per[2]); }
+  const pp = text.match(/([A-Z]{0,2}\d{6,9})\s*:\s*מספר\s*דרכון/) || text.match(/מספר\s*דרכון\s*:\s*([A-Z]{0,2}\d{6,9})/);
+  if (pp) out.passport = pp[1];
+  for (const f of HEALTH_FUNDS) {
+    const m = text.match(new RegExp(`([\\d\\/]{6,})\\s*:\\s*ת\\.ז\\.\\s*${f}`)) || text.match(new RegExp(`ת\\.ז\\.\\s*${f}\\s*:\\s*([\\d\\/]{6,})`));
+    if (m || new RegExp(`קופ"ח\\s*${f}`).test(text)) { out.health_fund = f; if (m) out.health_fund_number = m[1]; break; }
+  }
+  const agent = text.match(/שם\s+הסוכן\s*:\s*([^|]+)/);
+  out.agent = agent ? agent[1].trim().replace(/\s+/g, ' ') : (/הילית/.test(text) ? "הילית סוכנות לביטוח" : null);
+  return out;
+}
+// קבצים כלליים שזהים לכל העובדים (תנאי פוליסה) — לא משייכים
+const GENERIC_FILE = /worker_policy|policy_(heb|en)|תנאי.?(ה)?פוליסה/i;
+
 function makePayslipImporter(deps) {
   const { db, NOW, uuidv4, UPLOADS_DIR, gmail } = deps;
   const TYPE = 'payslips';
+  const hr = require('./hrDocs').makeHrCore({ db, NOW, uuidv4 });
 
   const employeesOf = (farmId) => db.prepare("SELECT id, data FROM entities WHERE entity_type='employees' AND farm_id=?").all(farmId)
     .map(r => { try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return null; } }).filter(Boolean);
   const payslipsOf = (farmId) => db.prepare('SELECT id, data FROM entities WHERE entity_type=? AND farm_id=?').all(TYPE, farmId)
     .map(r => { try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return null; } }).filter(Boolean);
 
-  const saveFile = (buf, farmId, originalName) => {
-    const name = `payslip_${uuidv4()}.pdf`;
+  const saveFile = (buf, farmId, originalName, prefix = 'payslip', ext = '.pdf') => {
+    const name = `${prefix}_${uuidv4()}${ext}`;
     fs.writeFileSync(path.join(UPLOADS_DIR, name), buf);
     const now = NOW();
     db.prepare("INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'uploads', ?, ?, ?, ?)")
@@ -132,9 +188,9 @@ function makePayslipImporter(deps) {
   async function importPdf(farmId, buf, meta, state) {
     const { PDFDocument } = require('pdf-lib');
     let pages;
-    try { pages = await readPdfPages(buf); } catch { return; }
+    try { pages = meta.pages || await readPdfPages(buf); } catch { return false; }
     const slips = pages.filter(p => isPayslipPage(p.text));
-    if (!slips.length) return;
+    if (!slips.length) return false;
     const src = await PDFDocument.load(buf, { ignoreEncryption: true });
     const employees = employeesOf(farmId);
     const fallbackPeriod = subjectPeriod(meta.subject);
@@ -183,20 +239,97 @@ function makePayslipImporter(deps) {
       state.employees.add(m.employee.id);
       state.months.add(period);
     }
+    return true;
+  }
+
+  // עובדים שמספר הדרכון שלהם מופיע בנושא המייל / בטקסט הקובץ
+  const employeesByPassport = (farmId, ...texts) => {
+    const flat = texts.map(t => normPassport(t)).join('|');
+    return employeesOf(farmId).filter(e => { const p = normPassport(e.passport_number); return p.length >= 6 && flat.includes(p); });
+  };
+  const empName = (e) => e.full_name || [e.first_name, e.last_name].filter(Boolean).join(' ') || null;
+  const docsOf = (farmId, type, employeeId) => db.prepare(`SELECT id, data FROM entities WHERE entity_type=? AND farm_id=? AND json_extract(data,'$.employee_id')=?`).all(type, farmId, employeeId)
+    .map(r => { try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return null; } }).filter(Boolean);
+  const cleanSubject = (s) => String(s || '').replace(/^(?:\s*(?:fwd?|fw|re)\s*:\s*)+/i, '').replace(/\s+/g, ' ').trim();
+
+  // "דף רשימה" לביטוח רפואי → פוליסה (היסטוריה: רשומה לכל פוליסה/תקופה)
+  async function importPolicy(farmId, buf, pages, meta, state) {
+    const p = parsePolicy(pages);
+    const text = pages.map(x => x.text).join(' ');
+    let matches = p.passport ? employeesByPassport(farmId, p.passport) : [];
+    if (!matches.length) matches = employeesByPassport(farmId, meta.subject, text);
+    if (matches.length !== 1) { state.unmatched_files.push({ kind: 'ביטוח רפואי', subject: cleanSubject(meta.subject).slice(0, 100), file: meta.attachment_name, passport: p.passport || null }); return; }
+    const emp = matches[0];
+    const sha = sha256(buf);
+    const existing = docsOf(farmId, 'medical_insurance_policies', emp.id);
+    if (existing.some(d => d.source_meta?.file_sha256 === sha || (p.policy_number && d.policy_number === p.policy_number && (d.start_date || null) === (p.start_date || null)))) { state.policies_dup++; return; }
+    const fname = saveFile(buf, farmId, meta.attachment_name || 'policy.pdf', 'policy');
+    hr.create(farmId, 'medical_insurance_policies', {
+      employee_id: emp.id, insurance_company: p.insurance_company || (/הילית/.test(text) ? 'לא צוין (הילית)' : 'לא צוין'),
+      policy_number: p.policy_number || null, start_date: p.start_date || null, end_date: p.end_date || null,
+      agent: p.agent || null, health_fund: p.health_fund || null, health_fund_number: p.health_fund_number || null,
+      file_url: `${state.urlBase}/uploads/${fname}`, file_name: meta.attachment_name || null,
+      source: 'gmail', source_meta: { message_id: meta.message_id, subject: meta.subject, date: meta.date, attachment_name: meta.attachment_name, file_sha256: sha },
+    }, 'ייבוא מהמייל');
+    state.policies_created++;
+    state.employees.add(emp.id);
+  }
+
+  // כל קובץ אחר עם דרכון של עובד → "אחר" בתיק (עד 5 עובדים לקובץ — רשימה ארוכה יותר היא דוח כללי)
+  async function importOther(farmId, buf, ext, pages, meta, state) {
+    if (GENERIC_FILE.test(meta.attachment_name || '')) { state.skipped_generic++; return; }
+    const text = pages ? pages.map(x => x.text).join(' ') : '';
+    const matches = employeesByPassport(farmId, meta.subject, meta.attachment_name, text);
+    if (!matches.length) return;
+    if (matches.length > 5) { state.unmatched_files.push({ kind: 'מסמך', subject: cleanSubject(meta.subject).slice(0, 100), file: meta.attachment_name, passport: `${matches.length} עובדים` }); return; }
+    const sha = sha256(buf);
+    let fname = null;
+    for (const emp of matches) {
+      if (docsOf(farmId, 'employee_documents', emp.id).some(d => d.source_meta?.file_sha256 === sha)) { state.documents_dup++; continue; }
+      fname = fname || saveFile(buf, farmId, meta.attachment_name || `document${ext}`, 'empdoc', ext);
+      const title = [cleanSubject(meta.subject), meta.attachment_name].filter(Boolean).join(' — ').slice(0, 120);
+      hr.create(farmId, 'employee_documents', {
+        employee_id: emp.id, title, file_url: `${state.urlBase}/uploads/${fname}`, file_name: meta.attachment_name || null,
+        source: 'gmail', source_meta: { message_id: meta.message_id, subject: meta.subject, date: meta.date, attachment_name: meta.attachment_name, file_sha256: sha, matched_by: 'passport' },
+      }, 'ייבוא מהמייל');
+      state.documents_created++;
+      state.employees.add(emp.id);
+    }
+  }
+
+  // קובץ מצורף אחד → המסלול המתאים
+  async function routeAttachment(farmId, buf, meta, state) {
+    const isPdf = /\.pdf$/i.test(meta.attachment_name || '') || /pdf/i.test(meta.mimeType || '');
+    if (isPdf) {
+      const pages = await readPdfPagesSafe(buf);
+      if (pages && await importPdf(farmId, buf, { ...meta, pages }, state)) return;
+      if (pages && isPolicySchedule(pages.map(x => x.text).join(' '))) return importPolicy(farmId, buf, pages, meta, state);
+      return importOther(farmId, buf, '.pdf', pages, meta, state);
+    }
+    const ext = (String(meta.attachment_name || '').match(/\.(jpe?g|png|webp)$/i)?.[0] || '.jpg').toLowerCase();
+    return importOther(farmId, buf, ext, null, meta, state);
   }
 
   // ריצה מלאה מול Gmail (ברקע; state מתעדכן להתקדמות)
   async function importFromGmail(farmId, conn, state) {
     const token = await gmail.ensureGmailAccessToken(farmId, conn);
     const y = state.year;
-    const q = `has:attachment -from:me after:${y}/01/01 before:${y + 1}/01/01 (תלוש OR תלושי OR תלושים OR payslip OR subject:שכר)`;
-    let pageToken = null;
+    // מילות מפתח + מספרי הדרכון של העובדים (בנתחים — שאילתת Gmail מוגבלת באורך)
+    const words = '(תלוש OR תלושי OR תלושים OR payslip OR subject:שכר OR דרכון OR passport OR ביטוח OR פוליסה OR "דף רשימה" OR הילית OR hilit OR 106 OR אשרה OR ויזה OR visa OR חוזה)';
+    const passports = [...new Set(employeesOf(farmId).map(e => normPassport(e.passport_number)).filter(x => x.length >= 6))];
+    const groups = [words];
+    for (let i = 0; i < passports.length; i += 25) groups.push(`(${passports.slice(i, i + 25).join(' OR ')})`);
+    const seen = new Set();
     const msgs = [];
-    do {
-      const list = await gmail.gmailApiGet(token, `/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=100${pageToken ? `&pageToken=${pageToken}` : ''}`);
-      msgs.push(...(list.messages || []));
-      pageToken = list.nextPageToken || null;
-    } while (pageToken && msgs.length < 500);
+    for (const g of groups) {
+      const q = `has:attachment -from:me after:${y}/01/01 before:${y + 1}/01/01 ${g}`;
+      let pageToken = null;
+      do {
+        const list = await gmail.gmailApiGet(token, `/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=100${pageToken ? `&pageToken=${pageToken}` : ''}`);
+        for (const m of list.messages || []) if (!seen.has(m.id)) { seen.add(m.id); msgs.push(m); }
+        pageToken = list.nextPageToken || null;
+      } while (pageToken && msgs.length < 800);
+    }
     state.total = msgs.length;
     const metas = [];
     for (const msg of msgs) {
@@ -208,11 +341,12 @@ function makePayslipImporter(deps) {
     metas.sort((a, b) => a.date.localeCompare(b.date)); // מהישן לחדש — "מתוקנים" מאוחרים מחליפים
     for (const m of metas) {
       state.scanned++;
-      const pdfs = gmail.collectInvoiceAttachments(m.full.payload).filter(a => /pdf/i.test(a.mimeType) || /\.pdf$/i.test(a.filename));
-      for (const att of pdfs) {
+      const atts = gmail.collectInvoiceAttachments(m.full.payload);
+      for (const att of atts) {
         try {
           const res = await gmail.gmailApiGet(token, `/gmail/v1/users/me/messages/${m.id}/attachments/${att.attachmentId}`);
-          await importPdf(farmId, gmail.b64urlToBuffer(res.data), { message_id: m.id, subject: m.subject, date: m.date, attachment_name: att.filename, employer: subjectEmployer(m.subject) }, state);
+          state.files++;
+          await routeAttachment(farmId, gmail.b64urlToBuffer(res.data), { message_id: m.id, subject: m.subject, date: m.date, attachment_name: att.filename, mimeType: att.mimeType, employer: subjectEmployer(m.subject) }, state);
         } catch (e) {
           state.errors.push(`${m.subject.slice(0, 60)}: ${String(e.message || e).slice(0, 120)}`);
         }
@@ -220,7 +354,7 @@ function makePayslipImporter(deps) {
     }
   }
 
-  return { importPdf, importFromGmail };
+  return { importPdf, importPolicy, importOther, routeAttachment, importFromGmail };
 }
 
 // POST /api/employee-documents/import-gmail { year } — מתחיל ריצה ברקע (אחת למשק)
@@ -242,6 +376,9 @@ function registerPayslipImportRoutes(app, deps) {
     total: s.total, scanned: s.scanned, pages: s.pages, created: s.created, replaced: s.replaced,
     duplicates: s.duplicates, kept_signed: s.kept_signed, other_year: s.other_year,
     employees: s.employees.size, months: [...s.months].sort(), unmatched: s.unmatched.slice(0, 200),
+    files: s.files, policies_created: s.policies_created, policies_dup: s.policies_dup,
+    documents_created: s.documents_created, documents_dup: s.documents_dup, skipped_generic: s.skipped_generic,
+    unmatched_files: s.unmatched_files.slice(0, 100),
     errors: s.errors.slice(0, 20), error: s.error || null,
   });
 
@@ -266,6 +403,7 @@ function registerPayslipImportRoutes(app, deps) {
       status: 'running', year, started_at: new Date().toISOString(), urlBase: `${req.headers['x-forwarded-proto'] || 'http'}://${host}`,
       total: 0, scanned: 0, pages: 0, created: 0, replaced: 0, duplicates: 0, kept_signed: 0, other_year: 0,
       employees: new Set(), months: new Set(), unmatched: [], errors: [],
+      files: 0, policies_created: 0, policies_dup: 0, documents_created: 0, documents_dup: 0, skipped_generic: 0, unmatched_files: [],
     };
     jobs.set(ctx.farmId, state);
     importer.importFromGmail(ctx.farmId, conn, state)
@@ -281,4 +419,4 @@ function registerPayslipImportRoutes(app, deps) {
   });
 }
 
-module.exports = { registerPayslipImportRoutes, makePayslipImporter, decodeShifted, readPdfPages, pageAmounts, pagePeriod, subjectPeriod, subjectEmployer, matchEmployee, isPayslipPage };
+module.exports = { readPdfPagesSafe, parsePolicy, isPolicySchedule, registerPayslipImportRoutes, makePayslipImporter, decodeShifted, readPdfPages, pageAmounts, pagePeriod, subjectPeriod, subjectEmployer, matchEmployee, isPayslipPage };
