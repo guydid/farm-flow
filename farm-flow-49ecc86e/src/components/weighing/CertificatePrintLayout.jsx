@@ -98,6 +98,7 @@ export default function CertificatePrintLayout({ certificate, items, companySett
             {cu.address && <tr><th>כתובת</th><td>{cu.address}</td></tr>}
             {cu.phone && <tr><th>טלפון</th><td>{cu.phone}</td></tr>}
             {cu.contact_person && <tr><th>איש קשר</th><td>{cu.contact_person}</td></tr>}
+            {kind === 'entry' && cert.supplier_reference && <tr><th>אסמכתא (ת.מ)</th><td>{cert.supplier_reference}</td></tr>}
           </tbody></table>
         </div>
         <div className="ff-box">

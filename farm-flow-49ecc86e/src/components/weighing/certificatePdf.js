@@ -195,6 +195,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
     cu.address ? ['כתובת', cu.address] : null,
     cu.phone ? ['טלפון', cu.phone] : null,
     cu.contact_person ? ['איש קשר', cu.contact_person] : null,
+    isEntry && cert.supplier_reference ? ['אסמכתא (ת.מ)', String(cert.supplier_reference)] : null,
   ].filter(Boolean);
   const transLines = [
     ['נהג', cert.driver_name || 'לא צוין'],

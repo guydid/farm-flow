@@ -45,7 +45,7 @@ const ENTITIES = {
   customer_product_pricing:'מחירון לקוח-מוצר',
   weighing_certificates:   'תעודות שקילה / משלוח',
   weighing_items:          'שורות בתעודות שקילה (certificate_id)',
-  entry_certificates:      'תעודות כניסה — תוצרת חקלאית שהתקבלה מספק ונשקלה (supplier_id, supplier_name, date, time, reference_number, status draft/completed, total_weight, total_packages, total_amount)',
+  entry_certificates:      'תעודות כניסה — תוצרת חקלאית שהתקבלה מספק ונשקלה (supplier_id, supplier_name, supplier_reference = מספר ת.מ של הספק, date, time, reference_number, status draft/completed, total_weight, total_packages, total_amount)',
   entry_items:             'שורות בתעודות כניסה (certificate_id): product_name, quality, packaging_type, package_count, gross_weight, tare_weight, net_weight, price_per_unit, pricing_method, item_total',
   suppliers:               'ספקים',
   invoices:                'חשבוניות ספקים',

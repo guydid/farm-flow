@@ -561,7 +561,8 @@ export default function WeighingCertificates({ mode = 'sale' }) {
     const filtered = activeCerts.filter(cert => {
       if (!cert) return false;
       const statusMatch = filters.status === "all" || cert.status === filters.status;
-      const customerMatch = !filters.customer || (cert.customer_name && cert.customer_name.toLowerCase().includes(filters.customer.toLowerCase()));
+      const customerMatch = !filters.customer || (cert.customer_name && cert.customer_name.toLowerCase().includes(filters.customer.toLowerCase()))
+        || (isPurchase && String(cert.supplier_reference || '').toLowerCase().includes(filters.customer.toLowerCase()));
       const dateFromMatch = !filters.date_from || (cert.date && cert.date >= filters.date_from);
       const dateToMatch = !filters.date_to || (cert.date && cert.date <= filters.date_to);
       
@@ -1141,6 +1142,7 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                               <span>{translateStatus(cert.status)}</span>
                               <span className="text-gray-300">·</span>
                               <span className="font-mono">#{(isPurchase && cert.reference_number) || cert.id?.slice(-5)}</span>
+                              {isPurchase && cert.supplier_reference && <><span className="text-gray-300">·</span><span>ת.מ {cert.supplier_reference}</span></>}
                             </div>
                           </div>
                           <div className="text-left shrink-0">
@@ -1265,6 +1267,7 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                             <TableCell>
                               <div>
                                 <div className="font-medium">{cert.customer_name || 'ללא שם'}</div>
+                                {isPurchase && cert.supplier_reference && <div className="text-xs text-gray-500">אסמכתא ספק (ת.מ): {cert.supplier_reference}</div>}
                                 <div className="sm:hidden text-xs text-muted-foreground mt-1">
                                   {cert.total_weight?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || 0} ק"ג
                                   {cert.delivery_note_issued && (
@@ -1446,6 +1449,13 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                       </p>
                     )}
                   </div>
+                  {isPurchase && (
+                    <div>
+                      <Label htmlFor="wc-supref">אסמכתא ספק (מס' ת.מ) — אם יש</Label>
+                      <Input id="wc-supref" className="mt-1" dir="ltr" value={formData.supplier_reference || ""}
+                        onChange={e => setFormData(prev => ({ ...prev, supplier_reference: e.target.value }))} placeholder="מס' תעודת המשלוח של הספק" />
+                    </div>
+                  )}
 
                   <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
                     💡 פרטים נוספים (תאריך, רכב, נהג) ניתן להוסיף מאוחר יותר בעמוד התעודה
@@ -1488,7 +1498,17 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                         onCreated={addCustomerToList}
                         required
                       />
+                      {isPurchase && !(customers || []).length && (
+                        <p className="text-xs mt-1.5 text-amber-700">אין עדיין ספקים שמסומנים כחקלאים. <Link to={createPageUrl("Suppliers")} className="underline">לסימון בעמוד ספקים</Link> · או הוסף חקלאי חדש עם ＋</p>
+                      )}
                   </div>
+                  {isPurchase && (
+                    <div>
+                      <Label htmlFor="wc-supref-d">אסמכתא ספק (מס' ת.מ) — אם יש</Label>
+                      <Input id="wc-supref-d" className="mt-1" dir="ltr" value={formData.supplier_reference || ""}
+                        onChange={e => setFormData(prev => ({ ...prev, supplier_reference: e.target.value }))} placeholder="מס' תעודת המשלוח של הספק" />
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                       <div>

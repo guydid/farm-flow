@@ -274,7 +274,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
           vehicle_number: safeCertData.vehicle_number || "",
           driver_name: safeCertData.driver_name || "",
           notes: safeCertData.notes || "",
-          ...(isPurchase ? { status: safeCertData.status || "draft" } : {})
+          ...(isPurchase ? { status: safeCertData.status || "draft", supplier_reference: safeCertData.supplier_reference || "" } : {})
         });
       }
     } catch (error) {
@@ -674,6 +674,12 @@ export default function WeighingDetail({ mode = 'sale' }) {
       </div>
       {isPurchase && (
         <div>
+          <Label htmlFor="wd-supref">אסמכתא ספק (מס' ת.מ):</Label>
+          <Input id="wd-supref" dir="ltr" placeholder="אם יש תעודת משלוח מהספק" value={safeObject(certificateFormData).supplier_reference || ""} onChange={handleFieldChange('supplier_reference')} />
+        </div>
+      )}
+      {isPurchase && (
+        <div>
           <Label>סטטוס:</Label>
           <Select value={safeObject(certificateFormData).status || "draft"} onValueChange={(value) => handleSelectChange('status', value)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -716,6 +722,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
                       {safeObject(certificateFormData).time ? ` · ${safeObject(certificateFormData).time}` : ''}
                       {safeCertificate.id ? ` · #${String(safeCertificate.id).slice(-5)}` : ''}
                       {safeObject(certificateFormData).vehicle_number ? ` · ${safeObject(certificateFormData).vehicle_number}` : ''}
+                      {isPurchase && safeObject(certificateFormData).supplier_reference ? ` · ת.מ ${safeObject(certificateFormData).supplier_reference}` : ''}
                     </div>
                     {safeObject(certificateFormData).notes && !detailsOpen && (
                       <p className="text-xs text-amber-800 mt-1 line-clamp-2">הערה: {safeObject(certificateFormData).notes}</p>
