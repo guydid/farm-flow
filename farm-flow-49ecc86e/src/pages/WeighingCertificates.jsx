@@ -194,7 +194,10 @@ export default function WeighingCertificates({ mode = 'sale' }) {
         ]);
         
         setCertificates(Array.isArray(certsResult) ? certsResult.map(fromStored) : []);
-        setCustomers(Array.isArray(custsResult) ? custsResult : []);
+        const parties = Array.isArray(custsResult) ? custsResult : [];
+        // ברכש: רק ספקים שמסומנים כחקלאים (אם עוד לא סומן אף אחד — כל הספקים)
+        const farmers = isPurchase ? parties.filter(s => s.is_farmer) : [];
+        setCustomers(farmers.length ? farmers : parties);
     } catch(e) {
         console.error("Failed to load weighing data:", e);
         setCertificates([]);
@@ -1428,6 +1431,7 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                       onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
                       placeholder={M.pickParty}
                       quickAdd={M.quickAdd}
+                      quickAddInitial={isPurchase ? { is_farmer: true } : undefined}
                       farmId={currentFarm?.id}
                       onCreated={addCustomerToList}
                       required
@@ -1470,6 +1474,7 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                         onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
                         placeholder={M.pickParty}
                         quickAdd={M.quickAdd}
+                      quickAddInitial={isPurchase ? { is_farmer: true } : undefined}
                         farmId={currentFarm?.id}
                         onCreated={addCustomerToList}
                         required

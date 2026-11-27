@@ -246,7 +246,10 @@ export default function WeighingDetail({ mode = 'sale' }) {
       setCertificate(certificateData ? safeObject(fromStored(certificateData)) : null);
       setWeigingItems(safeArray(itemsData));
       setProducts(safeArray(productsData));
-      setCustomers(safeArray(customersData));
+      // ברכש: רק חקלאים (אם סומנו), ותמיד גם הספק שכבר בתעודה
+      const partyList = safeArray(customersData);
+      const farmerList = isPurchase ? partyList.filter(s => s.is_farmer || s.id === certificateData?.supplier_id) : [];
+      setCustomers(isPurchase && partyList.some(s => s.is_farmer) ? farmerList : partyList);
       setCustomerPricings(safeArray(pricingsData));
       
       const compSettings = safeObject(safeArray(settingsData)[0] || null);

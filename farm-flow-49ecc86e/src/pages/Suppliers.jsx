@@ -19,7 +19,7 @@ export default function Suppliers() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '' });
+  const [form, setForm] = useState({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '', is_farmer: false });
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
@@ -48,20 +48,22 @@ export default function Suppliers() {
 
   useEffect(() => { load(); }, [load]);
 
+  const [kind, setKind] = useState('all'); // all | farmers
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    if (!s) return suppliers;
-    return suppliers.filter(x =>
+    const base = kind === 'farmers' ? suppliers.filter(x => x.is_farmer) : suppliers;
+    if (!s) return base;
+    return base.filter(x =>
       String(x.name || '').toLowerCase().includes(s) ||
       String(x.vat_id || '').includes(s) ||
       String(x.phone || '').includes(s) ||
       (Array.isArray(x.email_addresses) && x.email_addresses.some(e => String(e).toLowerCase().includes(s)))
     );
-  }, [suppliers, search]);
+  }, [suppliers, search, kind]);
 
   const openNew = () => {
     setEditing(null);
-    setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '' });
+    setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '', is_farmer: false });
   };
 
   const openEdit = (s) => {
@@ -73,6 +75,7 @@ export default function Suppliers() {
       email: (s.email_addresses || []).join(', '),
       address: s.address || '',
       notes: s.notes || '',
+      is_farmer: !!s.is_farmer,
     });
   };
 
@@ -90,11 +93,13 @@ export default function Suppliers() {
         address: form.address.trim() || null,
         email_addresses: form.email.split(',').map(e => e.trim()).filter(Boolean),
         notes: form.notes.trim() || null,
+        // חקלאי — מגדל שממנו קולטים תוצרת; רק הם מוצעים בתעודות הכניסה ובדוחות שלהן
+        is_farmer: !!form.is_farmer,
       };
       if (editing) await Supplier.update(editing.id, data);
       else await Supplier.create(data);
       setEditing(null);
-      setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '' });
+      setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '', is_farmer: false });
       await load();
       toast({ title: editing ? 'הספק עודכן' : 'ספק חדש נוצר' });
     } catch (e) {
@@ -143,6 +148,12 @@ export default function Suppliers() {
                 className="pr-9"
               />
             </div>
+            <div className="flex gap-1.5 mt-2" role="group" aria-label="סינון לפי סוג ספק">
+              {[["all", "כל הספקים"], ["farmers", `חקלאים (${suppliers.filter(x => x.is_farmer).length})`]].map(([k, l]) => (
+                <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}
+                  className={`px-3 py-1 rounded-full text-sm border ${kind === k ? "bg-primary text-primary-foreground border-primary" : "bg-white border-gray-200 text-gray-700"}`}>{l}</button>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
@@ -158,7 +169,7 @@ export default function Suppliers() {
                 <CardContent className="p-4">
                   <div className="flex justify-between items-start gap-2 mb-2">
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-semibold text-gray-900 truncate">{s.name}</h3>
+                      <h3 className="font-semibold text-gray-900 truncate">{s.name}{s.is_farmer && <Badge className="mr-2 bg-green-50 text-green-700 border-green-200 align-middle">חקלאי</Badge>}</h3>
                       {s.vat_id && <p className="text-xs text-gray-500 mt-0.5">ח.פ. {s.vat_id}</p>}
                     </div>
                     {invoiceCounts[s.id] > 0 && (
@@ -192,7 +203,7 @@ export default function Suppliers() {
         )}
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) { setEditing(null); setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '' }); } }}>
+      <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) { setEditing(null); setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '', is_farmer: false }); } }}>
         <DialogContent dir="rtl" className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editing ? 'עריכת ספק' : 'ספק חדש'}</DialogTitle>
@@ -224,9 +235,16 @@ export default function Suppliers() {
               <Label>הערות</Label>
               <Textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
             </div>
+            <label className="flex items-start gap-2 rounded-lg border p-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 w-4 h-4 accent-green-600" checked={!!form.is_farmer} onChange={e => setForm({ ...form, is_farmer: e.target.checked })} />
+              <span>
+                <span className="font-medium">חקלאי (מגדל תוצרת)</span>
+                <span className="block text-xs text-gray-500">רק ספקים שמסומנים כחקלאים מוצעים בתעודות הכניסה ובדוחות שלהן.</span>
+              </span>
+            </label>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setEditing(null); setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '' }); }}>ביטול</Button>
+            <Button variant="outline" onClick={() => { setEditing(null); setForm({ name: '', vat_id: '', phone: '', email: '', address: '', notes: '', is_farmer: false }); }}>ביטול</Button>
             <Button onClick={save} disabled={saving}>
               {saving && <Loader2 className="w-4 h-4 animate-spin ml-1" />}
               שמור
