@@ -15,7 +15,7 @@ import OrderDetail from "../components/procurement/OrderDetail";
 import DeliveryNoteForm from "../components/procurement/DeliveryNoteForm";
 import DeliveryNoteDetail from "../components/procurement/DeliveryNoteDetail";
 import DiscrepanciesPanel from "../components/procurement/DiscrepanciesPanel";
-import EntryCertificatesPanel from "../components/procurement/EntryCertificatesPanel";
+import { createPageUrl } from "@/utils";
 import { apiFetch, DIRECTIONS, ORDER_STATUS, DN_STATUS, SOURCES, money, fmtDate, daysUntil, fileHref } from "../components/procurement/procurementUtils";
 
 const TABS = [
@@ -99,7 +99,6 @@ export default function Procurement() {
   const [statusFilter, setStatusFilter] = useState("open");
   const [partyFilter, setPartyFilter] = useState("all");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [entrySignal, setEntrySignal] = useState(0); // פתיחת "תעודת כניסה חדשה" מכפתור הכותרת
   // dialogs
   const [orderForm, setOrderForm] = useState({ open: false, order: null });
   const [noteForm, setNoteForm] = useState({ open: false, note: null, order: null });
@@ -146,7 +145,9 @@ export default function Procurement() {
     if (params.get("create") === "note") setNoteForm({ open: true, note: null, order: null });
   }, [farmId]);
 
-  const changeTab = (k) => { setTab(k); const p = new URLSearchParams(location.search); p.set("tab", k); p.delete("create"); navigate({ search: `?${p}` }, { replace: true }); };
+  // תעודות כניסה — עמוד משלהן בפורמט רשימת תעודות השקילה
+  useEffect(() => { if (tab === "entries") navigate(createPageUrl("EntryCertificates"), { replace: true }); }, [tab, navigate]);
+  const changeTab = (k) => { if (k === "entries") { navigate(createPageUrl("EntryCertificates")); return; } setTab(k); const p = new URLSearchParams(location.search); p.set("tab", k); p.delete("create"); navigate({ search: `?${p}` }, { replace: true }); };
   const changeDirection = (k) => { setDirection(k); setPartyFilter("all"); const p = new URLSearchParams(location.search); p.set("direction", k); navigate({ search: `?${p}` }, { replace: true }); };
 
   const partyOptions = direction === "purchase" ? ref.suppliers : ref.customers;
@@ -196,14 +197,12 @@ export default function Procurement() {
     { label: "באיחור", value: summary.open_orders.overdue, warn: summary.open_orders.overdue > 0 },
     { label: "פערים", value: summary.discrepancies.total, warn: summary.discrepancies.total > 0, onClick: () => changeTab("discrepancies") },
   ] : [];
-  const subtitle = tab === "invoices" ? "חשבוניות הספקים, סריקה וסנכרון מהמייל" : tab === "entries" ? "תוצרת חקלאית שהתקבלה מספקים ונשקלה בכניסה" : DIR_TABS.find((d) => d.key === direction)?.hint;
+  const subtitle = tab === "invoices" ? "חשבוניות הספקים, סריקה וסנכרון מהמייל" : DIR_TABS.find((d) => d.key === direction)?.hint;
 
   return (
     <div className="p-3 sm:p-6 space-y-4" dir="rtl">
       <PageHeader icon={ShoppingCart} title="רכש" subtitle={subtitle} compact className="mb-0"
-        actions={canWrite && tab === "entries" ? (
-          <Button onClick={() => setEntrySignal((n) => n + 1)}><Plus className="w-4 h-4 ml-1" aria-hidden="true" /> תעודת כניסה חדשה</Button>
-        ) : canWrite && tab !== "invoices" && <>
+        actions={canWrite && tab !== "invoices" && <>
           <Button variant="outline" onClick={newNote}><Camera className="w-4 h-4 ml-1" aria-hidden="true" /> <span className="hidden sm:inline">קלוט </span>תעודת משלוח</Button>
           <Button onClick={newOrder}><Plus className="w-4 h-4 ml-1" aria-hidden="true" /> הזמנה חדשה</Button>
         </>}>
@@ -212,8 +211,6 @@ export default function Procurement() {
 
       {tab === "invoices" ? (
         <div role="tabpanel" id="panel-invoices" aria-labelledby="tab-invoices"><Invoices embedded /></div>
-      ) : tab === "entries" ? (
-        <div role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><EntryCertificatesPanel farmId={farmId} canWrite={canWrite} createSignal={entrySignal} /></div>
       ) : (
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="space-y-4">
           {/* רכש / מכירה + סינון — שורה אחת במסך רחב, רשת בנייד */}

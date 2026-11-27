@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Sprout, Map, MoreHorizontal, Plus, Users2,
   SlidersHorizontal, Layers, Truck, Settings, X, ChevronRight,
   Scissors, ClipboardList, Leaf, Activity, Scale, FileText, Building2, Camera, Clock, HardHat,
-  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug, KeyRound, ShoppingCart
+  ArrowRight, Share2, Printer, Pencil, CheckSquare, Archive, PieChart, TrendingUp, Droplets, Bug, KeyRound, ShoppingCart, PackageOpen
 } from "lucide-react";
 
 // ─── Navigation items ───────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ const moreNav = [
   { name: "שקילה",            icon: Scale,             path: "WeighingCertificates" },
   { name: "רכבים",            icon: Truck,             path: "Vehicles" },
   { name: "רכש",              icon: ShoppingCart,      path: "Procurement" },
+  { name: "תעודות כניסה",     icon: PackageOpen,       path: "EntryCertificates" },
   { name: "חשבוניות",         icon: FileText,          path: "Invoices" },
   { name: "ספקים",             icon: Building2,         path: "Suppliers" },
   { name: "שכירויות",          icon: KeyRound,          path: "Leases" },
@@ -66,7 +67,8 @@ export default function BottomNav({ onQuickAction }) {
     window.dispatchEvent(new CustomEvent("weighing-detail-action", { detail: action }));
 
   // גם ברשימת התעודות הראשית הבר מוחלף בפעולות רלוונטיות (אירוע "weighing-list-action")
-  const onWeighingList = location.pathname.startsWith(createPageUrl("WeighingCertificates"));
+  const onEntryList = location.pathname.startsWith(createPageUrl("EntryCertificates"));
+  const onWeighingList = location.pathname.startsWith(createPageUrl("WeighingCertificates")) || onEntryList;
   const fireWeighingListAction = (action) =>
     window.dispatchEvent(new CustomEvent("weighing-list-action", { detail: action }));
 
@@ -148,9 +150,9 @@ export default function BottomNav({ onQuickAction }) {
     return (
       <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
-          <button onClick={() => navigate(createPageUrl("Dashboard"))} className={actionBtnCls}>
+          <button onClick={() => navigate(createPageUrl(onEntryList ? "Procurement" : "Dashboard"))} className={actionBtnCls}>
             <ArrowRight className="w-5 h-5" />
-            <span className="text-[10px] font-medium leading-none">ראשי</span>
+            <span className="text-[10px] font-medium leading-none">{onEntryList ? "רכש" : "ראשי"}</span>
           </button>
           <button onClick={() => fireWeighingListAction("select")} className={actionBtnCls}>
             <CheckSquare className="w-5 h-5" />
@@ -181,7 +183,7 @@ export default function BottomNav({ onQuickAction }) {
     return (
       <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
-          <button onClick={() => navigate(onEntryDetail ? `${createPageUrl("Procurement")}?tab=entries` : createPageUrl("WeighingCertificates"))} className={actionBtn}>
+          <button onClick={() => navigate(createPageUrl(onEntryDetail ? "EntryCertificates" : "WeighingCertificates"))} className={actionBtn}>
             <ArrowRight className="w-5 h-5" />
             <span className="text-[10px] font-medium leading-none">תעודות</span>
           </button>

@@ -10,6 +10,7 @@ const SeedingDetail = lazy(() => import('./pages/SeedingDetail'));
 const WeighingCertificates = lazy(() => import('./pages/WeighingCertificates'));
 const WeighingDetail = lazy(() => import('./pages/WeighingDetail'));
 const EntryCertificateDetail = lazy(() => import('./pages/EntryCertificateDetail'));
+const EntryCertificates = lazy(() => import('./pages/EntryCertificates'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Sheets = lazy(() => import('./pages/Sheets'));
 const Employees = lazy(() => import('./pages/Employees'));
@@ -41,6 +42,7 @@ export const PAGES = {
     "WeighingCertificates": WeighingCertificates,
     "WeighingDetail": WeighingDetail,
     "EntryCertificateDetail": EntryCertificateDetail,
+    "EntryCertificates": EntryCertificates,
     "Settings": Settings,
     "Sheets": Sheets,
     "Employees": Employees,

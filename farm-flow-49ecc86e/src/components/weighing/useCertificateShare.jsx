@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { format } from 'date-fns';
-import { WeighingItem, CompanySettings, Customer } from '@/entities/all';
+import { WeighingItem, EntryItem, CompanySettings, Customer, Supplier } from '@/entities/all';
 import { buildCertificatePdf } from './certificatePdf';
 
 // שיתוף תעודות שקילה כ-PDF וקטורי (טקסט אמיתי, גופן Heebo מוטמע — לא צילום מסך).
@@ -12,7 +12,9 @@ export default function useCertificateShare(toast) {
   const [isSharing, setIsSharing] = useState(false);
 
   const buildPdfFile = useCallback(async (certificate, preloaded = {}) => {
-    const items = preloaded.items ?? await WeighingItem.filter({ certificate_id: certificate.id }).catch(() => []);
+    // תעודת כניסה (_doc_kind=entry): השורות ב-entry_items והצד השני ספק
+    const isEntry = certificate._doc_kind === 'entry';
+    const items = preloaded.items ?? await (isEntry ? EntryItem : WeighingItem).filter({ certificate_id: certificate.id }).catch(() => []);
     if (!Array.isArray(items) || items.length === 0) return null;
 
     let companySettings = preloaded.companySettings;
@@ -21,8 +23,9 @@ export default function useCertificateShare(toast) {
       companySettings = (Array.isArray(arr) && arr[0]) || {};
     }
     let customer = preloaded.customer;
-    if (!customer && certificate.customer_id) {
-      customer = await Customer.get(certificate.customer_id).catch(() => null);
+    const partyId = isEntry ? (certificate.supplier_id || certificate.customer_id) : certificate.customer_id;
+    if (!customer && partyId) {
+      customer = await (isEntry ? Supplier : Customer).get(partyId).catch(() => null);
     }
     const { blob } = await buildCertificatePdf({ certificate, items, companySettings: companySettings || {}, customer: customer || {} });
 

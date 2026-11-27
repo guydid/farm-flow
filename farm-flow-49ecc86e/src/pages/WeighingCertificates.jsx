@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { WeighingCertificate, Customer, User, Farm, WeighingItem } from "@/entities/all";
+import { WeighingCertificate, Customer, User, Farm, WeighingItem, EntryCertificate, EntryItem, Supplier } from "@/entities/all";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,7 +35,29 @@ import { printA4, elementToA4Pdf, escapeHtml } from "@/components/print/a4";
 
 
 import { DateInput } from "@/components/ui/date-input";
-export default function WeighingCertificates() {
+// mode="purchase" — רשימת תעודות כניסה (קליטת תוצרת מחקלאי/ספק) באותו פורמט: entry_certificates /
+// entry_items, ספק במקום לקוח (בתוך המסך בשדות customer_*, מתורגם בטעינה וביצירה), בלי תעודות משלוח.
+const LIST_MODES = {
+  sale: {
+    cert: WeighingCertificate, item: WeighingItem, detail: 'WeighingDetail', title: 'תעודות שקילה', one: 'תעודת שקילה',
+    party: 'לקוח', parties: 'לקוחות', pickParty: 'בחר לקוח...', searchParty: 'חיפוש לקוח...', mustParty: 'יש לבחור לקוח.',
+    partyName: 'שם הלקוח', quickAdd: 'customer', summary: 'סיכום מכירות', report: 'דוח לקוח', reportLong: 'דוח תעודות פתוחות ללקוח',
+    reportTitle: 'דוח תעודות ללקוח', noParties: 'אין לקוחות מוגדרים', notesHint: 'מופיע בתעודה המודפסת ובהערות המסמך ב-Maven.',
+  },
+  purchase: {
+    cert: EntryCertificate, item: EntryItem, detail: 'EntryCertificateDetail', title: 'תעודות כניסה', one: 'תעודת כניסה',
+    party: 'ספק', parties: 'ספקים', pickParty: 'בחר ספק / חקלאי...', searchParty: 'חיפוש ספק...', mustParty: 'יש לבחור ספק.',
+    partyName: 'שם הספק / החקלאי', quickAdd: 'supplier', summary: 'סיכום קניות', report: 'דוח ספק', reportLong: 'דוח תעודות פתוחות לספק',
+    reportTitle: 'דוח תעודות לספק', noParties: 'אין ספקים מוגדרים', notesHint: 'מופיע בתעודה המודפסת.',
+  },
+};
+
+export default function WeighingCertificates({ mode = 'sale' }) {
+  const M = LIST_MODES[mode] || LIST_MODES.sale;
+  const isPurchase = mode === 'purchase';
+  const WeighingCertificate = M.cert;
+  const WeighingItem = M.item;
+  const fromStored = (c) => (isPurchase && c ? { ...c, customer_id: c.supplier_id || '', customer_name: c.supplier_name || '', _doc_kind: 'entry' } : c);
   const location = useLocation();
   const navigate = useNavigate();
   const [certificates, setCertificates] = useState([]);
@@ -166,10 +188,12 @@ export default function WeighingCertificates() {
 
         const [certsResult, custsResult] = await Promise.all([
             WeighingCertificate.filter(farmFilter, "-date").catch(() => []),
-            getListCached(`customers_${user.current_farm_id}`, () => Customer.filter(farmFilter, "name")).catch(() => [])
+            isPurchase
+              ? Supplier.filter(farmFilter, "name").catch(() => [])
+              : getListCached(`customers_${user.current_farm_id}`, () => Customer.filter(farmFilter, "name")).catch(() => [])
         ]);
         
-        setCertificates(Array.isArray(certsResult) ? certsResult : []);
+        setCertificates(Array.isArray(certsResult) ? certsResult.map(fromStored) : []);
         setCustomers(Array.isArray(custsResult) ? custsResult : []);
     } catch(e) {
         console.error("Failed to load weighing data:", e);
@@ -212,7 +236,7 @@ export default function WeighingCertificates() {
     const customersCount = new Set(selected.map(c => c.customer_id || c.customer_name)).size;
 
     // רוחבי עמודות במ"מ (סה"כ 186)
-    const cols = [['אסמכתא', 18], ['תאריך', 22], ['לקוח', 40, 'r'], ['מס\' רכב', 24], ['נטו ק"ג', 24], ['אריזות', 18], ['סה"כ', 24], ['סטטוס', 16]];
+    const cols = [['אסמכתא', 18], ['תאריך', 22], [M.party, 40, 'r'], ['מס\' רכב', 24], ['נטו ק"ג', 24], ['אריזות', 18], ['סה"כ', 24], ['סטטוס', 16]];
     const rows = selected.map(cert => `
       <tr>
         <td>${escapeHtml(cert.reference_number || String(cert.id).slice(-5))}</td>
@@ -233,7 +257,7 @@ export default function WeighingCertificates() {
             <div class="ff-sub">הופק: ${format(new Date(), 'dd/MM/yyyy HH:mm')}</div>
           </div>
           <div class="ff-title"><div class="ff-title-text">
-            <h2>סיכום תעודות שקילה</h2>
+            <h2>סיכום ${M.title}</h2>
             ${range ? `<div class="ff-sub">${escapeHtml(range)}</div>` : ''}
           </div></div>
         </header>
@@ -249,7 +273,7 @@ export default function WeighingCertificates() {
           <tbody>
             ${rows}
             <tr class="ff-total">
-              <td class="r" colspan="4">סה"כ ${selected.length} תעודות · ${customersCount} לקוחות</td>
+              <td class="r" colspan="4">סה"כ ${selected.length} תעודות · ${customersCount} ${M.parties}</td>
               <td>${n(totalWeight)}</td>
               <td>${totalPackages.toLocaleString('he-IL')}</td>
               <td>${m(totalAmount)}</td>
@@ -257,10 +281,10 @@ export default function WeighingCertificates() {
             </tr>
           </tbody>
         </table>
-        <footer class="ff-foot"><span>סיכום תעודות שקילה</span><span>הופק באמצעות FarmFlow</span></footer>
+        <footer class="ff-foot"><span>סיכום ${M.title}</span><span>הופק באמצעות FarmFlow</span></footer>
       </div>`;
 
-    printA4({ title: `סיכום תעודות שקילה${range ? ` ${range}` : ''}`, bodyHtml: html }).catch((error) => {
+    printA4({ title: `סיכום ${M.title}${range ? ` ${range}` : ''}`, bodyHtml: html }).catch((error) => {
       console.error("Error in bulk print:", error);
       toast({ title: "שגיאה בהדפסה", description: "אירעה שגיאה במהלך הכנת הדוח להדפסה. נסה שוב מאוחר יותר.", variant: "destructive" });
     });
@@ -270,7 +294,7 @@ export default function WeighingCertificates() {
     e.preventDefault();
     
     if (!formData.customer_id) {
-        toast({ title: "שגיאה", description: "יש לבחור לקוח.", variant: "destructive" });
+        toast({ title: "שגיאה", description: M.mustParty, variant: "destructive" });
         return;
     }
     if (!currentFarm) {
@@ -281,7 +305,20 @@ export default function WeighingCertificates() {
     const selectedCustomer = (customers || []).find(c => c.id === formData.customer_id);
 
     try {
-        const newCertificate = await WeighingCertificate.create({
+        const { customer_id: partyId, customer_name: _cn, ...restForm } = formData;
+        const newCertificate = await WeighingCertificate.create(isPurchase ? {
+            ...restForm,
+            farm_id: currentFarm.id,
+            supplier_id: partyId,
+            supplier_name: selectedCustomer?.name || '',
+            // מספור רץ לתעודות הכניסה של המשק
+            reference_number: String((certificates || []).reduce((m, c) => Math.max(m, parseInt(c.reference_number, 10) || 0), 0) + 1).padStart(4, '0'),
+            barcode: `ENTRY-${Date.now()}`,
+            status: "draft",
+            total_weight: 0,
+            total_packages: 0,
+            total_amount: 0,
+        } : {
             ...formData,
             farm_id: currentFarm.id,
             customer_name: selectedCustomer?.name || '', // Ensure customer_name is set
@@ -299,7 +336,7 @@ export default function WeighingCertificates() {
         setIsDialogOpen(false);
         resetForm();
 
-        window.location.href = createPageUrl(`WeighingDetail?id=${newCertificate.id}`);
+        window.location.href = createPageUrl(`${M.detail}?id=${newCertificate.id}`);
     } catch(error) {
         console.error("Failed to save certificate:", error);
         toast({ title: "שגיאה", description: "שמירת התעודה נכשלה", variant: "destructive" });
@@ -331,7 +368,7 @@ export default function WeighingCertificates() {
   };
 
   const handleEdit = (certificate) => {
-    window.location.href = createPageUrl(`WeighingDetail?id=${certificate.id}`);
+    window.location.href = createPageUrl(`${M.detail}?id=${certificate.id}`);
   };
 
   const handleDuplicate = (certificate) => {
@@ -391,7 +428,7 @@ export default function WeighingCertificates() {
         c && c.customer_id === customerId && statusOk(c.status)
       );
       if (openCerts.length === 0) {
-        toast({ title: "אין תעודות", description: `אין ${reportStatusText(statuses).noun} ללקוח ${customer.name}` });
+        toast({ title: "אין תעודות", description: `אין ${reportStatusText(statuses).noun} ל${M.party} ${customer.name}` });
         return;
       }
       const allItems = await WeighingItem.filter({ farm_id: currentFarm.id });
@@ -594,7 +631,7 @@ export default function WeighingCertificates() {
 
         } catch (error) {
             console.error("Error fetching sales summary:", error);
-            toast({ title: "שגיאה", description: "טעינת סיכום מכירות נכשלה", variant: "destructive" });
+            toast({ title: "שגיאה", description: `טעינת ${M.summary} נכשלה`, variant: "destructive" });
         } finally {
             setIsSummaryLoading(false);
         }
@@ -719,7 +756,7 @@ export default function WeighingCertificates() {
           <CardHeader className="pb-3 sm:pb-6 space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
               <CardTitle className="text-xl sm:text-2xl">
-                  {showArchived ? "ארכיון" : "תעודות שקילה"} ({totalCount})
+                  {showArchived ? "ארכיון" : M.title} ({totalCount})
                   {currentFarm && <span className="hidden sm:inline text-base font-normal text-gray-500 mr-2"> - {currentFarm.name}</span>}
                   {selectedCertificates.size > 0 && (
                     <span className="text-sm font-normal text-blue-600 mr-2">
@@ -766,11 +803,11 @@ export default function WeighingCertificates() {
                  )}
                  <Button variant="outline" onClick={() => { setReportOpen(true); setReportData(null); }}>
                     <FileText className="w-4 h-4 ml-2" />
-                    דוח לקוח
+                    {M.report}
                  </Button>
                  <Button variant="outline" onClick={() => setShowSalesSummary(prev => !prev)}>
                     <PieChart className="w-4 h-4 ml-2" />
-                    סיכום מכירות
+                    {M.summary}
                  </Button>
                  <Button variant="outline" onClick={() => setShowArchived(prev => !prev)}>
                     <Archive className="w-4 h-4 ml-2" />
@@ -790,7 +827,7 @@ export default function WeighingCertificates() {
                 onClick={() => { setReportOpen(true); setReportData(null); }}
               >
                 <FileText className="w-4 h-4 ml-2" />
-                דוח תעודות פתוחות ללקוח
+                {M.reportLong}
               </Button>
 
               {/* בנייד הפעולות עברו לבר התחתון; נשאר רק חיווי מצב בחירה */}
@@ -822,8 +859,8 @@ export default function WeighingCertificates() {
               {filtersOpen && (
                 <div className="mt-2 p-3 rounded-xl bg-white border border-gray-200 space-y-3">
                   <div>
-                    <Label className="text-sm">לקוח</Label>
-                    <Input value={filters.customer} onChange={e => setFilters({...filters, customer: e.target.value})} placeholder="חיפוש לקוח..." className="h-9 mt-1" />
+                    <Label className="text-sm">{M.party}</Label>
+                    <Input value={filters.customer} onChange={e => setFilters({...filters, customer: e.target.value})} placeholder={M.searchParty} className="h-9 mt-1" />
                   </div>
                   <div>
                     <Label className="text-sm">סטטוס</Label>
@@ -837,7 +874,7 @@ export default function WeighingCertificates() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
+                  {!isPurchase && <div>
                     <Label className="text-sm">תעודת משלוח</Label>
                     <Select value={filters.delivery_note} onValueChange={value => { setFilters({...filters, delivery_note: value}); setFiltersOpen(false); }}>
                       <SelectTrigger className="h-9 mt-1"><SelectValue /></SelectTrigger>
@@ -847,7 +884,7 @@ export default function WeighingCertificates() {
                         <SelectItem value="issued">הונפקה</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
+                  </div>}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label className="text-sm">מתאריך</Label>
@@ -868,11 +905,11 @@ export default function WeighingCertificates() {
             {/* Desktop filters - always visible */}
             <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 pt-4 border-t">
               <div>
-                <Label className="text-sm">לקוח</Label>
+                <Label className="text-sm">{M.party}</Label>
                 <Input
                   value={filters.customer}
                   onChange={e => setFilters({...filters, customer: e.target.value})}
-                  placeholder="חיפוש לקוח..."
+                  placeholder={M.searchParty}
                   className="h-9"
                 />
               </div>
@@ -888,7 +925,7 @@ export default function WeighingCertificates() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              {!isPurchase && <div>
                 <Label className="text-sm">תעודת משלוח</Label>
                 <Select value={filters.delivery_note} onValueChange={value => setFilters({...filters, delivery_note: value})}>
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
@@ -898,7 +935,7 @@ export default function WeighingCertificates() {
                     <SelectItem value="issued">הונפקה</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </div>}
               <div>
                 <Label className="text-sm">מתאריך</Label>
                 <DateInput
@@ -959,7 +996,7 @@ export default function WeighingCertificates() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">סה"כ לתשלום</CardTitle>
+                <CardTitle className="text-sm font-medium">{isPurchase ? "סה\"כ סכום קנייה" : "סה\"כ לתשלום"}</CardTitle>
                 <PieChart className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -970,7 +1007,7 @@ export default function WeighingCertificates() {
               </CardContent>
             </Card>
 
-            <Card>
+            {!isPurchase && <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-medium">ללא ת. משלוח</CardTitle>
                 <Truck className="h-4 w-4 text-muted-foreground" />
@@ -981,7 +1018,7 @@ export default function WeighingCertificates() {
                 </div>
                 <p className="text-xs text-muted-foreground">ממתינות</p>
               </CardContent>
-            </Card>
+            </Card>}
           </div>
         )}
 
@@ -991,7 +1028,7 @@ export default function WeighingCertificates() {
             <Card>
               <CardHeader>
                 <div className="flex justify-between items-center">
-                  <CardTitle className="text-lg">סיכום מכירות</CardTitle>
+                  <CardTitle className="text-lg">{M.summary}</CardTitle>
                   <Button variant="ghost" size="sm" onClick={() => setShowSalesSummary(false)}>
                     <X className="w-4 h-4" />
                   </Button>
@@ -1081,7 +1118,7 @@ export default function WeighingCertificates() {
                             if (selectMode) {
                               handleSelectCertificate(cert.id, !isSelected);
                             } else {
-                              window.location.href = createPageUrl(`WeighingDetail?id=${cert.id}`);
+                              window.location.href = createPageUrl(`${M.detail}?id=${cert.id}`);
                             }
                           }}
                           className={`flex items-center gap-3 px-4 py-3.5 cursor-pointer transition-colors active:bg-gray-100 ${isSelected ? 'bg-blue-50' : ''}`}
@@ -1100,7 +1137,7 @@ export default function WeighingCertificates() {
                               <span className={`w-2 h-2 rounded-full shrink-0 ${statusDot(cert.status)}`} />
                               <span>{translateStatus(cert.status)}</span>
                               <span className="text-gray-300">·</span>
-                              <span className="font-mono">#{cert.id?.slice(-5)}</span>
+                              <span className="font-mono">#{(isPurchase && cert.reference_number) || cert.id?.slice(-5)}</span>
                             </div>
                           </div>
                           <div className="text-left shrink-0">
@@ -1137,13 +1174,13 @@ export default function WeighingCertificates() {
                                   <DropdownMenuItem onClick={() => { setSelectMode(true); setSelectedCertificates(prev => new Set(prev).add(cert.id)); }}>
                                     <Check className="w-4 h-4 ml-2" />בחר
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleToggleDeliveryNote(cert.id, cert.delivery_note_issued)}>
+                                  {!isPurchase && <DropdownMenuItem onClick={() => handleToggleDeliveryNote(cert.id, cert.delivery_note_issued)}>
                                     {cert.delivery_note_issued ? (
                                       <><X className="w-4 h-4 ml-2" />בטל תעודת משלוח</>
                                     ) : (
                                       <><CheckCircle2 className="w-4 h-4 ml-2" />סמן כהונפקה</>
                                     )}
-                                  </DropdownMenuItem>
+                                  </DropdownMenuItem>}
                                   <DropdownMenuItem onClick={() => handleDuplicate(cert)}>
                                     <Copy className="w-4 h-4 ml-2" />
                                     שכפל
@@ -1200,7 +1237,7 @@ export default function WeighingCertificates() {
                             />
                           </TableHead>
                           <TableHead className="w-[100px] hidden sm:table-cell">מספר</TableHead>
-                          <TableHead>לקוח</TableHead>
+                          <TableHead>{M.party}</TableHead>
                           <TableHead className="text-center hidden sm:table-cell">משקל</TableHead>
                           <TableHead className="text-center hidden md:table-cell">אריזות</TableHead>
                           <TableHead className="text-center hidden lg:table-cell">סכום</TableHead>
@@ -1220,7 +1257,7 @@ export default function WeighingCertificates() {
                               />
                             </TableCell>
                             <TableCell className="font-medium hidden sm:table-cell">
-                              #{cert.id?.slice(-5)}
+                              #{(isPurchase && cert.reference_number) || cert.id?.slice(-5)}
                             </TableCell>
                             <TableCell>
                               <div>
@@ -1261,12 +1298,13 @@ export default function WeighingCertificates() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem asChild>
-                                    <Link to={createPageUrl("WeighingDetail") + `?id=${cert.id}`}>
+                                    <Link to={createPageUrl(M.detail) + `?id=${cert.id}`}>
                                       <Eye className="w-4 h-4 ml-2" />
                                       צפייה/עריכה
                                     </Link>
                                   </DropdownMenuItem>
                                   <DropdownMenuItem 
+                                    className={isPurchase ? "hidden" : undefined}
                                     onClick={() => handleToggleDeliveryNote(cert.id, cert.delivery_note_issued)}
                                   >
                                     {cert.delivery_note_issued ? (
@@ -1321,10 +1359,10 @@ export default function WeighingCertificates() {
               <p className="text-muted-foreground">לא נמצאו תעודות התואמות את הסינון</p>
               {!showArchived && (
                 <div className="text-center p-6">
-                    <p className="text-gray-500 mb-4">צור תעודת שקילה ראשונה כדי להתחיל</p>
+                    <p className="text-gray-500 mb-4">צור {M.one} ראשונה כדי להתחיל</p>
                     <Button onClick={handleCreateNewCertificate}>
                       <Plus className="w-4 h-4 ml-2" />
-                      צור תעודת שקילה חדשה
+                      צור {M.one} חדשה
                     </Button>
                   </div>
               )}
@@ -1375,21 +1413,21 @@ export default function WeighingCertificates() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className={isMobile ? "w-[95vw] max-w-[95vw]" : "sm:max-w-lg"} dir="rtl">
           <DialogHeader>
-            <DialogTitle>תעודת שקילה חדשה</DialogTitle>
+            <DialogTitle>{M.one} חדשה</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 pt-4">
               {isMobile ? (
                 // Mobile - simplified version with only essentials
                 <>
                   <div>
-                    <Label className="text-base font-semibold">לקוח *</Label>
+                    <Label className="text-base font-semibold">{M.party} *</Label>
                     <EntitySelect
                       className="mt-1"
                       options={customers}
                       value={formData.customer_id}
                       onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
-                      placeholder="בחר לקוח..."
-                      quickAdd="customer"
+                      placeholder={M.pickParty}
+                      quickAdd={M.quickAdd}
                       farmId={currentFarm?.id}
                       onCreated={addCustomerToList}
                       required
@@ -1423,15 +1461,15 @@ export default function WeighingCertificates() {
                   </div>
 
                   <div>
-                      <Label htmlFor="wc-customer">שם הלקוח</Label>
+                      <Label htmlFor="wc-customer">{M.partyName}</Label>
                       <EntitySelect
                         id="wc-customer"
                         className="mt-1"
                         options={customers}
                         value={formData.customer_id}
                         onValueChange={(value) => setFormData(prev => ({ ...prev, customer_id: value }))}
-                        placeholder="בחר לקוח..."
-                        quickAdd="customer"
+                        placeholder={M.pickParty}
+                        quickAdd={M.quickAdd}
                         farmId={currentFarm?.id}
                         onCreated={addCustomerToList}
                         required
@@ -1473,7 +1511,7 @@ export default function WeighingCertificates() {
                     <Textarea id="wc-notes" rows={2} maxLength={1000} value={formData.notes || ""}
                       onChange={e => setFormData({...formData, notes: e.target.value})}
                       placeholder="לדוגמה: סחורה לקירור מיידי, להשאיר משטחים ריקים (אופציונלי)" />
-                    <p className="text-xs text-muted-foreground mt-1">מופיע בתעודה המודפסת ובהערות המסמך ב-Maven.</p>
+                    <p className="text-xs text-muted-foreground mt-1">{M.notesHint}</p>
                   </div>
                 </>
               )}
@@ -1497,7 +1535,7 @@ export default function WeighingCertificates() {
       <Dialog open={reportOpen} onOpenChange={(open) => { if (!open) { setReportOpen(false); setReportData(null); } }}>
         <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
-            <DialogTitle>דוח תעודות ללקוח</DialogTitle>
+            <DialogTitle>{M.reportTitle}</DialogTitle>
           </DialogHeader>
 
           {/* בחירת סטטוס תעודות (אפשר כמה) */}
@@ -1524,7 +1562,7 @@ export default function WeighingCertificates() {
 
           {/* בחירת לקוח */}
           <div>
-            <Label className="text-sm font-semibold">בחר לקוח</Label>
+            <Label className="text-sm font-semibold">{isPurchase ? "בחר ספק" : "בחר לקוח"}</Label>
             <div className="flex flex-wrap gap-2 mt-2">
               {(customers || []).map(c => (
                 <button
@@ -1536,7 +1574,7 @@ export default function WeighingCertificates() {
                   {c.name}
                 </button>
               ))}
-              {(customers || []).length === 0 && <span className="text-sm text-gray-400">אין לקוחות מוגדרים</span>}
+              {(customers || []).length === 0 && <span className="text-sm text-gray-400">{M.noParties}</span>}
             </div>
           </div>
 
