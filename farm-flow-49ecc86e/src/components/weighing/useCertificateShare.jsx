@@ -27,7 +27,7 @@ export default function useCertificateShare(toast) {
     const { blob } = await buildCertificatePdf({ certificate, items, companySettings: companySettings || {}, customer: customer || {} });
 
     const certNum = certificate.reference_number || String(certificate.id).slice(-5);
-    const fileName = `תעודת_שקילה_${certNum}.pdf`;
+    const fileName = `${certificate._doc_kind === 'entry' ? 'תעודת_כניסה' : 'תעודת_שקילה'}_${certNum}.pdf`;
     const file = new File([blob], fileName, { type: 'application/pdf' });
     return { file, blob, fileName, certNum, certificate };
   }, []);
@@ -74,12 +74,12 @@ export default function useCertificateShare(toast) {
       }
       const c = result.certificate;
       const text = [
-        `תעודת שקילה מס' ${result.certNum}`,
-        c.customer_name ? `לקוח: ${c.customer_name}` : null,
+        `${c._doc_kind === 'entry' ? 'תעודת כניסה' : 'תעודת שקילה'} מס' ${result.certNum}`,
+        c.customer_name ? `${c._doc_kind === 'entry' ? 'ספק' : 'לקוח'}: ${c.customer_name}` : null,
         c.date ? `תאריך: ${format(new Date(c.date), 'dd/MM/yyyy')}` : null,
         `סה"כ משקל נטו: ${parseFloat(c.total_weight || 0).toLocaleString()} ק"ג`,
       ].filter(Boolean).join('\n');
-      await deliver([result], `תעודת שקילה ${result.certNum}`, text);
+      await deliver([result], `${c._doc_kind === 'entry' ? 'תעודת כניסה' : 'תעודת שקילה'} ${result.certNum}`, text);
     } catch (error) {
       console.error('Share failed:', error);
       toast({ title: 'שגיאה', description: 'שיתוף התעודה נכשל.', variant: 'destructive' });

@@ -30,7 +30,7 @@ export default function PalletSticker({ item, certificate, settings, printerConf
 
       <div className="grid grid-cols-5 gap-2 text-sm mb-2">
         <div className="col-span-3">
-          <p><span className="font-bold">לקוח:</span> {certificate.customer_name}</p>
+          <p><span className="font-bold">{certificate._doc_kind === 'entry' ? 'ספק:' : 'לקוח:'}</span> {certificate.customer_name}</p>
           <p className="text-xl font-bold my-1">{item.product_name}</p>
           <p><span className="font-bold">אריזה:</span> {item.packaging_type} ({item.package_count} יח')</p>
         </div>
@@ -108,7 +108,7 @@ export function generateZPL(item, certificate, settings, printerConfig) {
 ^FO30,30^A0N,30,30^FR^FD${settings?.company_name || 'שם חברה'}^FS
 ^FO30,70^A0N,25,25^FR^FD${formattedDate}^FS
 
-^FO30,120^A0N,20,20^FR^FDלקוח: ${certificate.customer_name}^FS
+^FO30,120^A0N,20,20^FR^FD${certificate._doc_kind === 'entry' ? 'ספק' : 'לקוח'}: ${certificate.customer_name}^FS
 ^FO30,150^A0N,40,40^FR^FD${item.product_name}^FS
 
 ^FO30,200^A0N,18,18^FR^FDאריזה: ${item.packaging_type} (${item.package_count} יח')^FS

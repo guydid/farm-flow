@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { WeighingCertificate, WeighingItem, Product, Customer, CustomerProductPricing, CompanySettings, User, Farm, PalletType, Packaging } from "@/entities/all";
+import { WeighingCertificate, WeighingItem, EntryCertificate, EntryItem, Supplier, Product, Customer, CustomerProductPricing, CompanySettings, User, Farm, PalletType, Packaging } from "@/entities/all";
 import { createPageUrl } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -42,7 +42,26 @@ const safeObject = (obj) => {
 };
 
 
-export default function WeighingDetail() {
+// mode="purchase" — תעודת כניסה: קליטת תוצרת מחקלאי/ספק באותו מסך (משטחים, אריזות, סוגי תוצרת).
+// נשמרת ב-entry_certificates / entry_items עם supplier_id/supplier_name; בתוך המסך הצד השני נשמר
+// בשדות customer_* (כמו במכירה) ומתורגם בטעינה ובשמירה.
+const MODES = {
+  sale: { cert: WeighingCertificate, item: WeighingItem, title: 'תעודת שקילה', party: 'לקוח', none: 'ללא לקוח', pick: 'בחר לקוח...', amount: 'לתשלום', amountTitle: 'סה"כ לתשלום', barcode: 'CERT', docKind: 'weighing' },
+  purchase: { cert: EntryCertificate, item: EntryItem, title: 'תעודת כניסה', party: 'ספק / חקלאי', none: 'ללא ספק', pick: 'בחר ספק...', amount: 'סכום קנייה', amountTitle: 'סה"כ סכום קנייה', barcode: 'ENTRY', docKind: 'entry' },
+};
+
+export default function WeighingDetail({ mode = 'sale' }) {
+  const M = MODES[mode] || MODES.sale;
+  const isPurchase = mode === 'purchase';
+  const WeighingCertificate = M.cert;
+  const WeighingItem = M.item;
+  // ספק ↔ customer_* בתוך המסך
+  const fromStored = useCallback((c) => (isPurchase && c ? { ...c, customer_id: c.supplier_id || '', customer_name: c.supplier_name || '', _doc_kind: 'entry' } : c), [isPurchase]);
+  const toStored = useCallback((d) => {
+    if (!isPurchase) return d;
+    const { customer_id, customer_name, _doc_kind, ...rest } = d || {};
+    return { ...rest, supplier_id: customer_id || null, supplier_name: customer_name || '' };
+  }, [isPurchase]);
   // All state hooks
   const [certificate, setCertificate] = useState(null);
   const [weighingItems, setWeigingItems] = useState([]);
@@ -217,14 +236,14 @@ export default function WeighingDetail() {
         WeighingCertificate.get(certificateId),
         WeighingItem.filter({ certificate_id: certificateId }),
         getListCached(`products_${fid}`, () => Product.filter(farmFilter)),
-        getListCached(`customers_${fid}`, () => Customer.filter(farmFilter)),
-        getListCached(`customer_pricing_${fid}`, () => CustomerProductPricing.filter(farmFilter)),
+        isPurchase ? Supplier.filter(farmFilter) : getListCached(`customers_${fid}`, () => Customer.filter(farmFilter)),
+        isPurchase ? Promise.resolve([]) : getListCached(`customer_pricing_${fid}`, () => CustomerProductPricing.filter(farmFilter)),
         getListCached(`company_settings_${fid}`, () => CompanySettings.filter(farmFilter)),
         getListCached(`packaging_${fid}`, () => Packaging.filter(farmFilter)),
         getListCached('pallet_types', () => PalletType.list())
       ]);
 
-      setCertificate(safeObject(certificateData || null));
+      setCertificate(certificateData ? safeObject(fromStored(certificateData)) : null);
       setWeigingItems(safeArray(itemsData));
       setProducts(safeArray(productsData));
       setCustomers(safeArray(customersData));
@@ -242,7 +261,7 @@ export default function WeighingDetail() {
       setPalletTypes(safeArray(palletTypesData));
 
       if (certificateData) {
-        const safeCertData = safeObject(certificateData);
+        const safeCertData = safeObject(fromStored(certificateData));
         setCertificateFormData({
           date: safeCertData.date || format(new Date(), "yyyy-MM-dd"),
           time: safeCertData.time || "",
@@ -251,7 +270,8 @@ export default function WeighingDetail() {
           vehicle_type: safeCertData.vehicle_type || "truck",
           vehicle_number: safeCertData.vehicle_number || "",
           driver_name: safeCertData.driver_name || "",
-          notes: safeCertData.notes || ""
+          notes: safeCertData.notes || "",
+          ...(isPurchase ? { status: safeCertData.status || "draft" } : {})
         });
       }
     } catch (error) {
@@ -260,7 +280,7 @@ export default function WeighingDetail() {
     } finally {
       setIsLoading(false);
     }
-  }, [certificateId, toast]);
+  }, [certificateId, toast, fromStored, isPurchase, WeighingCertificate, WeighingItem]);
 
   const handleCreateNewCertificate = useCallback(async () => {
     if (!currentFarm) {
@@ -269,7 +289,7 @@ export default function WeighingDetail() {
     }
     setIsLoading(true);
     try {
-      const barcode = `CERT-${Date.now()}`;
+      const barcode = `${M.barcode}-${Date.now()}`;
       const newCert = await WeighingCertificate.create({
         farm_id: safeObject(currentFarm).id,
         date: format(new Date(), "yyyy-MM-dd"),
@@ -443,9 +463,10 @@ export default function WeighingDetail() {
           items={safeArray(weighingItems)}
           companySettings={safeObject(companySettings)}
           customer={safeFind(customers, c => safeObject(c).id === safeObject(certificate).customer_id)}
+          kind={M.docKind}
         />
       );
-      await printA4({ title: `תעודת שקילה ${certificateNumber(certificate)}`, bodyHtml: html });
+      await printA4({ title: `${M.title} ${certificateNumber(certificate)}`, bodyHtml: html });
     })().catch((err) => {
       console.error('Certificate print failed:', err);
       toast({ title: "שגיאה", description: "הדפסת התעודה נכשלה", variant: "destructive" });
@@ -539,14 +560,14 @@ export default function WeighingDetail() {
     if (!certificate) return;
 
     try {
-      await WeighingCertificate.update(certificate.id, safeObject(certificateFormData));
+      await WeighingCertificate.update(certificate.id, toStored(safeObject(certificateFormData)));
       toast({ title: "הצלחה", description: "פרטי התעודה נשמרו בהצלחה." });
       loadData();
     } catch (error) {
       console.error("Failed to save certificate details:", error);
       toast({ title: "שגיאה", description: "שמירת פרטי התעודה נכשלה.", variant: "destructive" });
     }
-  }, [certificate, certificateFormData, toast, loadData]);
+  }, [certificate, certificateFormData, toast, loadData, toStored, WeighingCertificate]);
 
   useEffect(() => {
     if (certificateId) {
@@ -611,10 +632,10 @@ export default function WeighingDetail() {
         <Input type="time" value={safeObject(certificateFormData).time} onChange={handleFieldChange('time')} />
       </div>
       <div>
-        <Label>לקוח:</Label>
+        <Label>{M.party}:</Label>
         <Select value={safeObject(certificateFormData).customer_id || ""} onValueChange={handleCustomerChange}>
           <SelectTrigger>
-            <SelectValue placeholder="בחר לקוח..."/>
+            <SelectValue placeholder={M.pick}/>
           </SelectTrigger>
           <SelectContent>
             {safeArray(customers).map(customer => {
@@ -648,10 +669,22 @@ export default function WeighingDetail() {
         <Label>מספר רכב:</Label>
         <Input value={safeObject(certificateFormData).vehicle_number} onChange={handleFieldChange('vehicle_number')} />
       </div>
+      {isPurchase && (
+        <div>
+          <Label>סטטוס:</Label>
+          <Select value={safeObject(certificateFormData).status || "draft"} onValueChange={(value) => handleSelectChange('status', value)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">טיוטה</SelectItem>
+              <SelectItem value="completed">הושלמה</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="sm:col-span-2 md:col-span-3">
         <Label htmlFor="wd-notes">הערות:</Label>
         <Textarea id="wd-notes" rows={2} maxLength={1000} value={safeObject(certificateFormData).notes || ""} onChange={handleFieldChange('notes')}
-          placeholder="הערות לתעודה (מודפסות בתעודה ונשלחות כהערה למסמך ב-Maven)" />
+          placeholder={isPurchase ? "הערות לתעודה (מודפסות בתעודה)" : "הערות לתעודה (מודפסות בתעודה ונשלחות כהערה למסמך ב-Maven)"} />
       </div>
       <div className="sm:col-span-2 md:col-span-3">
         <Button size="sm" onClick={handleSaveCertificate}>
@@ -672,7 +705,8 @@ export default function WeighingDetail() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1" onClick={() => setDetailsOpen(o => !o)}>
                     <div className="font-bold text-gray-900 truncate">
-                      {safeObject(certificateFormData).customer_name || safeCertificate.customer_name || 'ללא לקוח'}
+                      {isPurchase && <span className="text-xs font-normal text-indigo-700 ml-1">תעודת כניסה {certificateNumber(safeCertificate)} ·</span>}
+                      {safeObject(certificateFormData).customer_name || safeCertificate.customer_name || M.none}
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       {safeObject(certificateFormData).date ? format(new Date(safeObject(certificateFormData).date), 'dd/MM/yyyy') : ''}
@@ -700,7 +734,7 @@ export default function WeighingDetail() {
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>פרטי תעודה</CardTitle>
+                <CardTitle>{isPurchase ? `תעודת כניסה ${certificateNumber(safeCertificate)} — קליטת תוצרת` : "פרטי תעודה"}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
@@ -729,7 +763,7 @@ export default function WeighingDetail() {
               </div>
               <div>
                 <div className="text-lg font-bold text-gray-900 tabular-nums">₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 })}</div>
-                <div className="text-[11px] text-gray-500">לתשלום</div>
+                <div className="text-[11px] text-gray-500">{M.amount}</div>
               </div>
             </div>
           ) : (
@@ -752,7 +786,7 @@ export default function WeighingDetail() {
               </Card>
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">סה"כ לתשלום</CardTitle>
+                  <CardTitle className="text-sm font-medium">{M.amountTitle}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">₪{parseFloat(safeCertificate.total_amount || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -770,7 +804,7 @@ export default function WeighingDetail() {
           )}
 
           {/* פרטי משטחים */}
-          <MavenDocumentsCard
+          {!isPurchase && <MavenDocumentsCard
             certificate={safeCertificate}
             farmId={currentFarm?.id}
             itemCount={safeItems.length}
@@ -778,7 +812,7 @@ export default function WeighingDetail() {
               setCertificate(c => ({ ...(c || {}), maven_documents: [...((c && c.maven_documents) || []), doc], ...(doc.doc_type === 200 && !doc.test ? { delivery_note_issued: true } : {}) }));
               toast({ title: doc.test ? "מסמך בדיקה הופק (לא נשמר ב-Maven)" : `${doc.doc_type_name} מס' ${doc.doc_no} הופק`, description: warnings.length ? warnings.join(" · ") : undefined });
             }}
-          />
+          />}
 
           <Card>
             <CardHeader>
@@ -1013,7 +1047,7 @@ export default function WeighingDetail() {
             customerPricings={customerPricings}
             packagings={packagings}
             palletTypes={palletTypes}
-            certificateCustomerId={safeCertificate.customer_id}
+            certificateCustomerId={isPurchase ? null : safeCertificate.customer_id}
             onSubmit={handleFormSuccess}
             onCancel={handleFormClose}
           />

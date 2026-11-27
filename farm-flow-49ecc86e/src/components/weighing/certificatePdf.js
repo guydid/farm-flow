@@ -148,6 +148,9 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
   const cert = certificate || {}, co = companySettings || {}, cu = customer || {};
   const qr = await fetchQrDataUrl(cert.barcode);
   const certNum = cert.reference_number || String(cert.id || '').slice(-5) || 'לא זמין';
+  // תעודת כניסה (קליטת תוצרת מספק) — אותו PDF עם כותרת/צד/חתימה של ספק
+  const isEntry = cert._doc_kind === 'entry';
+  const DOC_TITLE = isEntry ? 'תעודת כניסה' : 'תעודת שקילה';
 
   let y = MARGIN;
   const ensureSpace = (h) => {
@@ -179,7 +182,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
     [`${cert.date ? format(new Date(cert.date), 'dd/MM/yyyy') : 'לא צוין'}${cert.time ? ` · ${cert.time}` : ''}`, 8, false, 70],
     cert.status ? [`סטטוס: ${STATUSES[cert.status] || cert.status}`, 8, false, 70] : null,
   ].filter(Boolean);
-  text('תעודת שקילה', titleX, y + 6.5, { align: 'left', size: 16, bold: true });
+  text(DOC_TITLE, titleX, y + 6.5, { align: 'left', size: 16, bold: true });
   titleLines.forEach(([l, size, bold, color], i) => text(l, titleX, y + 12 + i * 4.3, { align: 'left', size, bold, color }));
   y = headerTop + 27;
   doc.setDrawColor(17); doc.setLineWidth(0.7); doc.line(LEFT, y, RIGHT, y);
@@ -208,7 +211,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
       text(fit(v, boxW - 26, 8.5), x1 + boxW - 23, ly, { size: 8.5, bold: true });
     });
   };
-  drawBox(RIGHT - boxW, 'לקוח', custLines);
+  drawBox(RIGHT - boxW, isEntry ? 'ספק' : 'לקוח', custLines);
   drawBox(LEFT, 'הובלה', transLines);
   y += boxH + 5;
 
@@ -308,7 +311,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
   ensureSpace(30);
   y += 14;
   const sigGap = 10, sigW = (CONTENT_W - 2 * sigGap) / 3;
-  ['חתימת השוקל', 'חתימת הנהג', 'חתימת הלקוח'].forEach((label, i) => {
+  ['חתימת השוקל', 'חתימת הנהג', isEntry ? 'חתימת הספק' : 'חתימת הלקוח'].forEach((label, i) => {
     const x1 = RIGHT - i * (sigW + sigGap) - sigW;
     doc.setDrawColor(17); doc.setLineWidth(0.3); doc.line(x1, y, x1 + sigW, y);
     text(label, x1 + sigW / 2, y + 4.5, { align: 'center', size: 8.5, bold: true });
@@ -320,7 +323,7 @@ export async function buildCertificatePdf({ certificate, items, companySettings 
     doc.setPage(p);
     doc.setDrawColor(200); doc.setLineWidth(0.2); doc.line(LEFT, PAGE_H - 11, RIGHT, PAGE_H - 11);
     text('הופק באמצעות FarmFlow', PAGE_W / 2, PAGE_H - 7, { align: 'center', size: 7.5, color: 110 });
-    text(`תעודת שקילה ${certNum}`, RIGHT, PAGE_H - 7, { size: 7.5, color: 110 });
+    text(`${DOC_TITLE} ${certNum}`, RIGHT, PAGE_H - 7, { size: 7.5, color: 110 });
     text(`עמוד ${p} מתוך ${pages}`, LEFT, PAGE_H - 7, { align: 'left', size: 7.5, color: 110 });
   }
 

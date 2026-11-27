@@ -60,7 +60,8 @@ export default function BottomNav({ onQuickAction }) {
 
   // בעמוד תעודת שקילה הבר התחתון מוחלף בפעולות התעודה. העמוד מאזין לאירוע
   // window "weighing-detail-action" ומבצע את הפעולה (add/share/print/details).
-  const onWeighingDetail = location.pathname.startsWith(createPageUrl("WeighingDetail"));
+  const onEntryDetail = location.pathname.startsWith(createPageUrl("EntryCertificateDetail"));
+  const onWeighingDetail = location.pathname.startsWith(createPageUrl("WeighingDetail")) || onEntryDetail;
   const fireWeighingAction = (action) =>
     window.dispatchEvent(new CustomEvent("weighing-detail-action", { detail: action }));
 
@@ -180,7 +181,7 @@ export default function BottomNav({ onQuickAction }) {
     return (
       <nav aria-label="ניווט תחתון" className="fixed bottom-0 inset-x-0 h-16 bg-white border-t shadow-lg z-50 lg:hidden safe-area-bottom">
         <div className="flex h-full items-center justify-around px-1">
-          <button onClick={() => navigate(createPageUrl("WeighingCertificates"))} className={actionBtn}>
+          <button onClick={() => navigate(onEntryDetail ? `${createPageUrl("Procurement")}?tab=entries` : createPageUrl("WeighingCertificates"))} className={actionBtn}>
             <ArrowRight className="w-5 h-5" />
             <span className="text-[10px] font-medium leading-none">תעודות</span>
           </button>
