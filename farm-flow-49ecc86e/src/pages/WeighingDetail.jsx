@@ -249,7 +249,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
       // ברכש: רק חקלאים (אם סומנו), ותמיד גם הספק שכבר בתעודה
       const partyList = safeArray(customersData);
       const farmerList = isPurchase ? partyList.filter(s => s.is_farmer || s.id === certificateData?.supplier_id) : [];
-      setCustomers(isPurchase && partyList.some(s => s.is_farmer) ? farmerList : partyList);
+      setCustomers(isPurchase ? farmerList : partyList);
       setCustomerPricings(safeArray(pricingsData));
       
       const compSettings = safeObject(safeArray(settingsData)[0] || null);

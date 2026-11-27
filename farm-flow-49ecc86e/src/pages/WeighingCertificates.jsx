@@ -195,9 +195,9 @@ export default function WeighingCertificates({ mode = 'sale' }) {
         
         setCertificates(Array.isArray(certsResult) ? certsResult.map(fromStored) : []);
         const parties = Array.isArray(custsResult) ? custsResult : [];
-        // ברכש: רק ספקים שמסומנים כחקלאים (אם עוד לא סומן אף אחד — כל הספקים)
+        // ברכש: רק ספקים שמסומנים כחקלאים
         const farmers = isPurchase ? parties.filter(s => s.is_farmer) : [];
-        setCustomers(farmers.length ? farmers : parties);
+        setCustomers(isPurchase ? farmers : parties);
     } catch(e) {
         console.error("Failed to load weighing data:", e);
         setCertificates([]);
@@ -1436,6 +1436,15 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                       onCreated={addCustomerToList}
                       required
                     />
+                    {isPurchase && (
+                      <p className={`text-xs mt-1.5 ${(customers || []).length ? "text-muted-foreground" : "text-amber-700"}`}>
+                        {(customers || []).length
+                          ? "מוצגים רק ספקים שסומנו כחקלאים."
+                          : "אין עדיין ספקים שמסומנים כחקלאים. "}
+                        <Link to={createPageUrl("Suppliers")} className="underline">לסימון בעמוד ספקים</Link>
+                        {" "}· או הוסף חקלאי חדש עם ＋
+                      </p>
+                    )}
                   </div>
 
                   <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
