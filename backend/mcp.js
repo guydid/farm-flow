@@ -247,7 +247,7 @@ module.exports = function mountMcp(app, { stateGuards, farmTrialExpired, db, lis
   //   Authorization: Bearer ffmcp_…   או   ?exp=…&sig=… (הקישור החתום מ-get_record, תקף שעה)
   app.get('/mcp/files/:entity/:id/:kind', mcpLimiter, (req, res) => {
     const { entity, id, kind } = req.params;
-    if (!HR_SET.has(entity) || !['original', 'signed'].includes(kind)) return res.status(404).json({ error: 'Not found' });
+    if (!HR_SET.has(entity) || !['original', 'signed', 'timesheet'].includes(kind)) return res.status(404).json({ error: 'Not found' });
     const row = db.prepare('SELECT * FROM entities WHERE entity_type = ? AND id = ?').get(entity, id);
     if (!row) return res.status(404).json({ error: 'Not found' });
     let allowed = false;

@@ -11,6 +11,7 @@ const os = require('os');
 const crypto = require('crypto');
 
 const { makeHrCore, DOC_TYPES, TYPE_OF_CATEGORY, CATEGORY_LABELS: CATEGORIES } = require('./hrDocs');
+const TS = require('./timesheet');
 const SIGN_TTL_DAYS = 14;
 const MAX_SIG_BYTES = 1.5 * 1024 * 1024;
 const MAX_PAGES_PREVIEW = 30;
@@ -69,6 +70,96 @@ function registerEmployeeDocRoutes(app, deps) {
     db.prepare("INSERT OR REPLACE INTO entities (id, entity_type, farm_id, data, created_at, updated_at) VALUES (?, 'uploads', ?, ?, ?, ?)")
       .run(`up_${name}`, farmId, JSON.stringify({ filename: name, original_name: originalName, size, uploader_id: null }), now, now);
   };
+
+  // ── דף שעות לתלוש (משעון הנוכחות) — נחתם יחד עם התלוש ─────────────────
+  const empData = (id) => { const r = employeeRow(id); if (!r) return null; try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return { id: r.id }; } };
+  const farmNameOf = (farmId) => { try { return JSON.parse(db.prepare("SELECT data FROM entities WHERE entity_type = 'farms' AND id = ?").get(farmId).data).name || ''; } catch { return ''; } };
+
+  // מחזיר את דף השעות שנוצר, או null כשאין לעובד החתמות בחודש
+  async function generateTimesheet(req, row, by) {
+    const d = parse(row);
+    const emp = empData(d.employee_id);
+    if (!emp || !/^\d{4}-\d{2}$/.test(String(d.period || ''))) return null;
+    const { rows } = TS.collectHours(db, d.farm_id, emp, d.period);
+    if (!rows.length) return null;
+    const r = await TS.buildTimesheetPdf({ farmName: farmNameOf(d.farm_id), employer: d.employer || null, employee: emp, period: d.period, rows });
+    const name = `timesheet_${uuidv4()}.pdf`;
+    fs.writeFileSync(path.join(UPLOADS_DIR, name), r.bytes);
+    const fileName = `דף שעות ${d.period}.pdf`;
+    registerFile(name, d.farm_id, r.bytes.length, fileName);
+    const ts = { file_url: fileUrlFor(req, name), file_name: fileName, days: r.days, total_hours: r.total_hours, missing_punches: r.missing, generated_at: NOW(), generated_by: by || null, source: 'clock' };
+    updateData(row, (x) => { const { timesheet_skip, ...rest } = x; return { ...rest, timesheet: ts }; });
+    return ts;
+  }
+
+  // המסמך שהעובד רואה וחותם: התלוש, ואם יש דף שעות — התלוש + דף השעות כ-PDF אחד (נבנה לפי דרישה, במטמון)
+  const BUNDLE_DIR = path.join(os.tmpdir(), 'ff-sign-bundles');
+  const bundleParts = new Map();
+  async function signSource(d) {
+    const main = uploadPath(d.file_url);
+    if (!main) return null;
+    const ts = d.entity_type === 'payslips' ? uploadPath(d.timesheet?.file_url) : null;
+    if (!ts) return { path: main, parts: null };
+    const key = sha256(`${main}|${ts}|${fs.statSync(main).mtimeMs}|${fs.statSync(ts).mtimeMs}`).slice(0, 32);
+    const out = path.join(BUNDLE_DIR, `${key}.pdf`);
+    if (!bundleParts.has(key) || !fs.existsSync(out)) {
+      const { PDFDocument } = require('pdf-lib');
+      const toPdf = async (p) => (path.extname(p).toLowerCase() === '.pdf' ? fs.readFileSync(p) : imagesToPdf([p]));
+      const a = await PDFDocument.load(await toPdf(main), { ignoreEncryption: true });
+      const b = await PDFDocument.load(await toPdf(ts), { ignoreEncryption: true });
+      const merged = await PDFDocument.create();
+      for (const doc of [a, b]) for (const pg of await merged.copyPages(doc, doc.getPageIndices())) merged.addPage(pg);
+      fs.mkdirSync(BUNDLE_DIR, { recursive: true });
+      fs.writeFileSync(out, Buffer.from(await merged.save()));
+      bundleParts.set(key, [a.getPageCount(), b.getPageCount()]);
+    }
+    return { path: out, parts: bundleParts.get(key) };
+  }
+  const signSourceSafe = async (d) => {
+    try { return await signSource(d); }
+    catch (e) { console.error('[employee-docs] bundle failed:', e.message); const p = uploadPath(d.file_url); return p ? { path: p, parts: null } : null; }
+  };
+
+  const payslipRowOr404 = (req, res) => {
+    const row = docRow(req.params.docId);
+    if (!row || row.entity_type !== 'payslips') { res.status(404).json({ error: 'Not found' }); return null; }
+    return row;
+  };
+  // יצירה מהשעון (ללא גוף) או צירוף קובץ שהועלה ({ file_url, file_name })
+  app.post('/api/employee-documents/:docId/timesheet', authMiddleware, async (req, res) => {
+    const row = payslipRowOr404(req, res); if (!row) return;
+    const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
+    const d = parse(row);
+    if (d.sign?.status === 'signed') return res.status(409).json({ error: 'התלוש כבר נחתם — אי אפשר להחליף את דף השעות' });
+    try {
+      if (req.body?.file_url) {
+        if (!uploadPath(req.body.file_url)) return res.status(400).json({ error: 'קובץ חסר' });
+        const ts = { file_url: req.body.file_url, file_name: String(req.body.file_name || '').slice(0, 200) || `דף שעות ${d.period}`, days: null, total_hours: null, generated_at: NOW(), generated_by: ctx.user.full_name || null, source: 'upload' };
+        updateData(row, (x) => { const { timesheet_skip, ...rest } = x; return { ...rest, timesheet: ts }; });
+      } else if (!(await generateTimesheet(req, row, ctx.user.full_name))) {
+        return res.status(422).json({ error: 'אין החתמות בשעון הנוכחות לעובד בחודש הזה. בדוק שהעובד מקושר לשעון (מספר בשעון בכרטיס העובד), או העלה דף שעות.' });
+      }
+      res.json(publicDoc(parse(docRow(row.id))));
+    } catch (e) {
+      console.error('[employee-docs] timesheet failed:', e.message);
+      res.status(500).json({ error: 'יצירת דף השעות נכשלה' });
+    }
+  });
+  app.delete('/api/employee-documents/:docId/timesheet', authMiddleware, (req, res) => {
+    const row = payslipRowOr404(req, res); if (!row) return;
+    if (!managerCtx(req, res, row.farm_id)) return;
+    if (parse(row).sign?.status === 'signed') return res.status(409).json({ error: 'התלוש כבר נחתם' });
+    // timesheet_skip: לא ליצור שוב אוטומטית בשליחה לחתימה
+    updateData(row, (x) => { const { timesheet, ...rest } = x; return { ...rest, timesheet_skip: true }; });
+    res.json({ success: true });
+  });
+  // לפני שליחה לחתימה: תלוש בלי דף שעות → יוצרים אוטומטית מהשעון (אם יש החתמות ולא הוסר ידנית)
+  async function ensureTimesheet(req, row, by) {
+    if (row.entity_type !== 'payslips') return null;
+    const d = parse(row);
+    if (d.timesheet?.file_url || d.timesheet_skip) return d.timesheet || null;
+    try { return await generateTimesheet(req, row, by); } catch (e) { console.error('[employee-docs] auto timesheet failed:', e.message); return null; }
+  }
 
   // ── רשימה ─────────────────────────────────────────────────────────────────
   app.get('/api/employees/:id/documents', authMiddleware, (req, res) => {
@@ -138,13 +229,14 @@ function registerEmployeeDocRoutes(app, deps) {
     catch { return { name: '', first_name: '', phone: '' }; }
   };
 
-  app.post('/api/employee-documents/:docId/sign-request', authMiddleware, (req, res) => {
+  app.post('/api/employee-documents/:docId/sign-request', authMiddleware, async (req, res) => {
     const row = docRow(req.params.docId);
     if (!row) return res.status(404).json({ error: 'Not found' });
     const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
     const d = parse(row);
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'המסמך כבר נחתם' });
-    res.json({ ...issueSignLink(row, ctx.user.full_name), employee: employeeInfo(d.employee_id) });
+    const timesheet = await ensureTimesheet(req, row, ctx.user.full_name);
+    res.json({ ...issueSignLink(row, ctx.user.full_name), employee: employeeInfo(d.employee_id), timesheet });
   });
 
   // תיעוד שליחה (וואטסאפ / SMS / העתקה) — לסטטוס "נשלח" ברשימות
@@ -166,7 +258,7 @@ function registerEmployeeDocRoutes(app, deps) {
   const batchRows = (farmId, period) => db.prepare(`SELECT * FROM entities WHERE entity_type = 'payslips' AND farm_id = ? AND json_extract(data, '$.period') = ?`)
     .all(farmId, period).map(parse).map(d => {
       const e = employeeInfo(d.employee_id); const v = publicDoc(d);
-      return { doc_id: d.id, employee_id: d.employee_id, employee_name: e.name || d.employee_name || '', first_name: e.first_name, phone: e.phone, title: d.title, employer: d.employer || null, sign_status: v.sign_status, signed_at: v.signed_at, sent_at: d.sign?.sent_at || null, sent_via: d.sign?.sent_via || null };
+      return { doc_id: d.id, employee_id: d.employee_id, employee_name: e.name || d.employee_name || '', first_name: e.first_name, phone: e.phone, title: d.title, employer: d.employer || null, sign_status: v.sign_status, signed_at: v.signed_at, sent_at: d.sign?.sent_at || null, sent_via: d.sign?.sent_via || null, timesheet: d.timesheet ? { total_hours: d.timesheet.total_hours ?? null, days: d.timesheet.days ?? null, source: d.timesheet.source || null } : null };
     }).sort((a, b) => a.employee_name.localeCompare(b.employee_name, 'he'));
   const farmOf = (req) => { const u = getUser(req.user.id); return req.query.farm_id || req.body?.farm_id || u?.current_farm_id; };
 
@@ -178,7 +270,7 @@ function registerEmployeeDocRoutes(app, deps) {
     res.json({ periods, period: period || null, items: period ? batchRows(farmId, period) : [] });
   });
 
-  app.post('/api/employee-documents/payslip-batch/sign-requests', authMiddleware, (req, res) => {
+  app.post('/api/employee-documents/payslip-batch/sign-requests', authMiddleware, async (req, res) => {
     const farmId = farmOf(req);
     const ctx = managerCtx(req, res, farmId); if (!ctx) return;
     const period = String(req.body?.period || '');
@@ -190,6 +282,7 @@ function registerEmployeeDocRoutes(app, deps) {
       if (it.sign_status === 'signed') continue;
       if (it.sign_status === 'pending' && !req.body?.renew && !only) continue; // כבר נשלח — לא שוברים קישור קיים
       const row = docRow(it.doc_id);
+      await ensureTimesheet(req, row, ctx.user.full_name);
       links[it.doc_id] = issueSignLink(row, ctx.user.full_name);
     }
     const items = batchRows(farmId, period).map(it => (links[it.doc_id] ? { ...it, ...links[it.doc_id] } : it));
@@ -238,7 +331,8 @@ function registerEmployeeDocRoutes(app, deps) {
     let empName = '', farmName = '';
     try { empName = JSON.parse(emp.data).full_name || ''; } catch { /* ignore */ }
     try { farmName = JSON.parse(farm.data).name || ''; } catch { /* ignore */ }
-    const src = uploadPath(d.file_url);
+    const srcInfo = await signSourceSafe(d);
+    const src = srcInfo?.path || null;
     const isPdf = src && path.extname(src).toLowerCase() === '.pdf';
     res.setHeader('Cache-Control', 'no-store');
     res.json({
@@ -247,14 +341,15 @@ function registerEmployeeDocRoutes(app, deps) {
       signed_at: d.sign?.signed_at || null,
       file_kind: !src ? 'missing' : (isPdf ? 'pdf' : 'image'),
       pages: src ? Math.min(await pageCount(src), MAX_PAGES_PREVIEW) : 0,
+      timesheet: srcInfo?.parts ? { first_page: srcInfo.parts[0] + 1, pages: srcInfo.parts[1], total_hours: d.timesheet?.total_hours ?? null, days: d.timesheet?.days ?? null } : null,
     });
   });
 
   // הקובץ המקורי (להורדה/פתיחה)
-  app.get('/api/public/sign/:token/file', (req, res) => {
+  app.get('/api/public/sign/:token/file', async (req, res) => {
     const d = byToken(req.params.token);
     if (tokenState(d) === 'invalid') return res.status(404).end();
-    const src = (d.sign?.status === 'signed' && uploadPath(d.sign.signed_file_url)) || uploadPath(d.file_url);
+    const src = (d.sign?.status === 'signed' && uploadPath(d.sign.signed_file_url)) || (await signSourceSafe(d))?.path;
     if (!src) return res.status(404).end();
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -265,7 +360,7 @@ function registerEmployeeDocRoutes(app, deps) {
   app.get('/api/public/sign/:token/page/:n', async (req, res) => {
     const d = byToken(req.params.token);
     if (tokenState(d) === 'invalid') return res.status(404).end();
-    const src = uploadPath(d.file_url);
+    const src = (await signSourceSafe(d))?.path;
     if (!src) return res.status(404).end();
     const n = parseInt(req.params.n, 10);
     res.setHeader('Cache-Control', 'no-store');
@@ -292,7 +387,8 @@ function registerEmployeeDocRoutes(app, deps) {
     const m = String(signature_png || '').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
     const png = m ? Buffer.from(m[1], 'base64') : null;
     if (!png || png.length < 100 || png.length > MAX_SIG_BYTES || png.readUInt32BE(0) !== 0x89504e47) return res.status(400).json({ error: 'חתימה חסרה' });
-    const src = uploadPath(d.file_url);
+    const srcInfo = await signSourceSafe(d);
+    const src = srcInfo?.path;
     if (!src) return res.status(500).json({ error: 'קובץ המסמך חסר בשרת' });
 
     try {
@@ -305,13 +401,16 @@ function registerEmployeeDocRoutes(app, deps) {
       const signedAt = new Date().toISOString();
       const ip = req.ip || '';
 
-      // חותמת על העמוד האחרון — פינה שמאלית תחתונה
-      const last = pdf.getPage(pdf.getPageCount() - 1);
-      const { width: pw } = last.getSize();
-      const sw = Math.min(200, pw * 0.38);
-      const sh = sw * (sig.height / sig.width);
-      last.drawRectangle({ x: 24, y: 24, width: sw + 8, height: sh + 8, color: rgb(1, 1, 1), opacity: 0.85 });
-      last.drawImage(sig, { x: 28, y: 28, width: sw, height: sh });
+      // חותמת בפינה השמאלית התחתונה של העמוד האחרון — ובתלוש + דף שעות: על העמוד האחרון של כל אחד
+      const stampPages = srcInfo.parts ? [srcInfo.parts[0] - 1, pdf.getPageCount() - 1] : [pdf.getPageCount() - 1];
+      for (const idx of stampPages) {
+        const last = pdf.getPage(idx);
+        const { width: pw } = last.getSize();
+        const sw = Math.min(200, pw * 0.38);
+        const sh = sw * (sig.height / sig.width);
+        last.drawRectangle({ x: 24, y: 24, width: sw + 8, height: sh + 8, color: rgb(1, 1, 1), opacity: 0.85 });
+        last.drawImage(sig, { x: 28, y: 28, width: sw, height: sh });
+      }
 
       // עמוד תיעוד
       const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -321,7 +420,8 @@ function registerEmployeeDocRoutes(app, deps) {
       page.drawText('Electronic signature record', { x: 50, y, size: 18, font: bold }); y -= 34;
       const line = (k, v) => { page.drawText(k, { x: 50, y, size: 10, font: bold }); page.drawText(ascii(v, 90), { x: 170, y, size: 10, font }); y -= 18; };
       line('Document ID', d.id);
-      line('Document type', d.category + (d.period ? ` (${d.period})` : ''));
+      line('Document type', d.category + (d.period ? ` (${d.period})` : '') + (srcInfo.parts ? ` + monthly hours sheet (pages ${srcInfo.parts[0] + 1}-${srcInfo.parts[0] + srcInfo.parts[1]})` : ''));
+      if (srcInfo.parts && d.timesheet?.total_hours != null) line('Hours sheet total', `${d.timesheet.total_hours} hours, ${d.timesheet.days} days`);
       line('Original SHA-256', sha256(original));
       line('Signed at (UTC)', signedAt);
       line('Signer IP', ip);
@@ -344,8 +444,9 @@ function registerEmployeeDocRoutes(app, deps) {
         sign: {
           ...x.sign, status: 'signed', token_hash: x.sign.token_hash, signed_at: signedAt, signer_name: name,
           signer_ip: ip, signer_agent: ascii(req.headers['user-agent'], 300), original_sha256: sha256(original),
-          signed_sha256: sha256(out), signed_file_url: signedUrl,
+          signed_sha256: sha256(out), signed_file_url: signedUrl, includes_timesheet: !!srcInfo.parts,
         },
+        ...(srcInfo.parts && x.timesheet ? { timesheet: { ...x.timesheet, signed_at: signedAt } } : {}),
       }));
       try {
         const e = employeeInfo(d.employee_id);

@@ -121,7 +121,7 @@ export default function EmployeeFiles({ employee }) {
     setBusyId(doc.id);
     try {
       const r = await apiFetch(`${BASE_URL}/employee-documents/${doc.id}/sign-request`, { method: "POST", body: "{}" });
-      setShare({ doc, url: `${window.location.origin}${r.path}`, expires_at: r.expires_at });
+      setShare({ doc, url: `${window.location.origin}${r.path}`, expires_at: r.expires_at, timesheet: r.timesheet || null });
       await load();
     } catch (e) {
       toast({ title: "שגיאה", description: e.message, variant: "destructive" });
@@ -148,7 +148,42 @@ export default function EmployeeFiles({ employee }) {
     }
   };
 
-  const shareText = share ? signMessage({ firstName: employee.first_name || "", title: share.doc.title, url: share.url }) : "";
+  // ── דף שעות לתלוש (משעון הנוכחות / העלאה) — נחתם יחד עם התלוש ──
+  const tsFileRef = useRef(null);
+  const [tsDoc, setTsDoc] = useState(null);
+  const replaceDoc = (doc) => setDocs(prev => prev.map(d => (d.id === doc.id ? doc : d)));
+  const makeTimesheet = async (doc) => {
+    setBusyId(`ts_${doc.id}`);
+    try {
+      replaceDoc(await apiFetch(`${BASE_URL}/employee-documents/${doc.id}/timesheet`, { method: "POST", body: "{}" }));
+      toast({ title: "דף השעות נוצר מהשעון" });
+    } catch (e) {
+      toast({ title: "לא נוצר דף שעות", description: e.message, variant: "destructive" });
+    } finally { setBusyId(null); }
+  };
+  const pickTimesheet = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = null;
+    const doc = tsDoc;
+    if (!file || !doc) return;
+    setBusyId(`ts_${doc.id}`);
+    try {
+      const { file_url } = await UploadFile({ file });
+      replaceDoc(await apiFetch(`${BASE_URL}/employee-documents/${doc.id}/timesheet`, { method: "POST", body: JSON.stringify({ file_url, file_name: file.name }) }));
+      toast({ title: "דף השעות צורף לתלוש" });
+    } catch (err) {
+      toast({ title: "שגיאה", description: err.message, variant: "destructive" });
+    } finally { setBusyId(null); }
+  };
+  const removeTimesheet = async (doc) => {
+    if (!window.confirm("להסיר את דף השעות מהתלוש? התלוש יישלח לחתימה בלעדיו.")) return;
+    try {
+      await apiFetch(`${BASE_URL}/employee-documents/${doc.id}/timesheet`, { method: "DELETE" });
+      await load();
+    } catch (e) { toast({ title: "שגיאה", description: e.message, variant: "destructive" }); }
+  };
+
+  const shareText = share ?signMessage({ firstName: employee.first_name || "", title: share.doc.title, url: share.url }) : "";
   const markSent = (channel) => {
     if (!share) return;
     apiFetch(`${BASE_URL}/employee-documents/${share.doc.id}/sign-sent`, { method: "POST", body: JSON.stringify({ channel, to: normalizePhone(phone) }) })
@@ -181,6 +216,7 @@ export default function EmployeeFiles({ employee }) {
           <div className="flex gap-1">
             <input ref={fileRef} type="file" className="hidden" accept="image/*,application/pdf" onChange={pickFile} />
             <input ref={camRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={pickFile} />
+            <input ref={tsFileRef} type="file" className="hidden" accept="image/*,application/pdf" onChange={pickTimesheet} />
             <Button variant="outline" size="sm" className="px-2" aria-label="צלם מסמך" onClick={() => camRef.current?.click()}><Camera className="w-4 h-4" aria-hidden="true" /></Button>
             <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}><Upload className="w-4 h-4 ml-1" aria-hidden="true" />הוסף {catOf(tab).one}</Button>
             {tab === "medical_insurance" && <Button variant="ghost" size="sm" onClick={addWithoutFile}>בלי קובץ</Button>}
@@ -222,6 +258,28 @@ export default function EmployeeFiles({ employee }) {
                       {doc.sign_status === "pending" && doc.sent_at && <span>נשלח {fmtDate(doc.sent_at)}{doc.sent_via === "whatsapp" ? " בוואטסאפ" : doc.sent_via === "sms" ? " ב-SMS" : ""}</span>}
                       {doc.sign_status === "signed" && doc.signer_name && <span>ע"י {doc.signer_name}</span>}
                     </div>
+                    {doc.category === "payslip" && (
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+                        <Clock className="w-3.5 h-3.5 text-gray-500" aria-hidden="true" />
+                        {doc.timesheet?.file_url ? (<>
+                          <a href={withToken(doc.timesheet.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline">דף שעות</a>
+                          {doc.timesheet.total_hours != null && <span className="text-gray-600">{doc.timesheet.total_hours} שעות · {doc.timesheet.days} ימים{doc.timesheet.missing_punches ? ` · ${doc.timesheet.missing_punches} חסרי החתמה` : ""}</span>}
+                          {doc.timesheet.source === "upload" && <span className="text-gray-500">(הועלה)</span>}
+                          {doc.timesheet.signed_at ? <span className="text-green-700">נחתם עם התלוש</span> : doc.sign_status !== "signed" && (<>
+                            <button type="button" className="text-gray-600 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => makeTimesheet(doc)}>עדכן מהשעון</button>
+                            <button type="button" className="text-red-600 underline" onClick={() => removeTimesheet(doc)}>הסר</button>
+                          </>)}
+                        </>) : doc.sign_status === "signed" ? (
+                          <span className="text-gray-500">נחתם בלי דף שעות</span>
+                        ) : (<>
+                          <span className="text-gray-500">אין דף שעות</span>
+                          <button type="button" className="text-blue-700 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => makeTimesheet(doc)}>
+                            {busyId === `ts_${doc.id}` ? "יוצר…" : "צור מהשעון"}
+                          </button>
+                          <button type="button" className="text-blue-700 underline" onClick={() => { setTsDoc(doc); tsFileRef.current?.click(); }}>העלה</button>
+                        </>)}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1 shrink-0">
@@ -321,6 +379,15 @@ export default function EmployeeFiles({ employee }) {
               העובד מקבל קישור, פותח בטלפון, מעיין במסמך וחותם באצבע — בלי התחברות.
               הקישור בתוקף עד {fmtDate(share?.expires_at)}. אחרי החתימה העותק החתום נשמר כאן בתיק ותקבל התראה.
             </DialogDescription>
+            {share?.doc?.category === "payslip" && (share.timesheet?.file_url ? (
+              <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-md p-2 mt-2">
+                העובד יחתום על התלוש ועל דף השעות יחד{share.timesheet.total_hours != null ? ` (${share.timesheet.total_hours} שעות, ${share.timesheet.days} ימים)` : ""}.
+              </p>
+            ) : (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2 mt-2">
+                אין דף שעות לתלוש הזה (אין החתמות בשעון לחודש, או שהוסר) — יישלח התלוש בלבד. אפשר להעלות דף שעות בתיק ולשלוח קישור חדש.
+              </p>
+            ))}
           </DialogHeader>
           {normalizePhone(phone) ? (
             <div className="grid grid-cols-2 gap-2">

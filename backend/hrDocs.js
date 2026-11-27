@@ -48,6 +48,7 @@ const HR_ENTITIES = {
       F('gross', ['number', 'null'], 'שכר ברוטו (סה"כ תשלומים) ב-₪'),
       F('net', ['number', 'null'], 'שכר נטו ב-₪'),
       F('net_to_pay', ['number', 'null'], 'נטו לתשלום ב-₪ (אחרי ניכויי רשות)'),
+      F('timesheet', ['object', 'null'], 'דף השעות של החודש (נוצר משעון הנוכחות או הועלה): file_url, days, total_hours, generated_at, source. נשלח לחתימת העובד יחד עם התלוש (קריאה בלבד; הורדה דרך files[] kind=timesheet)'),
     ],
   },
   employment_contracts: {
@@ -89,7 +90,7 @@ const CATEGORY_LABELS = { payslip: 'תלוש שכר', contract: 'חוזה העס
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
 // שדות שלא נכתבים מבחוץ (מחושבים / חתימה / מערכת)
-const PROTECTED = ['id', 'farm_id', 'created_at', 'updated_at', 'sign', 'sign_status', 'signed_at', 'signer_name', 'signed_file_url', 'is_active', 'files', 'category', '_by'];
+const PROTECTED = ['id', 'farm_id', 'created_at', 'updated_at', 'sign', 'sign_status', 'signed_at', 'signer_name', 'signed_file_url', 'is_active', 'files', 'category', '_by', 'timesheet'];
 
 function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
   const today = () => (todayFn ? todayFn() : NOW().slice(0, 10));
@@ -153,7 +154,7 @@ function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
   function normalize(farmId, type, merged) {
     if (!DOC_TYPES.includes(type)) throw new Error(`Unknown document entity: ${type}`);
     const d = { ...merged };
-    for (const k of PROTECTED) if (k !== 'sign' && k !== 'category') delete d[k];
+    for (const k of PROTECTED) if (k !== 'sign' && k !== 'category' && k !== 'timesheet') delete d[k];
     const emp = resolveEmployee(farmId, d);
     d.employee_id = emp.id;
     d.employee_name = nameOf(emp) || null;
@@ -276,7 +277,7 @@ function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
   }
 
   function create(farmId, type, input, by) {
-    const d = normalize(farmId, type, { ...input, sign: undefined });
+    const d = normalize(farmId, type, { ...input, sign: undefined, timesheet: undefined });
     d.sign = { status: 'none' };
     d.source = str(input.source, 40) || 'manual';
     if (by) d._by = by;
@@ -294,6 +295,7 @@ function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
     const { id: _i, farm_id: _f, created_at: _c, updated_at: _u, ...stored } = cur;
     const d = normalize(farmId, type, { ...stored, ...clean });
     d.sign = cur.sign || { status: 'none' };
+    if (cur.timesheet) d.timesheet = cur.timesheet; else delete d.timesheet;
     if (by) d._by = by;
     writeData(type, id, d);
     if (type === 'medical_insurance_policies') {
@@ -381,6 +383,7 @@ function makeHrCore({ db, NOW, uuidv4, today: todayFn }) {
   function filesOf(rec) {
     const out = [];
     if (rec.file_url) out.push({ kind: 'original', file_url: rec.file_url, file_name: rec.file_name || null });
+    if (rec.timesheet?.file_url) out.push({ kind: 'timesheet', file_url: rec.timesheet.file_url, file_name: rec.timesheet.file_name || 'timesheet.pdf' });
     if (rec.sign?.signed_file_url) out.push({ kind: 'signed', file_url: rec.sign.signed_file_url, file_name: `${rec.title || 'document'} - signed.pdf` });
     return out;
   }

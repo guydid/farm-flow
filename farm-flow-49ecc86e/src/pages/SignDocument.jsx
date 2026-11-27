@@ -133,6 +133,12 @@ export default function SignDocument() {
       {info.farm_name && <p className="text-sm text-gray-500">{info.farm_name}</p>}
       <h1 className="text-xl font-bold flex items-center gap-2"><FileText className="w-5 h-5 text-primary" aria-hidden="true" />{info.title}</h1>
       {info.employee_name && <p className="text-sm text-gray-600 mt-1">{info.employee_name}</p>}
+      {info.timesheet && (
+        <p className="text-sm text-gray-700 mt-2 bg-blue-50 border border-blue-100 rounded-lg p-2">
+          {T(`כולל דף שעות חודשי (עמוד ${info.timesheet.first_page}${info.timesheet.pages > 1 ? `–${info.timesheet.first_page + info.timesheet.pages - 1}` : ""})${info.timesheet.total_hours != null ? `: ${info.timesheet.total_hours} שעות, ${info.timesheet.days} ימים` : ""}. החתימה מאשרת גם את השעות.`,
+             `Includes the monthly hours sheet (page ${info.timesheet.first_page}${info.timesheet.pages > 1 ? `–${info.timesheet.first_page + info.timesheet.pages - 1}` : ""})${info.timesheet.total_hours != null ? `: ${info.timesheet.total_hours} hours, ${info.timesheet.days} days` : ""}. Your signature also confirms the hours.`)}
+        </p>
+      )}
     </div>
   );
 
