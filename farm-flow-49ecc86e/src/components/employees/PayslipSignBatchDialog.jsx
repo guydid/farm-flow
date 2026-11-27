@@ -57,7 +57,7 @@ export default function PayslipSignBatchDialog({ open, onOpenChange, farmId }) {
           <DialogTitle className="flex items-center gap-2"><Send className="w-5 h-5 text-primary" aria-hidden="true" />תלושים לחתימה בטלפון העובדים</DialogTitle>
           <DialogDescription>
             צור קישורי חתימה לכל התלושים של החודש ושלח לכל עובד בוואטסאפ או SMS. העובד חותם באצבע, והתלוש החתום נשמר בתיק שלו.
-            לכל עובד שמקושר לשעון הנוכחות מצורף אוטומטית דף השעות של החודש, והוא חותם על שניהם יחד.
+            תלוש שהעלית אליו דף שעות (בתיק העובד) נשלח יחד עם דף השעות, והעובד חותם על שניהם יחד.
           </DialogDescription>
         </DialogHeader>
 
@@ -94,7 +94,7 @@ export default function PayslipSignBatchDialog({ open, onOpenChange, farmId }) {
                         {it.sign_status === "signed" && <Badge className="bg-green-100 text-green-800 gap-1"><CheckCircle2 className="w-3 h-3" />נחתם {fmtDate(it.signed_at)}</Badge>}
                         {it.sign_status === "pending" && <Badge className="bg-amber-100 text-amber-800 gap-1"><Clock className="w-3 h-3" />{it.sent_at ? `נשלח ${fmtDate(it.sent_at)}` : "קישור נוצר"}</Badge>}
                         {it.employer && <span>{it.employer}</span>}
-                        {it.timesheet ? <span className="text-blue-700">+ דף שעות{it.timesheet.total_hours != null ? ` (${it.timesheet.total_hours} ש')` : ""}</span>
+                        {it.timesheet ? <span className="text-blue-700">+ דף שעות</span>
                           : it.sign_status !== "signed" && <span>ללא דף שעות</span>}
                         {!hasPhone && it.sign_status !== "signed" && <span className="text-amber-700 flex items-center gap-0.5"><PhoneOff className="w-3 h-3" />אין טלפון בכרטיס</span>}
                       </div>

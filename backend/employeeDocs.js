@@ -11,7 +11,6 @@ const os = require('os');
 const crypto = require('crypto');
 
 const { makeHrCore, DOC_TYPES, TYPE_OF_CATEGORY, CATEGORY_LABELS: CATEGORIES } = require('./hrDocs');
-const TS = require('./timesheet');
 const SIGN_TTL_DAYS = 14;
 const MAX_SIG_BYTES = 1.5 * 1024 * 1024;
 const MAX_PAGES_PREVIEW = 30;
@@ -71,27 +70,7 @@ function registerEmployeeDocRoutes(app, deps) {
       .run(`up_${name}`, farmId, JSON.stringify({ filename: name, original_name: originalName, size, uploader_id: null }), now, now);
   };
 
-  // ── דף שעות לתלוש (משעון הנוכחות) — נחתם יחד עם התלוש ─────────────────
-  const empData = (id) => { const r = employeeRow(id); if (!r) return null; try { return { id: r.id, ...JSON.parse(r.data || '{}') }; } catch { return { id: r.id }; } };
-  const farmNameOf = (farmId) => { try { return JSON.parse(db.prepare("SELECT data FROM entities WHERE entity_type = 'farms' AND id = ?").get(farmId).data).name || ''; } catch { return ''; } };
-
-  // מחזיר את דף השעות שנוצר, או null כשאין לעובד החתמות בחודש
-  async function generateTimesheet(req, row, by) {
-    const d = parse(row);
-    const emp = empData(d.employee_id);
-    if (!emp || !/^\d{4}-\d{2}$/.test(String(d.period || ''))) return null;
-    const { rows } = TS.collectHours(db, d.farm_id, emp, d.period);
-    if (!rows.length) return null;
-    const r = await TS.buildTimesheetPdf({ farmName: farmNameOf(d.farm_id), employer: d.employer || null, employee: emp, period: d.period, rows });
-    const name = `timesheet_${uuidv4()}.pdf`;
-    fs.writeFileSync(path.join(UPLOADS_DIR, name), r.bytes);
-    const fileName = `דף שעות ${d.period}.pdf`;
-    registerFile(name, d.farm_id, r.bytes.length, fileName);
-    const ts = { file_url: fileUrlFor(req, name), file_name: fileName, days: r.days, total_hours: r.total_hours, missing_punches: r.missing, generated_at: NOW(), generated_by: by || null, source: 'clock' };
-    updateData(row, (x) => { const { timesheet_skip, ...rest } = x; return { ...rest, timesheet: ts }; });
-    return ts;
-  }
-
+  // ── דף שעות לתלוש — מועלה ע"י המנהל ונחתם ע"י העובד יחד עם התלוש ──────────
   // המסמך שהעובד רואה וחותם: התלוש, ואם יש דף שעות — התלוש + דף השעות כ-PDF אחד (נבנה לפי דרישה, במטמון)
   const BUNDLE_DIR = path.join(os.tmpdir(), 'ff-sign-bundles');
   const bundleParts = new Map();
@@ -125,41 +104,27 @@ function registerEmployeeDocRoutes(app, deps) {
     if (!row || row.entity_type !== 'payslips') { res.status(404).json({ error: 'Not found' }); return null; }
     return row;
   };
-  // יצירה מהשעון (ללא גוף) או צירוף קובץ שהועלה ({ file_url, file_name })
-  app.post('/api/employee-documents/:docId/timesheet', authMiddleware, async (req, res) => {
+  const timesheetFrom = (fileUrl, fileName, period, by) => ({
+    file_url: fileUrl, file_name: String(fileName || '').slice(0, 200) || `דף שעות ${period || ''}`.trim(),
+    uploaded_at: NOW(), uploaded_by: by || null, source: 'upload',
+  });
+  // צירוף / החלפה של דף שעות שהועלה ({ file_url, file_name })
+  app.post('/api/employee-documents/:docId/timesheet', authMiddleware, (req, res) => {
     const row = payslipRowOr404(req, res); if (!row) return;
     const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
     const d = parse(row);
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'התלוש כבר נחתם — אי אפשר להחליף את דף השעות' });
-    try {
-      if (req.body?.file_url) {
-        if (!uploadPath(req.body.file_url)) return res.status(400).json({ error: 'קובץ חסר' });
-        const ts = { file_url: req.body.file_url, file_name: String(req.body.file_name || '').slice(0, 200) || `דף שעות ${d.period}`, days: null, total_hours: null, generated_at: NOW(), generated_by: ctx.user.full_name || null, source: 'upload' };
-        updateData(row, (x) => { const { timesheet_skip, ...rest } = x; return { ...rest, timesheet: ts }; });
-      } else if (!(await generateTimesheet(req, row, ctx.user.full_name))) {
-        return res.status(422).json({ error: 'אין החתמות בשעון הנוכחות לעובד בחודש הזה. בדוק שהעובד מקושר לשעון (מספר בשעון בכרטיס העובד), או העלה דף שעות.' });
-      }
-      res.json(publicDoc(parse(docRow(row.id))));
-    } catch (e) {
-      console.error('[employee-docs] timesheet failed:', e.message);
-      res.status(500).json({ error: 'יצירת דף השעות נכשלה' });
-    }
+    if (!uploadPath(req.body?.file_url)) return res.status(400).json({ error: 'קובץ דף השעות חסר' });
+    updateData(row, (x) => ({ ...x, timesheet: timesheetFrom(req.body.file_url, req.body.file_name, d.period, ctx.user.full_name) }));
+    res.json(publicDoc(parse(docRow(row.id))));
   });
   app.delete('/api/employee-documents/:docId/timesheet', authMiddleware, (req, res) => {
     const row = payslipRowOr404(req, res); if (!row) return;
     if (!managerCtx(req, res, row.farm_id)) return;
     if (parse(row).sign?.status === 'signed') return res.status(409).json({ error: 'התלוש כבר נחתם' });
-    // timesheet_skip: לא ליצור שוב אוטומטית בשליחה לחתימה
-    updateData(row, (x) => { const { timesheet, ...rest } = x; return { ...rest, timesheet_skip: true }; });
+    updateData(row, (x) => { const { timesheet, ...rest } = x; return rest; });
     res.json({ success: true });
   });
-  // לפני שליחה לחתימה: תלוש בלי דף שעות → יוצרים אוטומטית מהשעון (אם יש החתמות ולא הוסר ידנית)
-  async function ensureTimesheet(req, row, by) {
-    if (row.entity_type !== 'payslips') return null;
-    const d = parse(row);
-    if (d.timesheet?.file_url || d.timesheet_skip) return d.timesheet || null;
-    try { return await generateTimesheet(req, row, by); } catch (e) { console.error('[employee-docs] auto timesheet failed:', e.message); return null; }
-  }
 
   // ── רשימה ─────────────────────────────────────────────────────────────────
   app.get('/api/employees/:id/documents', authMiddleware, (req, res) => {
@@ -177,17 +142,24 @@ function registerEmployeeDocRoutes(app, deps) {
     const emp = employeeRow(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Not found' });
     const ctx = managerCtx(req, res, emp.farm_id); if (!ctx) return;
-    const { category, file_url, file_name, ...fields } = req.body || {};
+    const { category, file_url, file_name, timesheet_file_url, timesheet_file_name, ...fields } = req.body || {};
     const type = TYPE_OF_CATEGORY[category];
     if (!type) return res.status(400).json({ error: 'סוג מסמך לא תקין' });
     // פוליסת ביטוח אפשר לרשום גם בלי קובץ; לשאר — חובה קובץ שהועלה
     if (category !== 'medical_insurance' && !uploadName(file_url)) return res.status(400).json({ error: 'קובץ חסר' });
     if (category === 'payslip' && !fields.period) return res.status(400).json({ error: 'יש לבחור חודש לתלוש' });
+    if (category === 'payslip' && timesheet_file_url && !uploadPath(timesheet_file_url)) return res.status(400).json({ error: 'קובץ דף השעות חסר' });
     try {
       const rec = hr.create(emp.farm_id, type, {
         ...fields, employee_id: emp.id, file_url: file_url || null, file_name: String(file_name || '').slice(0, 200) || null,
         uploaded_by: ctx.user.full_name || null, source: 'manual',
       }, ctx.user.full_name || null);
+      // דף שעות שהועלה יחד עם התלוש
+      if (category === 'payslip' && timesheet_file_url) {
+        const ts = timesheetFrom(timesheet_file_url, timesheet_file_name, rec.period, ctx.user.full_name);
+        updateData({ id: rec.id, entity_type: type }, (x) => ({ ...x, timesheet: ts }));
+        rec.timesheet = ts;
+      }
       res.json(publicDoc({ ...rec, entity_type: type }));
     } catch (e) { res.status(400).json({ error: e.message }); }
   });
@@ -235,7 +207,7 @@ function registerEmployeeDocRoutes(app, deps) {
     const ctx = managerCtx(req, res, row.farm_id); if (!ctx) return;
     const d = parse(row);
     if (d.sign?.status === 'signed') return res.status(409).json({ error: 'המסמך כבר נחתם' });
-    const timesheet = await ensureTimesheet(req, row, ctx.user.full_name);
+    const timesheet = (row.entity_type === 'payslips' && d.timesheet?.file_url) ? d.timesheet : null;
     res.json({ ...issueSignLink(row, ctx.user.full_name), employee: employeeInfo(d.employee_id), timesheet });
   });
 
@@ -258,7 +230,7 @@ function registerEmployeeDocRoutes(app, deps) {
   const batchRows = (farmId, period) => db.prepare(`SELECT * FROM entities WHERE entity_type = 'payslips' AND farm_id = ? AND json_extract(data, '$.period') = ?`)
     .all(farmId, period).map(parse).map(d => {
       const e = employeeInfo(d.employee_id); const v = publicDoc(d);
-      return { doc_id: d.id, employee_id: d.employee_id, employee_name: e.name || d.employee_name || '', first_name: e.first_name, phone: e.phone, title: d.title, employer: d.employer || null, sign_status: v.sign_status, signed_at: v.signed_at, sent_at: d.sign?.sent_at || null, sent_via: d.sign?.sent_via || null, timesheet: d.timesheet ? { total_hours: d.timesheet.total_hours ?? null, days: d.timesheet.days ?? null, source: d.timesheet.source || null } : null };
+      return { doc_id: d.id, employee_id: d.employee_id, employee_name: e.name || d.employee_name || '', first_name: e.first_name, phone: e.phone, title: d.title, employer: d.employer || null, sign_status: v.sign_status, signed_at: v.signed_at, sent_at: d.sign?.sent_at || null, sent_via: d.sign?.sent_via || null, timesheet: !!d.timesheet?.file_url };
     }).sort((a, b) => a.employee_name.localeCompare(b.employee_name, 'he'));
   const farmOf = (req) => { const u = getUser(req.user.id); return req.query.farm_id || req.body?.farm_id || u?.current_farm_id; };
 
@@ -282,7 +254,6 @@ function registerEmployeeDocRoutes(app, deps) {
       if (it.sign_status === 'signed') continue;
       if (it.sign_status === 'pending' && !req.body?.renew && !only) continue; // כבר נשלח — לא שוברים קישור קיים
       const row = docRow(it.doc_id);
-      await ensureTimesheet(req, row, ctx.user.full_name);
       links[it.doc_id] = issueSignLink(row, ctx.user.full_name);
     }
     const items = batchRows(farmId, period).map(it => (links[it.doc_id] ? { ...it, ...links[it.doc_id] } : it));

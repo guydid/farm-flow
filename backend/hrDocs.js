@@ -48,7 +48,7 @@ const HR_ENTITIES = {
       F('gross', ['number', 'null'], 'שכר ברוטו (סה"כ תשלומים) ב-₪'),
       F('net', ['number', 'null'], 'שכר נטו ב-₪'),
       F('net_to_pay', ['number', 'null'], 'נטו לתשלום ב-₪ (אחרי ניכויי רשות)'),
-      F('timesheet', ['object', 'null'], 'דף השעות של החודש (נוצר משעון הנוכחות או הועלה): file_url, days, total_hours, generated_at, source. נשלח לחתימת העובד יחד עם התלוש (קריאה בלבד; הורדה דרך files[] kind=timesheet)'),
+      F('timesheet', ['object', 'null'], 'דף השעות של החודש שהועלה ע"י המנהל: file_url, file_name, uploaded_at, signed_at. נשלח לחתימת העובד יחד עם התלוש (קריאה בלבד; הורדה דרך files[] kind=timesheet)'),
     ],
   },
   employment_contracts: {

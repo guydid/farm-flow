@@ -59,6 +59,7 @@ export default function EmployeeFiles({ employee }) {
   const [tab, setTab] = useState("payslip");
   const [pending, setPending] = useState(null); // { file } — לפני שמירה: חודש/שם
   const [meta, setMeta] = useState(emptyMeta);
+  const [tsFile, setTsFile] = useState(null); // דף שעות שמועלה יחד עם תלוש חדש
   const [saving, setSaving] = useState(false);
   const [share, setShare] = useState(null); // { doc, url, expires_at }
   const [busyId, setBusyId] = useState(null);
@@ -86,6 +87,7 @@ export default function EmployeeFiles({ employee }) {
     e.target.value = null;
     if (!file) return;
     setMeta({ ...emptyMeta(), title: tab === "other" ? file.name.replace(/\.[^.]+$/, "") : "" });
+    setTsFile(null);
     setPending({ file });
   };
   // פוליסת ביטוח אפשר לרשום גם בלי קובץ
@@ -105,10 +107,12 @@ export default function EmployeeFiles({ employee }) {
     setSaving(true);
     try {
       const file_url = pending.file ? (await UploadFile({ file: pending.file })).file_url : null;
+      const ts = tab === "payslip" && tsFile ? { timesheet_file_url: (await UploadFile({ file: tsFile })).file_url, timesheet_file_name: tsFile.name } : {};
       const doc = await apiFetch(`${BASE_URL}/employees/${employee.id}/documents`, {
         method: "POST",
-        body: JSON.stringify({ category: tab, ...metaPayload(), file_url, file_name: pending.file?.name || null }),
+        body: JSON.stringify({ category: tab, ...metaPayload(), file_url, file_name: pending.file?.name || null, ...ts }),
       });
+      setTsFile(null);
       setDocs(prev => [doc, ...prev]);
       setPending(null);
       toast({ title: "המסמך נשמר בתיק העובד" });
@@ -148,19 +152,10 @@ export default function EmployeeFiles({ employee }) {
     }
   };
 
-  // ── דף שעות לתלוש (משעון הנוכחות / העלאה) — נחתם יחד עם התלוש ──
+  // ── דף שעות לתלוש — מועלה ע"י המנהל, נחתם יחד עם התלוש ──
   const tsFileRef = useRef(null);
   const [tsDoc, setTsDoc] = useState(null);
   const replaceDoc = (doc) => setDocs(prev => prev.map(d => (d.id === doc.id ? doc : d)));
-  const makeTimesheet = async (doc) => {
-    setBusyId(`ts_${doc.id}`);
-    try {
-      replaceDoc(await apiFetch(`${BASE_URL}/employee-documents/${doc.id}/timesheet`, { method: "POST", body: "{}" }));
-      toast({ title: "דף השעות נוצר מהשעון" });
-    } catch (e) {
-      toast({ title: "לא נוצר דף שעות", description: e.message, variant: "destructive" });
-    } finally { setBusyId(null); }
-  };
   const pickTimesheet = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = null;
@@ -263,20 +258,17 @@ export default function EmployeeFiles({ employee }) {
                         <Clock className="w-3.5 h-3.5 text-gray-500" aria-hidden="true" />
                         {doc.timesheet?.file_url ? (<>
                           <a href={withToken(doc.timesheet.file_url)} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline">דף שעות</a>
-                          {doc.timesheet.total_hours != null && <span className="text-gray-600">{doc.timesheet.total_hours} שעות · {doc.timesheet.days} ימים{doc.timesheet.missing_punches ? ` · ${doc.timesheet.missing_punches} חסרי החתמה` : ""}</span>}
-                          {doc.timesheet.source === "upload" && <span className="text-gray-500">(הועלה)</span>}
                           {doc.timesheet.signed_at ? <span className="text-green-700">נחתם עם התלוש</span> : doc.sign_status !== "signed" && (<>
-                            <button type="button" className="text-gray-600 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => makeTimesheet(doc)}>עדכן מהשעון</button>
+                            <button type="button" className="text-gray-600 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => { setTsDoc(doc); tsFileRef.current?.click(); }}>החלף</button>
                             <button type="button" className="text-red-600 underline" onClick={() => removeTimesheet(doc)}>הסר</button>
                           </>)}
                         </>) : doc.sign_status === "signed" ? (
                           <span className="text-gray-500">נחתם בלי דף שעות</span>
                         ) : (<>
                           <span className="text-gray-500">אין דף שעות</span>
-                          <button type="button" className="text-blue-700 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => makeTimesheet(doc)}>
-                            {busyId === `ts_${doc.id}` ? "יוצר…" : "צור מהשעון"}
+                          <button type="button" className="text-blue-700 underline disabled:opacity-50" disabled={busyId === `ts_${doc.id}`} onClick={() => { setTsDoc(doc); tsFileRef.current?.click(); }}>
+                            {busyId === `ts_${doc.id}` ? "מעלה…" : "העלה דף שעות"}
                           </button>
-                          <button type="button" className="text-blue-700 underline" onClick={() => { setTsDoc(doc); tsFileRef.current?.click(); }}>העלה</button>
                         </>)}
                       </div>
                     )}
@@ -322,6 +314,11 @@ export default function EmployeeFiles({ employee }) {
               <div className="grid grid-cols-2 gap-2">
                 <div><Label htmlFor="doc-gross">ברוטו (₪)</Label><Input id="doc-gross" type="number" inputMode="decimal" value={meta.gross} onChange={set("gross")} className="mt-1" /></div>
                 <div><Label htmlFor="doc-net">נטו (₪)</Label><Input id="doc-net" type="number" inputMode="decimal" value={meta.net} onChange={set("net")} className="mt-1" /></div>
+              </div>
+              <div>
+                <Label htmlFor="doc-ts">דף שעות (לא חובה)</Label>
+                <Input id="doc-ts" type="file" accept="image/*,application/pdf" className="mt-1" onChange={(e) => setTsFile(e.target.files?.[0] || null)} />
+                <p className="text-xs text-gray-500 mt-1">העובד יחתום על התלוש ועל דף השעות יחד.</p>
               </div>
             </>)}
             {tab !== "payslip" && tab !== "medical_insurance" && (
@@ -381,11 +378,11 @@ export default function EmployeeFiles({ employee }) {
             </DialogDescription>
             {share?.doc?.category === "payslip" && (share.timesheet?.file_url ? (
               <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-md p-2 mt-2">
-                העובד יחתום על התלוש ועל דף השעות יחד{share.timesheet.total_hours != null ? ` (${share.timesheet.total_hours} שעות, ${share.timesheet.days} ימים)` : ""}.
+                העובד יחתום על התלוש ועל דף השעות יחד.
               </p>
             ) : (
               <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2 mt-2">
-                אין דף שעות לתלוש הזה (אין החתמות בשעון לחודש, או שהוסר) — יישלח התלוש בלבד. אפשר להעלות דף שעות בתיק ולשלוח קישור חדש.
+                לא הועלה דף שעות לתלוש הזה — יישלח התלוש בלבד. אפשר להעלות דף שעות בתיק ולשלוח קישור חדש.
               </p>
             ))}
           </DialogHeader>
