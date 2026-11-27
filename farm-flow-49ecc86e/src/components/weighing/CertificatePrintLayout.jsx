@@ -44,7 +44,14 @@ function groupItems(items) {
   return [...map.values()];
 }
 
-export default function CertificatePrintLayout({ certificate, items, companySettings, customer }) {
+// kind="entry" — תעודת כניסה (רכש תוצרת מספק): אותה פריסה, כותרת "תעודת כניסה" והצד השני הוא ספק
+const KINDS = {
+  weighing: { title: 'תעודת שקילה', party: 'לקוח', sign: 'חתימת הלקוח' },
+  entry: { title: 'תעודת כניסה', party: 'ספק', sign: 'חתימת הספק' },
+};
+
+export default function CertificatePrintLayout({ certificate, items, companySettings, customer, kind = 'weighing' }) {
+  const K = KINDS[kind] || KINDS.weighing;
   const cert = obj(certificate), co = obj(companySettings), cu = obj(customer);
   const list = Array.isArray(items) ? items : [];
   const groups = groupItems(list);
@@ -69,7 +76,7 @@ export default function CertificatePrintLayout({ certificate, items, companySett
         </div>
         <div className="ff-title">
           <div className="ff-title-text">
-            <h2>תעודת שקילה</h2>
+            <h2>{K.title}</h2>
             <div className="ff-doc-no">מס' {certificateNumber(cert)}</div>
             <div className="ff-sub">{fmtDate(cert.date)}{cert.time ? ` · ${cert.time}` : ''}</div>
             {cert.status && <div className="ff-sub">סטטוס: {STATUSES[cert.status] || cert.status}</div>}
@@ -85,9 +92,9 @@ export default function CertificatePrintLayout({ certificate, items, companySett
 
       <section className="ff-boxes">
         <div className="ff-box">
-          <h3>לקוח</h3>
+          <h3>{K.party}</h3>
           <table className="ff-kv"><tbody>
-            <tr><th>שם</th><td>{cu.name || cert.customer_name || 'לא צוין'}</td></tr>
+            <tr><th>שם</th><td>{cu.name || cert.customer_name || cert.supplier_name || 'לא צוין'}</td></tr>
             {cu.address && <tr><th>כתובת</th><td>{cu.address}</td></tr>}
             {cu.phone && <tr><th>טלפון</th><td>{cu.phone}</td></tr>}
             {cu.contact_person && <tr><th>איש קשר</th><td>{cu.contact_person}</td></tr>}
@@ -157,11 +164,11 @@ export default function CertificatePrintLayout({ certificate, items, companySett
       <div className="ff-sign">
         <div>חתימת השוקל</div>
         <div>חתימת הנהג</div>
-        <div>חתימת הלקוח</div>
+        <div>{K.sign}</div>
       </div>
 
       <footer className="ff-foot">
-        <span>תעודת שקילה {certificateNumber(cert)}</span>
+        <span>{K.title} {certificateNumber(cert)}</span>
         <span>הופק באמצעות FarmFlow · {format(new Date(), 'dd/MM/yyyy HH:mm')}</span>
       </footer>
     </div>

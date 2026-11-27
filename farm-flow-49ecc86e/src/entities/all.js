@@ -57,3 +57,6 @@ export const Order = createEntity('orders');
 export const OrderItem = createEntity('order_items');
 export const DeliveryNote = createEntity('delivery_notes');
 export const DeliveryNoteItem = createEntity('delivery_note_items');
+// תעודות כניסה — תוצרת חקלאית שנקנתה מספק ונשקלה בכניסה (באותו פורמט של תעודות השקילה)
+export const EntryCertificate = createEntity('entry_certificates');
+export const EntryItem = createEntity('entry_items');

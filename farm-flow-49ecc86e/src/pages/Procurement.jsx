@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { ShoppingCart, Plus, Search, Loader2, FileText, ClipboardList, Truck, AlertTriangle, Receipt, ArrowDownLeft, ArrowUpRight, Camera, ChevronLeft } from "lucide-react";
+import { ShoppingCart, Plus, Search, Loader2, FileText, ClipboardList, Truck, AlertTriangle, Receipt, ArrowDownLeft, ArrowUpRight, Camera, ChevronLeft, PackageOpen } from "lucide-react";
 import PageHeader from "@/components/common/PageHeader";
 import Invoices from "./Invoices";
 import OrderForm from "../components/procurement/OrderForm";
@@ -15,11 +15,13 @@ import OrderDetail from "../components/procurement/OrderDetail";
 import DeliveryNoteForm from "../components/procurement/DeliveryNoteForm";
 import DeliveryNoteDetail from "../components/procurement/DeliveryNoteDetail";
 import DiscrepanciesPanel from "../components/procurement/DiscrepanciesPanel";
+import EntryCertificatesPanel from "../components/procurement/EntryCertificatesPanel";
 import { apiFetch, DIRECTIONS, ORDER_STATUS, DN_STATUS, SOURCES, money, fmtDate, daysUntil, fileHref } from "../components/procurement/procurementUtils";
 
 const TABS = [
   { key: "orders", label: "הזמנות", icon: ClipboardList },
-  { key: "notes", label: "תעודות משלוח", shortLabel: "תעודות", icon: Truck },
+  { key: "notes", label: "תעודות משלוח", shortLabel: "משלוח", icon: Truck },
+  { key: "entries", label: "תעודות כניסה", shortLabel: "כניסה", icon: PackageOpen },
   { key: "discrepancies", label: "פערים", icon: AlertTriangle },
   { key: "invoices", label: "חשבוניות", icon: Receipt },
 ];
@@ -34,7 +36,7 @@ const Status = ({ map, value }) => { const s = map[value] || { label: value, cls
  * פקד מקטעים (segmented control) — אפור שקט עם הבחירה כ"כרטיס" לבן, כמו ב-iOS.
  * הצבע הראשי נשמר לפעולה הראשית בעמוד בלבד.
  */
-function Segmented({ items, value, onChange, label, size = "md", className = "" }) {
+function Segmented({ items, value, onChange, label, size = "md", className = "", iconsFromSm = false }) {
   const refs = useRef([]);
   const onKey = (e, idx) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
@@ -53,7 +55,7 @@ function Segmented({ items, value, onChange, label, size = "md", className = "" 
           <button key={t.key} ref={(el) => (refs.current[idx] = el)} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
                   id={`tab-${t.key}`} aria-controls={`panel-${t.key}`} title={t.hint} onClick={() => onChange(t.key)} onKeyDown={(e) => onKey(e, idx)}
                   className={`flex-1 ${h} inline-flex items-center justify-center gap-1.5 rounded-lg px-2 sm:px-3 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring ${on ? "bg-background text-foreground font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground font-medium"}`}>
-            {t.icon && <t.icon className="w-4 h-4 shrink-0" aria-hidden="true" />}
+            {t.icon && <t.icon className={`w-4 h-4 shrink-0 ${iconsFromSm ? "hidden sm:block" : ""}`} aria-hidden="true" />}
             <span className={t.shortLabel ? "hidden sm:inline" : ""}>{t.label}</span>
             {t.shortLabel && <span className="sm:hidden">{t.shortLabel}</span>}
             {t.badge > 0 && <span className="text-xs tabular-nums rounded-full px-1.5 leading-5 bg-warning/20 text-warning-foreground" aria-label={`${t.badge} פערים`}>{t.badge}</span>}
@@ -97,6 +99,7 @@ export default function Procurement() {
   const [statusFilter, setStatusFilter] = useState("open");
   const [partyFilter, setPartyFilter] = useState("all");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [entrySignal, setEntrySignal] = useState(0); // פתיחת "תעודת כניסה חדשה" מכפתור הכותרת
   // dialogs
   const [orderForm, setOrderForm] = useState({ open: false, order: null });
   const [noteForm, setNoteForm] = useState({ open: false, note: null, order: null });
@@ -193,20 +196,24 @@ export default function Procurement() {
     { label: "באיחור", value: summary.open_orders.overdue, warn: summary.open_orders.overdue > 0 },
     { label: "פערים", value: summary.discrepancies.total, warn: summary.discrepancies.total > 0, onClick: () => changeTab("discrepancies") },
   ] : [];
-  const subtitle = tab === "invoices" ? "חשבוניות הספקים, סריקה וסנכרון מהמייל" : DIR_TABS.find((d) => d.key === direction)?.hint;
+  const subtitle = tab === "invoices" ? "חשבוניות הספקים, סריקה וסנכרון מהמייל" : tab === "entries" ? "תוצרת חקלאית שהתקבלה מספקים ונשקלה בכניסה" : DIR_TABS.find((d) => d.key === direction)?.hint;
 
   return (
     <div className="p-3 sm:p-6 space-y-4" dir="rtl">
       <PageHeader icon={ShoppingCart} title="רכש" subtitle={subtitle} compact className="mb-0"
-        actions={canWrite && tab !== "invoices" && <>
+        actions={canWrite && tab === "entries" ? (
+          <Button onClick={() => setEntrySignal((n) => n + 1)}><Plus className="w-4 h-4 ml-1" aria-hidden="true" /> תעודת כניסה חדשה</Button>
+        ) : canWrite && tab !== "invoices" && <>
           <Button variant="outline" onClick={newNote}><Camera className="w-4 h-4 ml-1" aria-hidden="true" /> <span className="hidden sm:inline">קלוט </span>תעודת משלוח</Button>
           <Button onClick={newOrder}><Plus className="w-4 h-4 ml-1" aria-hidden="true" /> הזמנה חדשה</Button>
         </>}>
-        <Segmented items={tabItems} value={tab} onChange={changeTab} label="אזורי רכש" className="mt-3" />
+        <Segmented items={tabItems} value={tab} onChange={changeTab} label="אזורי רכש" className="mt-3" iconsFromSm />
       </PageHeader>
 
       {tab === "invoices" ? (
         <div role="tabpanel" id="panel-invoices" aria-labelledby="tab-invoices"><Invoices embedded /></div>
+      ) : tab === "entries" ? (
+        <div role="tabpanel" id="panel-entries" aria-labelledby="tab-entries"><EntryCertificatesPanel farmId={farmId} canWrite={canWrite} createSignal={entrySignal} /></div>
       ) : (
         <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} className="space-y-4">
           {/* רכש / מכירה + סינון — שורה אחת במסך רחב, רשת בנייד */}
