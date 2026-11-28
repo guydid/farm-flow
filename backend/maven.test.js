@@ -48,6 +48,68 @@ test('note without a linked customer record falls back to counterparty_name; fre
   assert.equal(body.remarks, undefined);
 });
 
+const { findDuplicateGroups, mergeRecordData, remapReferences, collectCatalogItems } = require('./maven');
+
+test('duplicates: same Maven id / vat id / name group together; conflicting ids never merge', () => {
+  const rows = [
+    { id: 'a', name: 'חוות השרון', created_at: '2026-01-01' },
+    { id: 'b', name: ' חוות  השרון ', maven_id: 'M1', created_at: '2026-02-01' },
+    { id: 'c', name: 'Sharon Farm', vat_id: '51-234567-8', created_at: '2026-03-01' },
+    { id: 'd', name: 'שם אחר', vat_id: '512345678', maven_id: 'M1', created_at: '2026-04-01' },
+    { id: 'e', name: 'כהן', vat_id: '111' },
+    { id: 'f', name: 'כהן', vat_id: '222' }, // אותו שם, ח.פ שונה → לא מאחדים
+    { id: 'g', name: 'יחיד' },
+  ];
+  const groups = findDuplicateGroups('suppliers', rows, id => (id === 'a' ? 5 : 0));
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].keep.id, 'b'); // יש לו maven_id; d גם, אבל b עם אותו מזהה נוצר קודם
+  assert.deepEqual(groups[0].merge.map(r => r.id).sort(), ['a', 'c', 'd']);
+});
+
+test('duplicates: two different Maven ids with the same name stay separate', () => {
+  const rows = [{ id: 'x', name: 'לקוח', maven_id: 'M1' }, { id: 'y', name: 'לקוח', maven_id: 'M2' }, { id: 'z', name: 'לקוח' }];
+  const groups = findDuplicateGroups('customers', rows);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].merge.length, 1); // z מצטרף לאחד מהם בלבד
+});
+
+test('merge fills empty fields, unions emails, keeps farmer flag', () => {
+  const out = mergeRecordData({ id: 'k', name: 'A', phone: '', email_addresses: ['a@x.co'], is_farmer: false },
+    [{ id: 'd', name: 'A2', phone: '050', email_addresses: ['A@x.co', 'b@x.co'], is_farmer: true, address: 'כפר' }]);
+  assert.equal(out.name, 'A');
+  assert.equal(out.phone, '050');
+  assert.equal(out.address, 'כפר');
+  assert.deepEqual(out.email_addresses, ['a@x.co', 'b@x.co']);
+  assert.equal(out.is_farmer, true);
+  assert.equal(out.id, 'k');
+});
+
+test('remap references: scalar, array and object-key refs', () => {
+  const idMap = new Map([['p2', 'p1']]);
+  const rows = [
+    { id: 'i1', data: { product_id: 'p2', net_weight: 5 } },
+    { id: 'k1', data: { product_ids: ['p1', 'p2', 'p3'], product_weights: { p2: 2, p3: 3 } } },
+    { id: 'x', data: { product_id: 'p3' } },
+  ];
+  const changed = remapReferences('products', rows, idMap);
+  assert.equal(changed.length, 2);
+  assert.equal(changed[0].data.product_id, 'p1');
+  assert.deepEqual(changed[1].data.product_ids, ['p1', 'p3']);
+  assert.deepEqual(changed[1].data.product_weights, { p1: 2, p3: 3 });
+});
+
+test('catalog items from Maven documents: name before " · ", latest price, equipment flagged, free lines skipped', () => {
+  const docs = [
+    { items: [{ id: 'G1', item_nubmer: 'FF-1', description: 'תות שדה · איכות א · לפי ק"ג', price: 10 }, { description: 'שורה חופשית', price: 5 }] },
+    { items: [{ id: 'G1', item_nubmer: 'FF-1', description: 'תות שדה · לפי יחידה', price: 12, no_vat: true }, { id: 'G2', item_nubmer: 'PK-1', description: 'אריזה · קרטון 3 ק"ג', price: 0 }] },
+  ];
+  const items = collectCatalogItems(docs);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items[0], { maven_item_id: 'G1', maven_item_no: 'FF-1', name: 'תות שדה', equipment: null, price: 12, no_vat: true, uses: 2 });
+  assert.equal(items[1].equipment, 'אריזה');
+  assert.equal(items[1].name, 'קרטון 3 ק"ג');
+});
+
 const { buildExpenseUpload } = require('./maven');
 test('supplier invoice → Maven expense upload: filename + description', () => {
   const r = buildExpenseUpload({ supplier_name: 'דשנים כימיקלים / בע"מ', invoice_number: 'INV 77', date: '2026-11-03', total: 1170.456, notes: 'דשן לחממה 4' }, '.pdf');

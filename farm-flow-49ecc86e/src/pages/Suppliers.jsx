@@ -13,6 +13,7 @@ import { Plus, Search, Trash2, Edit2, Phone, MapPin, Mail, Loader2, FileText, Bu
 import { useToast } from '@/components/ui/use-toast';
 
 import PageHeader from "@/components/common/PageHeader";
+import MavenIdBadge from "@/components/common/MavenIdBadge";
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
   const [invoiceCounts, setInvoiceCounts] = useState({});
@@ -57,6 +58,7 @@ export default function Suppliers() {
       String(x.name || '').toLowerCase().includes(s) ||
       String(x.vat_id || '').includes(s) ||
       String(x.phone || '').includes(s) ||
+      String(x.maven_id || '').toLowerCase().includes(s) ||
       (Array.isArray(x.email_addresses) && x.email_addresses.some(e => String(e).toLowerCase().includes(s)))
     );
   }, [suppliers, search, kind]);
@@ -170,7 +172,12 @@ export default function Suppliers() {
                   <div className="flex justify-between items-start gap-2 mb-2">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-semibold text-gray-900 truncate">{s.name}{s.is_farmer && <Badge className="mr-2 bg-green-50 text-green-700 border-green-200 align-middle">חקלאי</Badge>}</h3>
-                      {s.vat_id && <p className="text-xs text-gray-500 mt-0.5">ח.פ. {s.vat_id}</p>}
+                      {(s.vat_id || s.maven_id) && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          {s.vat_id && <span className="text-xs text-gray-500">ח.פ. {s.vat_id}</span>}
+                          <MavenIdBadge id={s.maven_id} />
+                        </div>
+                      )}
                     </div>
                     {invoiceCounts[s.id] > 0 && (
                       <Link to={`${createPageUrl('Invoices')}?supplier_id=${s.id}`}>

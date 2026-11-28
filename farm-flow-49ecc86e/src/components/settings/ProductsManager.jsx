@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { invalidateList } from "@/api/cachedReads";
+import MavenIdBadge from "@/components/common/MavenIdBadge";
 
 export default function ProductsManager({ currentFarm }) {
   const [products, setProducts] = useState([]);
@@ -185,7 +186,12 @@ export default function ProductsManager({ currentFarm }) {
                       <TableCell>{product.weighable !== false ? "כן" : "לא"}</TableCell>
                       <TableCell>{product.default_pricing_method === "per_kg" ? "לפי ק\"ג" : "לפי יחידה"}</TableCell>
                       <TableCell>{product.crop_type || "-"}</TableCell>
-                      <TableCell className="font-medium">{product.name}</TableCell>
+                      <TableCell className="font-medium">
+                        {product.name}
+                        {(product.maven_item_id || product.maven_item_no) && (
+                          <div className="mt-0.5 font-normal"><MavenIdBadge id={product.maven_item_id} code={product.maven_item_no} /></div>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))
                 )}

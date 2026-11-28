@@ -526,7 +526,22 @@ export default function WeighingDetail({ mode = 'sale' }) {
       });
 
       handleFormClose();
-      
+
+      // שורות אחרות של אותו מוצר בתעודה בלי מחיר (למשל משטחים שהגיעו מתעודות כניסה) — מקבלות את אותו מחיר
+      const price = parseFloat(itemData?.price_per_unit) || 0;
+      if (price > 0 && itemData?.product_id) {
+        const pricing_method = itemData.pricing_method || 'per_kg';
+        const discount_percentage = parseFloat(itemData.discount_percentage) || 0;
+        const unpriced = safeArray(weighingItems).filter(w => w && w.id !== savedItem?.id && w.id !== editingItem?.id
+          && w.product_id === itemData.product_id && !(parseFloat(w.price_per_unit) > 0));
+        for (const w of unpriced) {
+          const base = pricing_method === 'per_kg' ? (parseFloat(w.net_weight) || 0) * price : (parseInt(w.package_count, 10) || 0) * price;
+          const item_total = Math.round((discount_percentage > 0 && discount_percentage < 100 ? base * (1 - discount_percentage / 100) : base) * 100) / 100;
+          await WeighingItem.update(w.id, { price_per_unit: price, pricing_method, discount_percentage, item_total });
+        }
+        if (unpriced.length) toast({ title: `המחיר הוחל גם על ${unpriced.length} שורות נוספות של ${itemData.product_name || 'המוצר'} שהיו בלי מחיר` });
+      }
+
       const updatedItems = await WeighingItem.filter({ certificate_id: certificate.id });
       setWeigingItems(updatedItems);
       
@@ -545,7 +560,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
         variant: "destructive" 
       });
     }
-  }, [certificate, currentFarm, editingItem, handleFormClose, updateCertificateTotals, handlePrintSticker, toast]);
+  }, [certificate, currentFarm, editingItem, handleFormClose, updateCertificateTotals, handlePrintSticker, toast, weighingItems]);
 
   // הוספת משטחים שנקלטו בתעודות כניסה לתעודת המכירה: משקלים/אריזות מועתקים, מחיר = המחיר האחרון ללקוח למוצר
   const handleAddFromEntries = useCallback(async (chosen) => {
@@ -560,7 +575,9 @@ export default function WeighingDetail({ mode = 'sale' }) {
     let added = 0, unpriced = 0;
     try {
       for (const { item: e, cert: ec } of chosen) {
-        const last = e.product_id ? lastPrices[e.product_id] : null;
+        // מחיר: האחרון ללקוח; אם אין — מחיר של אותו מוצר שכבר בתעודה הזו (כדי שכל המשטחים יתומחרו אותו דבר)
+        const onCert = safeFind(weighingItems, w => safeObject(w).product_id === e.product_id && (parseFloat(safeObject(w).price_per_unit) || 0) > 0);
+        const last = (e.product_id ? lastPrices[e.product_id] : null) || (onCert ? { price_per_unit: onCert.price_per_unit, pricing_method: onCert.pricing_method, discount_percentage: onCert.discount_percentage } : null);
         const pricing_method = last?.pricing_method || e.pricing_method || 'per_kg';
         const price_per_unit = Number(last?.price_per_unit) || 0;
         const discount_percentage = Number(last?.discount_percentage) || 0;
@@ -603,7 +620,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
       setWeigingItems(updatedItems);
       await updateCertificateTotals(updatedItems);
     }
-  }, [certificate, currentFarm, toast, updateCertificateTotals]);
+  }, [certificate, currentFarm, toast, updateCertificateTotals, weighingItems]);
 
   const handleDeleteItem = useCallback(async (itemId) => {
     if (!window.confirm("האם אתה בטוח שברצונך למחוק פריט זה?")) return;
@@ -1164,7 +1181,9 @@ export default function WeighingDetail({ mode = 'sale' }) {
       )}
 
       {/* מדבקת משטח מרונדרת מחוץ למסך — נשלחת ישירות להדפסה, ללא חלון תצוגה מקדימה */}
-      <div ref={stickerPrintRef} aria-hidden="true" style={{ position: 'absolute', left: '-10000px', top: 0, width: 'max-content' }}>
+      {/* קופסה באפס גודל: ב-RTL אלמנט ב-left שלילי מרחיב את העמוד שמאלה והנייד מתרחק (zoom out).
+          ההדפסה מעתיקה את ה-innerHTML, כך שאין צורך שיוצג. */}
+      <div ref={stickerPrintRef} aria-hidden="true" style={{ position: 'fixed', top: 0, left: 0, width: 0, height: 0, overflow: 'hidden', visibility: 'hidden', pointerEvents: 'none' }}>
         {lastAddedItem && (
           <PalletSticker
             item={safeObject(lastAddedItem)}

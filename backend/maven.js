@@ -94,6 +94,127 @@ function buildNoteDocument(cfg, { note, items, customer, products = [] }, opts =
   return body;
 }
 
+// ── כפילויות: לקוחות / ספקים / מוצרים ──
+// מזהים לכל סוג: maven = המזהה ב-Maven, ids = מזהים חזקים נוספים (ח.פ / מק"ט), name = שם מנורמל.
+// שתי רשומות מאוחדות כשהן חולקות אחד מהם — אלא אם בקבוצה יהיו שני ערכי Maven שונים או שני ח.פ/מק"ט שונים.
+const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+const DEDUPE_KINDS = {
+  customers: { entity: 'customers', refs: ['customer_id'], maven: r => r.maven_id || '', strong: r => digitsOnly(r.identification) },
+  suppliers: { entity: 'suppliers', refs: ['supplier_id', 'source_supplier_id'], maven: r => r.maven_id || '', strong: r => digitsOnly(r.vat_id) },
+  products: { entity: 'products', refs: ['product_id'], arrayRefs: ['product_ids'], keyRefs: ['product_weights'], maven: r => r.maven_item_id || '', strong: r => String(r.maven_item_no || '').trim().toUpperCase() },
+};
+
+// rows: הרשומות מסוג אחד; refCount(id) → מספר ההפניות (לבחירת הרשומה שנשמרת)
+function findDuplicateGroups(kind, rows, refCount = () => 0) {
+  const K = DEDUPE_KINDS[kind];
+  if (!K) throw new Error('unknown kind');
+  const list = rows.filter(r => r && r.id);
+  const parent = new Map(list.map(r => [r.id, r.id]));
+  const meta = new Map(list.map(r => [r.id, { maven: new Set(K.maven(r) ? [K.maven(r)] : []), strong: new Set(K.strong(r) ? [K.strong(r)] : []) }]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const conflict = (a, b) => (a.size && b.size && ![...a].some(v => b.has(v)));
+  const union = (a, b) => {
+    const ra = find(a), rb = find(b);
+    if (ra === rb) return;
+    const ma = meta.get(ra), mb = meta.get(rb);
+    if (conflict(ma.maven, mb.maven) || conflict(ma.strong, mb.strong)) return;
+    parent.set(rb, ra);
+    mb.maven.forEach(v => ma.maven.add(v)); mb.strong.forEach(v => ma.strong.add(v));
+  };
+  // קודם התאמות חזקות (Maven, ח.פ / מק"ט), אחר כך לפי שם
+  for (const keyFn of [K.maven, K.strong, r => normName(r.name)]) {
+    const seen = new Map();
+    for (const r of list) {
+      const k = keyFn(r);
+      if (!k) continue;
+      if (seen.has(k)) union(seen.get(k), r.id); else seen.set(k, r.id);
+    }
+  }
+  const groups = new Map();
+  for (const r of list) {
+    const root = find(r.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(r);
+  }
+  return [...groups.values()].filter(g => g.length > 1).map(g => {
+    const sorted = [...g].sort((a, b) =>
+      (K.maven(b) ? 1 : 0) - (K.maven(a) ? 1 : 0)
+      || refCount(b.id) - refCount(a.id)
+      || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+    return { keep: sorted[0], merge: sorted.slice(1) };
+  });
+}
+
+// איחוד שדות: הרשומה שנשמרת מקבלת שדות ריקים מהכפילויות; אימיילים מתאחדים; חקלאי = אם אחד מהם
+function mergeRecordData(keep, dups) {
+  const out = { ...keep };
+  for (const d of dups) {
+    for (const [k, v] of Object.entries(d)) {
+      if (['id', 'created_at', 'updated_at', 'farm_id', '_by'].includes(k)) continue;
+      const cur = out[k];
+      if (Array.isArray(cur) && Array.isArray(v)) {
+        const seen = new Set(cur.map(x => typeof x === 'string' ? x.toLowerCase() : JSON.stringify(x)));
+        out[k] = [...cur, ...v.filter(x => !seen.has(typeof x === 'string' ? x.toLowerCase() : JSON.stringify(x)))];
+      } else if (k === 'is_farmer') out[k] = !!cur || !!v;
+      else if ((cur === undefined || cur === null || cur === '') && v !== undefined && v !== null && v !== '') out[k] = v;
+    }
+  }
+  if (typeof out.name === 'string') out.name = out.name.trim().replace(/\s+/g, ' ');
+  return out;
+}
+
+// מעבר על כל הרשומות של המשק והחלפת הפניות לכפילויות במזהה שנשמר. מחזיר את הרשומות שהשתנו.
+function remapReferences(kind, rows, idMap) {
+  const K = DEDUPE_KINDS[kind];
+  const changed = [];
+  for (const row of rows) {
+    let touched = false;
+    const d = { ...row.data };
+    for (const f of K.refs) if (d[f] && idMap.has(d[f])) { d[f] = idMap.get(d[f]); touched = true; }
+    for (const f of K.arrayRefs || []) if (Array.isArray(d[f]) && d[f].some(x => idMap.has(x))) { d[f] = [...new Set(d[f].map(x => idMap.get(x) || x))]; touched = true; }
+    for (const f of K.keyRefs || []) {
+      if (d[f] && typeof d[f] === 'object' && !Array.isArray(d[f]) && Object.keys(d[f]).some(x => idMap.has(x))) {
+        const o = {};
+        for (const [k, v] of Object.entries(d[f])) { const nk = idMap.get(k) || k; if (!(nk in o) || nk === k) o[nk] = v; }
+        d[f] = o; touched = true;
+      }
+    }
+    if (touched) changed.push({ id: row.id, data: d });
+  }
+  return changed;
+}
+
+// ── ייבוא פריטים מ-Maven ──
+// אין ב-API חיפוש פריטים, אבל שורות המסמכים כוללות את ה-GUID של הפריט בקטלוג ואת המק"ט (item_nubmer — כך במקור).
+// השורות של FarmFlow נראות כמו "תות שדה · איכות א · לפי ק"ג" — השם הוא החלק הראשון. אריזה/משטח מסומנים כציוד.
+function collectCatalogItems(documents) {
+  const byKey = new Map();
+  for (const doc of documents || []) {
+    for (const line of doc?.items || []) {
+      const id = line?.id ? String(line.id) : '';
+      const itemNo = String(line?.item_nubmer || line?.item_number || '').trim();
+      if (!id && !itemNo) continue;
+      const desc = String(line.description || '').trim();
+      const parts = desc.split(' · ').map(s => s.trim()).filter(Boolean);
+      const equipment = parts.length > 1 && (parts[0] === 'אריזה' || parts[0] === 'משטח') ? parts[0] : null;
+      const name = (equipment ? parts[1] : parts[0]) || desc || itemNo;
+      const key = id || `no:${itemNo}`;
+      const prev = byKey.get(key);
+      // המסמכים ממוינים לפי סדר ההפקה — האחרון קובע מחיר
+      byKey.set(key, {
+        maven_item_id: id || prev?.maven_item_id || '',
+        maven_item_no: itemNo || prev?.maven_item_no || '',
+        name: prev?.name || name,
+        equipment,
+        price: Number(line.price) > 0 ? round2(line.price) : (prev?.price || 0),
+        no_vat: !!line.no_vat,
+        uses: (prev?.uses || 0) + 1,
+      });
+    }
+  }
+  return [...byKey.values()];
+}
+
 // Config + API call, shared with other modules (leases invoicing)
 function makeMavenCore(deps) {
   const { db, encryptSecret, decryptSecret, httpsRequest, NOW, uuidv4 } = deps;
@@ -120,6 +241,8 @@ function makeMavenCore(deps) {
       test_mode: cfg.test_mode !== false,
       vat_included: !!cfg.vat_included,
       last_sync: cfg.last_sync || {},
+      auto_sync: cfg.auto_sync !== false,
+      auto_sync_at: cfg.auto_sync_at || null,
     };
   }
 
@@ -147,6 +270,7 @@ function makeMavenCore(deps) {
       e.code = String(data.status_code);
       e.data = data;
       if (e.code === '63') e.message = 'המנוי ב-Invoice Maven אינו פעיל (קוד 63)';
+      if (e.code === '27') e.message = 'Maven מאפשר חיפוש אחד בדקה — נסה שוב בעוד דקה (קוד 27)';
       throw e;
     }
     return data;
@@ -287,26 +411,160 @@ function registerMavenRoutes(app, deps) {
     return { products: products.length, pushed, errors: errors.slice(0, 10) };
   }
 
+  // ── import: items (catalog items found on Maven documents → local products / packaging) ──
+  // fromIso: סריקה מתאריך מסמך (סנכרון אוטומטי — מאז הסנכרון הקודם); בלי — שנתיים אחורה
+  async function importItems(cfg, farmId, by, { fromIso } = {}) {
+    const from = fromIso ? new Date(fromIso) : (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 2); return d; })();
+    const docs = [];
+    for (let page = 1; page <= 50; page++) {
+      const res = await mavenCall(cfg, '/api/documents/searchDocuments', { page, page_size: 100, from_document_date: ddmmyyyy(from.toISOString().slice(0, 10)), sort_by: 'create_date', sort_dir: 'asc' });
+      const list = res.documents || [];
+      docs.push(...list);
+      if (!res.pages || page >= Number(res.pages) || !list.length) break;
+    }
+    const catalog = collectCatalogItems(docs);
+    const products = rowsOf('products', farmId);
+    const packagings = rowsOf('packaging', farmId);
+    let linked = 0, created = 0, equipment = 0;
+    const matchIn = (rows, it) => rows.find(p => it.maven_item_id && p.maven_item_id === it.maven_item_id)
+      || rows.find(p => it.maven_item_no && String(p.maven_item_no || '').toUpperCase() === it.maven_item_no.toUpperCase())
+      || rows.find(p => normName(p.name) === normName(it.name));
+    for (const it of catalog) {
+      if (it.equipment) {
+        const pkg = it.equipment === 'אריזה' ? matchIn(packagings, it) : null;
+        if (pkg && (pkg.maven_item_no !== it.maven_item_no || (it.maven_item_id && pkg.maven_item_id !== it.maven_item_id))) {
+          const patch = { ...(it.maven_item_no ? { maven_item_no: it.maven_item_no } : {}), ...(it.maven_item_id ? { maven_item_id: it.maven_item_id } : {}) };
+          updateRow(pkg.id, patch); Object.assign(pkg, patch); equipment++;
+        }
+        continue;
+      }
+      const match = matchIn(products, it);
+      if (match) {
+        const patch = {};
+        if (it.maven_item_id && match.maven_item_id !== it.maven_item_id) patch.maven_item_id = it.maven_item_id;
+        if (it.maven_item_no && !match.maven_item_no) patch.maven_item_no = it.maven_item_no;
+        if (!match.maven_price && it.price) patch.maven_price = it.price;
+        if (Object.keys(patch).length) { updateRow(match.id, patch); Object.assign(match, patch); linked++; }
+      } else {
+        const data = { name: it.name, maven_item_id: it.maven_item_id || null, maven_item_no: it.maven_item_no || null, maven_price: it.price || 0, vat_exempt: it.no_vat, _by: by };
+        products.push({ id: insertRow('products', farmId, data), ...data }); created++;
+      }
+    }
+    return { documents: docs.length, remote: catalog.filter(i => !i.equipment).length, created, linked, updated: equipment };
+  }
+
+  // ── סנכרון אוטומטי מ-Maven ──
+  // אין ב-Maven webhook ללקוח/ספק/פריט חדש (רק למסמכים), לכן מושכים: מיד כשהאינטגרציה מופעלת, ואחר כך כל 15 דקות.
+  // שירותי החיפוש של Maven מוגבלים לחיפוש אחד בדקה לעסק → השלבים רצים בהפרש של ~65 שניות.
+  const AUTO_STEPS = ['customers', 'suppliers', 'items_import'];
+  const AUTO_EVERY_MS = 15 * 60 * 1000;
+  const AUTO_GAP_MS = Number(process.env.MAVEN_AUTO_GAP_MS) || 65 * 1000;
+  const AUTO_BY = 'סנכרון אוטומטי';
+  const autoRunning = new Set();
+  const sleep = (ms) => new Promise(r => { const t = setTimeout(r, ms); t.unref?.(); });
+  async function runSyncStep(farmId, what, by, { auto = false } = {}) {
+    const cfg = loadConfig(farmId);
+    if (!cfg.enabled || !cfg.api_key_enc) return null;
+    let result;
+    if (what === 'customers') result = await syncCustomers(cfg, farmId, by);
+    else if (what === 'suppliers') result = await syncSuppliers(cfg, farmId, by);
+    else if (what === 'items_import') result = await importItems(cfg, farmId, by, { fromIso: auto ? cfg.items_import_from : null });
+    else if (what === 'items') result = await syncItems(cfg, farmId);
+    const fresh = loadConfig(farmId); // טעינה מחדש — לא לדרוס שינויים שנשמרו בזמן הקריאה ל-Maven
+    fresh.last_sync = { ...(fresh.last_sync || {}), [what]: { at: NOW(), by, ...(auto ? { auto: true } : {}), ...result } };
+    // הסריקה הבאה של המסמכים מתחילה כמה ימים לפני היום (מסמכים שתאריכם הוקדם / הופקו באיחור)
+    if (what === 'items_import') { const d = new Date(); d.setDate(d.getDate() - 3); fresh.items_import_from = d.toISOString().slice(0, 10); }
+    saveConfig(farmId, fresh);
+    return result;
+  }
+  async function autoSyncFarm(farmId) {
+    if (autoRunning.has(farmId)) return;
+    autoRunning.add(farmId);
+    try {
+      for (let i = 0; i < AUTO_STEPS.length; i++) {
+        if (i) await sleep(AUTO_GAP_MS);
+        const what = AUTO_STEPS[i];
+        try {
+          const r = await runSyncStep(farmId, what, AUTO_BY, { auto: true });
+          if (r === null) return; // הכבו בינתיים
+          if (r.created) console.log(`[maven] auto-sync farm=${farmId} ${what}: +${r.created}`);
+        } catch (e) {
+          console.error(`[maven] auto-sync farm=${farmId} ${what} failed:`, e.message);
+          const cfg = loadConfig(farmId);
+          cfg.last_sync = { ...(cfg.last_sync || {}), [what]: { ...((cfg.last_sync || {})[what] || {}), error: e.message, error_at: NOW() } };
+          saveConfig(farmId, cfg);
+        }
+      }
+    } finally {
+      const cfg = loadConfig(farmId);
+      cfg.auto_sync_at = NOW();
+      saveConfig(farmId, cfg);
+      autoRunning.delete(farmId);
+    }
+  }
+  function autoSyncTick() {
+    let rows = [];
+    try { rows = db.prepare("SELECT farm_id, data FROM entities WHERE entity_type = 'maven_config'").all(); } catch { return; }
+    for (const r of rows) {
+      let cfg; try { cfg = JSON.parse(r.data); } catch { continue; }
+      if (!cfg.enabled || !cfg.api_key_enc || cfg.auto_sync === false) continue;
+      const last = Date.parse(cfg.auto_sync_at || '') || 0;
+      if (Date.now() - last >= AUTO_EVERY_MS) autoSyncFarm(r.farm_id).catch(e => console.error('[maven] auto-sync', e.message));
+    }
+  }
+  if (!deps.disableMavenScheduler && process.env.NODE_ENV !== 'test') {
+    const first = setTimeout(autoSyncTick, 90 * 1000); first.unref?.();
+    const every = setInterval(autoSyncTick, 5 * 60 * 1000); every.unref?.();
+  }
+
+  // ── duplicates (customers / suppliers / products) ──
+  function duplicatesOf(kind, farmId) {
+    const K = DEDUPE_KINDS[kind];
+    const all = db.prepare('SELECT id, entity_type, data, created_at FROM entities WHERE farm_id = ?').all(farmId)
+      .map(r => { let d = {}; try { d = JSON.parse(r.data); } catch { /* skip */ } return { id: r.id, type: r.entity_type, created_at: r.created_at, data: d }; });
+    const counts = new Map();
+    const bump = (id) => counts.set(id, (counts.get(id) || 0) + 1);
+    for (const r of all) {
+      for (const f of K.refs) if (r.data[f]) bump(r.data[f]);
+      for (const f of K.arrayRefs || []) if (Array.isArray(r.data[f])) r.data[f].forEach(bump);
+    }
+    const rows = all.filter(r => r.type === K.entity).map(r => ({ ...r.data, id: r.id, created_at: r.created_at }));
+    const groups = findDuplicateGroups(kind, rows, id => counts.get(id) || 0);
+    return { all, groups, counts };
+  }
+  const summarize = (kind, r, counts) => ({
+    id: r.id, name: r.name || '',
+    maven_id: kind === 'products' ? (r.maven_item_id || '') : (r.maven_id || ''),
+    code: kind === 'products' ? (r.maven_item_no || '') : kind === 'customers' ? (r.identification || '') : (r.vat_id || ''),
+    refs: counts.get(r.id) || 0,
+  });
+
   // ── document from weighing certificate ──
   function buildDocument(cfg, farmId, cert, items, opts) {
     const customer = cert.customer_id ? rowsOf('customers', farmId).find(c => c.id === cert.customer_id) : null;
     const products = rowsOf('products', farmId);
-    const lines = items.map(it => {
+    // שורה אחת לכל מוצר+איכות+שיטת תמחור+מחיר — משטחים שנשקלו ומשטחים שהגיעו מתעודות כניסה מתאחדים
+    const merged = new Map();
+    for (const it of items) {
       const perKg = it.pricing_method === 'per_kg';
       const qty = perKg ? Number(it.net_weight) || 0 : Number(it.package_count) || 0;
       const disc = Number(it.discount_percentage) || 0;
       const price = round2((Number(it.price_per_unit) || 0) * (1 - disc / 100));
       const product = products.find(p => p.id === it.product_id);
       const desc = [it.product_name || product?.name || 'פריט', it.quality ? `איכות ${it.quality}` : null, perKg ? 'לפי ק"ג' : 'לפי יחידה'].filter(Boolean).join(' · ');
-      const line = { description: desc, price, quantity: qty > 0 ? qty : 1 };
+      const key = [it.product_id || desc, it.quality || '', perKg ? 'kg' : 'unit', price].join('|');
+      const prev = merged.get(key);
+      if (prev) { prev.quantity = round2(prev.quantity + (qty > 0 ? qty : 0)); continue; }
+      const line = { description: desc, price, quantity: qty > 0 ? qty : 0 };
       if (product?.maven_item_no) line.item_number = product.maven_item_no;
       // פירות וירקות פטורים ממע"מ — לפי דגל המוצר, או מסמך שלם ללא מע"מ
       if (product?.vat_exempt || opts.no_vat) line.no_vat = true;
-      return line;
-    });
+      merged.set(key, line);
+    }
+    const lines = [...merged.values()].map(l => ({ ...l, quantity: l.quantity > 0 ? round2(l.quantity) : 1 }));
     // בכל סוגי המסמכים: האריזות והמשטחים מופיעים כשורות כמות בלי מחיר (לצורך החזרת ציוד / ספירה אצל הלקוח)
     {
-      const packagings = rowsOf('packagings', farmId);
+      const packagings = rowsOf('packaging', farmId);
       const palletTypes = rowsOf('pallet_types', farmId);
       const byPackaging = new Map(), byPallet = new Map();
       for (const it of items) {
@@ -359,13 +617,15 @@ function registerMavenRoutes(app, deps) {
   // ── routes ──
   app.get('/api/integrations/maven/config', authMiddleware, (req, res) => {
     const ctx = farmOf(req, res); if (!ctx) return;
-    res.json({ farm_id: ctx.farmId, doc_types: DOC_TYPES, ...publicConfig(loadConfig(ctx.farmId)) });
+    res.json({ farm_id: ctx.farmId, doc_types: DOC_TYPES, ...publicConfig(loadConfig(ctx.farmId)), auto_syncing: autoRunning.has(ctx.farmId) });
   });
 
   app.post('/api/integrations/maven/config', authMiddleware, (req, res) => {
     const ctx = farmOf(req, res, { manage: true }); if (!ctx) return;
     const cfg = loadConfig(ctx.farmId);
+    const wasEnabled = !!cfg.enabled && !!cfg.api_key_enc && cfg.auto_sync !== false;
     const b = req.body || {};
+    if (b.auto_sync !== undefined) cfg.auto_sync = !!b.auto_sync;
     if (b.api_key !== undefined) {
       const k = String(b.api_key || '').trim();
       if (k) cfg.api_key_enc = encryptSecret(k);
@@ -379,7 +639,10 @@ function registerMavenRoutes(app, deps) {
     if (cfg.enabled && !cfg.api_key_enc) return res.status(400).json({ error: 'יש להזין מפתח API לפני ההפעלה' });
     cfg.updated_by = ctx.user.full_name || ctx.user.email;
     saveConfig(ctx.farmId, cfg);
-    res.json({ farm_id: ctx.farmId, doc_types: DOC_TYPES, ...publicConfig(cfg) });
+    // הופעל עכשיו → סנכרון מלא מיד ברקע (לקוחות, ספקים, פריטים)
+    const startNow = !wasEnabled && cfg.enabled && cfg.api_key_enc && cfg.auto_sync !== false;
+    if (startNow) setImmediate(() => autoSyncFarm(ctx.farmId).catch(e => console.error('[maven] auto-sync', e.message)));
+    res.json({ farm_id: ctx.farmId, doc_types: DOC_TYPES, ...publicConfig(cfg), auto_syncing: startNow || autoRunning.has(ctx.farmId) });
   });
 
   app.post('/api/integrations/maven/test', authMiddleware, async (req, res) => {
@@ -397,20 +660,53 @@ function registerMavenRoutes(app, deps) {
     if (!cfg.enabled) return res.status(400).json({ error: 'האינטגרציה אינה מופעלת' });
     const what = String(req.body?.what || '');
     const by = ctx.user.full_name || ctx.user.email;
+    if (!['customers', 'suppliers', 'items', 'items_import'].includes(what)) return res.status(400).json({ error: 'what must be customers | suppliers | items | items_import' });
+    if (autoRunning.has(ctx.farmId) && what !== 'items') return res.status(409).json({ error: 'סנכרון אוטומטי רץ כרגע — הנתונים יתעדכנו בעוד כמה דקות' });
     try {
-      let result;
-      if (what === 'customers') result = await syncCustomers(cfg, ctx.farmId, by);
-      else if (what === 'suppliers') result = await syncSuppliers(cfg, ctx.farmId, by);
-      else if (what === 'items') result = await syncItems(cfg, ctx.farmId);
-      else return res.status(400).json({ error: 'what must be customers | suppliers | items' });
-      cfg.last_sync = { ...(cfg.last_sync || {}), [what]: { at: NOW(), by, ...result } };
-      saveConfig(ctx.farmId, cfg);
+      const result = await runSyncStep(ctx.farmId, what, by);
       console.log(`[maven] farm=${ctx.farmId} sync ${what}:`, JSON.stringify(result));
       res.json({ ok: true, what, ...result, test_mode: cfg.test_mode !== false });
     } catch (e) {
       console.error(`[maven] sync ${what} failed:`, e.message);
       res.status(422).json({ ok: false, error: e.message, code: e.code || null });
     }
+  });
+
+  // כפילויות: תצוגה מקדימה (GET) ואיחוד (POST). עובד גם בלי Maven מופעל — רק על נתוני המשק.
+  app.get('/api/integrations/maven/duplicates', authMiddleware, (req, res) => {
+    const ctx = farmOf(req, res, { manage: true }); if (!ctx) return;
+    const kind = String(req.query.what || '');
+    if (!DEDUPE_KINDS[kind]) return res.status(400).json({ error: 'what must be customers | suppliers | products' });
+    const { groups, counts } = duplicatesOf(kind, ctx.farmId);
+    res.json({ what: kind, groups: groups.map(g => ({ keep: summarize(kind, g.keep, counts), merge: g.merge.map(m => summarize(kind, m, counts)) })) });
+  });
+
+  app.post('/api/integrations/maven/merge-duplicates', authMiddleware, (req, res) => {
+    const ctx = farmOf(req, res, { manage: true }); if (!ctx) return;
+    const kind = String(req.body?.what || '');
+    if (!DEDUPE_KINDS[kind]) return res.status(400).json({ error: 'what must be customers | suppliers | products' });
+    // רק הקבוצות שהמשתמש ראה ואישר (לפי מזהה הרשומה שנשמרת); בלי רשימה — כולן
+    const only = Array.isArray(req.body?.keep_ids) ? new Set(req.body.keep_ids.map(String)) : null;
+    const { all, groups } = duplicatesOf(kind, ctx.farmId);
+    const chosen = groups.filter(g => !only || only.has(g.keep.id));
+    if (!chosen.length) return res.json({ ok: true, groups: 0, merged: 0, references: 0 });
+    const idMap = new Map();
+    chosen.forEach(g => g.merge.forEach(m => idMap.set(m.id, g.keep.id)));
+    const changed = remapReferences(kind, all.filter(r => !idMap.has(r.id)), idMap);
+    const now = NOW();
+    const by = ctx.user.full_name || ctx.user.email;
+    db.transaction(() => {
+      for (const c of changed) db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(c.data), now, c.id);
+      for (const g of chosen) {
+        const keepRow = changed.find(c => c.id === g.keep.id)?.data || all.find(r => r.id === g.keep.id).data;
+        const merged = mergeRecordData(keepRow, g.merge.map(m => all.find(r => r.id === m.id).data));
+        merged.merged_from = [...(Array.isArray(keepRow.merged_from) ? keepRow.merged_from : []), ...g.merge.map(m => ({ id: m.id, name: m.name || '', at: now, by }))];
+        db.prepare('UPDATE entities SET data = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(merged), now, g.keep.id);
+        for (const m of g.merge) db.prepare('DELETE FROM entities WHERE id = ?').run(m.id);
+      }
+    })();
+    console.log(`[maven] farm=${ctx.farmId} merged ${kind}: ${idMap.size} records into ${chosen.length}, ${changed.length} references`);
+    res.json({ ok: true, groups: chosen.length, merged: idMap.size, references: changed.length });
   });
 
   // PDF של מסמך שהופק ב-Maven, מוגש דרך השרת שלנו: מאפשר הצגה בתוך המערכת (iframe באותו origin),
@@ -618,4 +914,4 @@ function registerMavenRoutes(app, deps) {
   });
 }
 
-module.exports = { registerMavenRoutes, makeMavenCore, buildNoteDocument, buildExpenseUpload, DOC_TYPES };
+module.exports = { registerMavenRoutes, makeMavenCore, buildNoteDocument, buildExpenseUpload, DOC_TYPES, findDuplicateGroups, mergeRecordData, remapReferences, collectCatalogItems };

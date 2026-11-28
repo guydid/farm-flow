@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import MavenIdBadge from "@/components/common/MavenIdBadge";
 
 export default function CustomersManager({ currentFarm }) {
   const [customers, setCustomers] = useState([]);
@@ -176,7 +177,15 @@ export default function CustomersManager({ currentFarm }) {
                       </TableCell>
                       <TableCell>{customer.phone || '-'}</TableCell>
                       <TableCell>{customer.contact_person || '-'}</TableCell>
-                      <TableCell className="font-medium">{customer.name}</TableCell>
+                      <TableCell className="font-medium">
+                        {customer.name}
+                        {(customer.maven_id || customer.identification) && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5 font-normal">
+                            {customer.identification && <span className="text-xs text-gray-500">ח.פ <span dir="ltr">{customer.identification}</span></span>}
+                            <MavenIdBadge id={customer.maven_id} />
+                          </div>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
