@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Calculator, ExternalLink, Plus } from "lucide-react";
+import { Calculator, ExternalLink, Plus, PackageOpen } from "lucide-react";
 import QuickAddDialog from "@/components/common/QuickAddDialog";
 import { getMeCached } from "@/api/cachedReads";
 import { apiFetch, BASE_URL } from "@/api/localClient";
@@ -85,7 +85,7 @@ const SectionLabel = ({ children }) => (
 );
 
 // Main Component
-export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, onCancel, products, packagings, palletTypes, certificateCustomerId }) {
+export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, onCancel, products, packagings, palletTypes, certificateCustomerId, onPickFromEntries }) {
   // מוצרים שנוצרו ב"הוספה מהירה" מתוך הטופס (ההורה ירענן את הרשימה בטעינה הבאה)
   const [extraProducts, setExtraProducts] = useState([]);
   const [addingProduct, setAddingProduct] = useState(false);
@@ -384,6 +384,13 @@ export default function WeighingItemForm({ item, isCopyMode = false, onSubmit, o
             </DialogDescription>
           )}
         </DialogHeader>
+
+        {/* תעודת מכירה: קיצור לבחירת משטחים שנקלטו בתעודות כניסה (רכש מחקלאים) */}
+        {onPickFromEntries && (
+          <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto self-start" onClick={onPickFromEntries}>
+            <PackageOpen className="w-4 h-4 ml-2" aria-hidden="true" /> או בחר משטחים שנקלטו בתעודות כניסה
+          </Button>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* ── 1. מוצר — כפתורים ─────────────────────────────────────────── */}

@@ -7,7 +7,7 @@ import { createPageUrl } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { format } from "date-fns";
-import { Plus, Printer, Edit, Trash2, Copy, Save, ArrowRight, Loader2, EllipsisVertical, Package, ExternalLink, Share2, ChevronUp } from "lucide-react";
+import { Plus, Printer, Edit, Trash2, Copy, Save, ArrowRight, Loader2, EllipsisVertical, Package, ExternalLink, Share2, ChevronUp, PackageOpen } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +20,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import QRCode from "../components/weighing/QRCode";
 import WeighingItemForm from '../components/weighing/WeighingItemForm';
+import EntryPalletPicker from '../components/weighing/EntryPalletPicker';
+import { apiFetch, BASE_URL } from "@/api/localClient";
 import PalletSticker, { generateZPL } from "../components/weighing/PalletSticker"; // Added generateZPL import
 import CertificatePrintLayout, { certificateNumber } from "../components/weighing/CertificatePrintLayout";
 import { printA4 } from "@/components/print/a4";
@@ -46,8 +48,8 @@ const safeObject = (obj) => {
 // נשמרת ב-entry_certificates / entry_items עם supplier_id/supplier_name; בתוך המסך הצד השני נשמר
 // בשדות customer_* (כמו במכירה) ומתורגם בטעינה ובשמירה.
 const MODES = {
-  sale: { cert: WeighingCertificate, item: WeighingItem, title: 'תעודת שקילה', party: 'לקוח', none: 'ללא לקוח', pick: 'בחר לקוח...', amount: 'לתשלום', amountTitle: 'סה"כ לתשלום', barcode: 'CERT', docKind: 'weighing' },
-  purchase: { cert: EntryCertificate, item: EntryItem, title: 'תעודת כניסה', party: 'ספק / חקלאי', none: 'ללא ספק', pick: 'בחר ספק...', amount: 'סכום קנייה', amountTitle: 'סה"כ סכום קנייה', barcode: 'ENTRY', docKind: 'entry' },
+  sale: { cert: WeighingCertificate, item: WeighingItem, title: 'תעודת שקילה', party: 'לקוח', none: 'ללא לקוח', pick: 'בחר לקוח...', amount: 'לתשלום', amountTitle: 'סה"כ לתשלום', barcode: 'CERT', docKind: 'weighing', list: 'WeighingCertificates', back: 'חזרה לתעודות השקילה' },
+  purchase: { cert: EntryCertificate, item: EntryItem, title: 'תעודת כניסה', party: 'ספק / חקלאי', none: 'ללא ספק', pick: 'בחר ספק...', amount: 'סכום קנייה', amountTitle: 'סה"כ סכום קנייה', barcode: 'ENTRY', docKind: 'entry', list: 'EntryCertificates', back: 'חזרה לתעודות הכניסה' },
 };
 
 export default function WeighingDetail({ mode = 'sale' }) {
@@ -68,6 +70,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [customerPricings, setCustomerPricings] = useState([]);
+  const [entryPickerOpen, setEntryPickerOpen] = useState(false);
   const [companySettings, setCompanySettings] = useState(null);
   const [packagings, setPackagings] = useState([]);
   const [palletTypes, setPalletTypes] = useState([]);
@@ -544,11 +547,74 @@ export default function WeighingDetail({ mode = 'sale' }) {
     }
   }, [certificate, currentFarm, editingItem, handleFormClose, updateCertificateTotals, handlePrintSticker, toast]);
 
+  // הוספת משטחים שנקלטו בתעודות כניסה לתעודת המכירה: משקלים/אריזות מועתקים, מחיר = המחיר האחרון ללקוח למוצר
+  const handleAddFromEntries = useCallback(async (chosen) => {
+    if (!certificate || !currentFarm) return;
+    let lastPrices = {};
+    if (certificate.customer_id) {
+      try {
+        const qs = new URLSearchParams({ customer_id: certificate.customer_id, farm_id: currentFarm.id });
+        lastPrices = (await apiFetch(`${BASE_URL}/weighing/customer-last-prices?${qs.toString()}`)) || {};
+      } catch { lastPrices = {}; }
+    }
+    let added = 0, unpriced = 0;
+    try {
+      for (const { item: e, cert: ec } of chosen) {
+        const last = e.product_id ? lastPrices[e.product_id] : null;
+        const pricing_method = last?.pricing_method || e.pricing_method || 'per_kg';
+        const price_per_unit = Number(last?.price_per_unit) || 0;
+        const discount_percentage = Number(last?.discount_percentage) || 0;
+        const base = pricing_method === 'per_kg' ? (parseFloat(e.net_weight) || 0) * price_per_unit : (parseInt(e.package_count, 10) || 0) * price_per_unit;
+        const item_total = Math.round((discount_percentage > 0 && discount_percentage < 100 ? base * (1 - discount_percentage / 100) : base) * 100) / 100;
+        if (!price_per_unit) unpriced++;
+        const created = await WeighingItem.create({
+          product_id: e.product_id || '',
+          product_name: e.product_name || '',
+          quality: e.quality || '',
+          packaging_type: e.packaging_type || '',
+          package_count: parseInt(e.package_count, 10) || 0,
+          pallet_type: e.pallet_type || '',
+          gross_weight: parseFloat(e.gross_weight) || 0,
+          tare_weight: parseFloat(e.tare_weight) || 0,
+          net_weight: parseFloat(e.net_weight) || 0,
+          pricing_method, price_per_unit, discount_percentage, item_total,
+          farm_id: currentFarm.id,
+          certificate_id: certificate.id,
+          barcode: `ITEM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          source_entry_item_id: e.id,
+          source_entry_certificate_id: ec.id,
+          source_entry_reference: ec.reference_number || '',
+          source_supplier_id: ec.supplier_id || null,
+          source_supplier_name: ec.supplier_name || '',
+        });
+        await EntryItem.update(e.id, { sold_certificate_id: certificate.id, sold_item_id: created?.id || null });
+        added++;
+      }
+      toast({
+        title: `נוספו ${added} משטחים מתעודות כניסה`,
+        description: unpriced ? `ל-${unpriced} מהם אין מחיר קודם ללקוח — עדכן מחיר בעריכת הפריט.` : undefined,
+      });
+      setEntryPickerOpen(false);
+    } catch (error) {
+      console.error("Failed to add entry pallets:", error);
+      toast({ title: "שגיאה", description: `הוספת המשטחים נכשלה${added ? ` (נוספו ${added})` : ''}`, variant: "destructive" });
+    } finally {
+      const updatedItems = await WeighingItem.filter({ certificate_id: certificate.id });
+      setWeigingItems(updatedItems);
+      await updateCertificateTotals(updatedItems);
+    }
+  }, [certificate, currentFarm, toast, updateCertificateTotals]);
+
   const handleDeleteItem = useCallback(async (itemId) => {
     if (!window.confirm("האם אתה בטוח שברצונך למחוק פריט זה?")) return;
 
     try {
+      const linked = safeFind(weighingItems, it => safeObject(it).id === itemId);
       await WeighingItem.delete(itemId);
+      // משטח שהגיע מתעודת כניסה — משחררים אותו כדי שיוצע שוב
+      if (linked?.source_entry_item_id) {
+        await EntryItem.update(linked.source_entry_item_id, { sold_certificate_id: null, sold_item_id: null }).catch(e => console.error("Failed to release entry pallet:", e));
+      }
       toast({ title: "הצלחה", description: "הפריט נמחק." });
       const newItems = await WeighingItem.filter({ certificate_id: certificate.id });
       setWeigingItems(newItems);
@@ -557,7 +623,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
       console.error("Failed to delete item:", error);
       toast({ title: "שגיאה", description: "מחיקת הפריט נכשלה", variant: "destructive" });
     }
-  }, [toast, certificate, updateCertificateTotals]);
+  }, [toast, certificate, updateCertificateTotals, weighingItems]);
 
   const handleSaveCertificate = useCallback(async () => {
     if (!certificate) return;
@@ -707,6 +773,9 @@ export default function WeighingDetail({ mode = 'sale' }) {
     <>
       <div className="p-4 sm:p-6 lg:p-8 bg-gray-50 min-h-screen" dir="rtl">
         <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+          <Link to={createPageUrl(M.list)} className="inline-flex items-center gap-1 text-sm font-medium text-blue-700 hover:underline min-h-[44px] sm:min-h-0">
+            <ArrowRight className="w-4 h-4" aria-hidden="true" />{M.back}
+          </Link>
           {/* Certificate Details — בנייד: כרטיס קומפקטי שנפתח לעריכה; במחשב: הטופס המלא */}
           {isMobile ? (
             <Card>
@@ -849,6 +918,11 @@ export default function WeighingDetail({ mode = 'sale' }) {
                   <Button variant="outline" onClick={handlePrintCertificate}>
                     <Printer className="w-4 h-4 ml-2" /> הדפס תעודה
                   </Button>
+                  {!isPurchase && (
+                    <Button variant="outline" onClick={() => setEntryPickerOpen(true)}>
+                      <PackageOpen className="w-4 h-4 ml-2" /> משטחים מתעודות כניסה
+                    </Button>
+                  )}
                   <Button onClick={() => setIsFormOpen(true)}>
                     <Plus className="w-4 h-4 ml-2" />
                     הוסף פריט
@@ -860,10 +934,17 @@ export default function WeighingDetail({ mode = 'sale' }) {
               {safeItems.length === 0 ? (
                 <div className="text-center py-12">
                   <p className="text-gray-500 mb-4">לא נוספו פריטים לתעודה זו.</p>
-                  <Button onClick={() => setIsFormOpen(true)}>
-                    <Plus className="w-4 h-4 ml-2" />
-                    הוסף פריט ראשון
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button onClick={() => setIsFormOpen(true)}>
+                      <Plus className="w-4 h-4 ml-2" />
+                      הוסף פריט ראשון
+                    </Button>
+                    {!isPurchase && (
+                      <Button variant="outline" onClick={() => setEntryPickerOpen(true)}>
+                        <PackageOpen className="w-4 h-4 ml-2" /> משטחים מתעודות כניסה
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ) : isMobile ? (
                 /* פריטים ככרטיסיות בנייד — לחיצה עורכת, ⋮ לפעולות נוספות */
@@ -885,6 +966,9 @@ export default function WeighingDetail({ mode = 'sale' }) {
                             {si.package_count || 0} × {si.packaging_type || 'אריזה'}
                             {si.pallet_type ? ` · ${si.pallet_type}` : ''}
                           </div>
+                          {si.source_entry_item_id && (
+                            <div className="text-xs text-indigo-700 mt-0.5 truncate">מכניסה {si.source_entry_reference || ''}{si.source_supplier_name ? ` · ${si.source_supplier_name}` : ''}</div>
+                          )}
                         </div>
                         <div className="text-left shrink-0">
                           <div className="font-bold text-gray-900 tabular-nums">
@@ -1015,7 +1099,12 @@ export default function WeighingDetail({ mode = 'sale' }) {
                             <TableCell>
                               {safeItem.barcode && <QRCode data={safeItem.barcode} size={25} />}
                             </TableCell>
-                            <TableCell>{safeItem.product_name}</TableCell>
+                            <TableCell>
+                              {safeItem.product_name}
+                              {safeItem.source_entry_item_id && (
+                                <div className="text-xs text-indigo-700">מכניסה {safeItem.source_entry_reference || ''}{safeItem.source_supplier_name ? ` · ${safeItem.source_supplier_name}` : ''}</div>
+                              )}
+                            </TableCell>
                             <TableCell>{safeItem.quality}</TableCell>
                             <TableCell>{safeItem.packaging_type}</TableCell>
                             <TableCell className="text-center">{safeItem.package_count}</TableCell>
@@ -1050,6 +1139,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
             <DialogTitle>{editingItem ? "עריכת פריט" : "הוספת פריט"}</DialogTitle>
           </DialogHeader>
           <WeighingItemForm
+            onPickFromEntries={!isPurchase && !editingItem && !copyingItem ? () => { handleFormClose(); setEntryPickerOpen(true); } : undefined}
             item={editingItem || copyingItem}
             isCopyMode={!!copyingItem}
             products={products}
@@ -1063,6 +1153,15 @@ export default function WeighingDetail({ mode = 'sale' }) {
           />
         </DialogContent>
       </Dialog>
+
+      {!isPurchase && (
+        <EntryPalletPicker
+          open={entryPickerOpen}
+          farmId={currentFarm?.id}
+          onClose={() => setEntryPickerOpen(false)}
+          onConfirm={handleAddFromEntries}
+        />
+      )}
 
       {/* מדבקת משטח מרונדרת מחוץ למסך — נשלחת ישירות להדפסה, ללא חלון תצוגה מקדימה */}
       <div ref={stickerPrintRef} aria-hidden="true" style={{ position: 'absolute', left: '-10000px', top: 0, width: 'max-content' }}>

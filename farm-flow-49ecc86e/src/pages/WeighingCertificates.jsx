@@ -12,7 +12,7 @@ import EntitySelect from "@/components/common/EntitySelect";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { he } from 'date-fns/locale'; // Import Hebrew locale
-import { Plus, Edit, Eye, Printer, Truck, Trash2, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical } from "lucide-react";
+import { Plus, Edit, Eye, Printer, Truck, Trash2, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical, BarChart3 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -809,6 +809,12 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                     <FileText className="w-4 h-4 ml-2" />
                     {M.report}
                  </Button>
+                 {isPurchase && (
+                   <Button variant="outline" onClick={() => navigate(createPageUrl("EntryQuantities"))}>
+                      <BarChart3 className="w-4 h-4 ml-2" />
+                      דוח כמויות ומחירים
+                   </Button>
+                 )}
                  <Button variant="outline" onClick={() => setShowSalesSummary(prev => !prev)}>
                     <PieChart className="w-4 h-4 ml-2" />
                     {M.summary}
@@ -833,6 +839,12 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                 <FileText className="w-4 h-4 ml-2" />
                 {M.reportLong}
               </Button>
+              {isPurchase && (
+                <Button variant="outline" size="sm" className="sm:hidden w-full h-9" onClick={() => navigate(createPageUrl("EntryQuantities"))}>
+                  <BarChart3 className="w-4 h-4 ml-2" />
+                  דוח כמויות ומחירים לספקים
+                </Button>
+              )}
 
               {/* בנייד הפעולות עברו לבר התחתון; נשאר רק חיווי מצב בחירה */}
               {selectMode && (
