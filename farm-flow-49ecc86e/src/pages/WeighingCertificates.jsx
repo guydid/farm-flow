@@ -12,7 +12,8 @@ import EntitySelect from "@/components/common/EntitySelect";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { he } from 'date-fns/locale'; // Import Hebrew locale
-import { Plus, Edit, Eye, Printer, Truck, Trash2, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical, BarChart3 } from "lucide-react";
+import { Plus, Edit, Eye, Printer, Truck, Trash2, Clock, User as UserIcon, Scale, X, Archive, Filter, Copy, CheckSquare, PieChart, Loader2, FileText, CheckCircle2, SlidersHorizontal, ChevronDown, ChevronUp, Share2, Check, MoreVertical, BarChart3, Tag } from "lucide-react";
+import EntryBulkPriceDialog from "../components/weighing/EntryBulkPriceDialog";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useToast } from "@/components/ui/use-toast";
@@ -70,6 +71,7 @@ export default function WeighingCertificates({ mode = 'sale' }) {
   const [selectedCertificates, setSelectedCertificates] = useState(new Set());
   const [isBulkActionsOpen, setIsBulkActionsOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false); // מצב בחירה מרובה בנייד
+  const [bulkPriceOpen, setBulkPriceOpen] = useState(false); // עדכון מחירים לתעודות כניסה שסומנו
   // דוח תעודות פתוחות ללקוח
   const [reportOpen, setReportOpen] = useState(false);
   const [reportData, setReportData] = useState(null);
@@ -789,6 +791,12 @@ export default function WeighingCertificates({ mode = 'sale' }) {
                        <DropdownMenuItem onClick={() => handleBulkStatusChange("shipped")}>
                          עדכן לנשלח
                        </DropdownMenuItem>
+                       {isPurchase && (
+                         <DropdownMenuItem onClick={() => setBulkPriceOpen(true)}>
+                           <Tag className="w-4 h-4 ml-2" />
+                           עדכון מחירים
+                         </DropdownMenuItem>
+                       )}
                        <DropdownMenuItem onClick={() => handleBulkPrint()}> {/* Call with default selectedCertificates */}
                          <Printer className="w-4 h-4 ml-2" />
                          הדפס סיכום
@@ -1395,6 +1403,12 @@ export default function WeighingCertificates({ mode = 'sale' }) {
         <div className="fixed bottom-16 inset-x-0 z-40 bg-white/95 backdrop-blur border-t px-3 py-2.5 flex items-center gap-2 shadow-[0_-4px_12px_rgba(0,0,0,0.08)]">
           <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{selectedCertificates.size} נבחרו</span>
           <div className="flex gap-1.5 mr-auto">
+            {isPurchase && (
+              <Button size="sm" variant="outline" className="h-10 px-3.5" title="עדכון מחירים" aria-label="עדכון מחירים"
+                disabled={selectedCertificates.size === 0} onClick={() => setBulkPriceOpen(true)}>
+                <Tag className="w-4 h-4" />
+              </Button>
+            )}
             <Button size="sm" variant="outline" className="h-10 px-3.5" title="שתף"
               disabled={selectedCertificates.size === 0 || isSharing} onClick={handleBulkShare}>
               {isSharing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
@@ -1425,6 +1439,16 @@ export default function WeighingCertificates({ mode = 'sale' }) {
             </Button>
           </div>
         </div>
+      )}
+
+      {isPurchase && (
+        <EntryBulkPriceDialog
+          open={bulkPriceOpen}
+          farmId={currentFarm?.id}
+          certificates={bulkPriceOpen ? (Array.isArray(certificates) ? certificates : []).filter(c => selectedCertificates.has(c.id)) : []}
+          onClose={() => setBulkPriceOpen(false)}
+          onSaved={() => { setBulkPriceOpen(false); loadData(); }}
+        />
       )}
 
       {/* Simplified New certificate dialog */}
