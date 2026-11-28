@@ -21,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import QRCode from "../components/weighing/QRCode";
 import WeighingItemForm from '../components/weighing/WeighingItemForm';
 import EntryPalletPicker from '../components/weighing/EntryPalletPicker';
-import { apiFetch, BASE_URL } from "@/api/localClient";
 import PalletSticker, { generateZPL } from "../components/weighing/PalletSticker"; // Added generateZPL import
 import CertificatePrintLayout, { certificateNumber } from "../components/weighing/CertificatePrintLayout";
 import { printA4 } from "@/components/print/a4";
@@ -562,28 +561,16 @@ export default function WeighingDetail({ mode = 'sale' }) {
     }
   }, [certificate, currentFarm, editingItem, handleFormClose, updateCertificateTotals, handlePrintSticker, toast, weighingItems]);
 
-  // הוספת משטחים שנקלטו בתעודות כניסה לתעודת המכירה: משקלים/אריזות מועתקים, מחיר = המחיר האחרון ללקוח למוצר
+  // הוספת משטחים שנקלטו בתעודות כניסה לתעודת המכירה: משקלים/אריזות מועתקים, **תמיד בלי מחיר** —
+  // מחיר הקנייה מהחקלאי לא קשור למחיר המכירה; המחיר נקבע כאן בתעודת השקילה (או בתעודת המשלוח).
   const handleAddFromEntries = useCallback(async (chosen) => {
     if (!certificate || !currentFarm) return;
-    let lastPrices = {};
-    if (certificate.customer_id) {
-      try {
-        const qs = new URLSearchParams({ customer_id: certificate.customer_id, farm_id: currentFarm.id });
-        lastPrices = (await apiFetch(`${BASE_URL}/weighing/customer-last-prices?${qs.toString()}`)) || {};
-      } catch { lastPrices = {}; }
-    }
-    let added = 0, unpriced = 0;
+    let added = 0;
     try {
       for (const { item: e, cert: ec } of chosen) {
-        // מחיר: האחרון ללקוח; אם אין — מחיר של אותו מוצר שכבר בתעודה הזו (כדי שכל המשטחים יתומחרו אותו דבר)
-        const onCert = safeFind(weighingItems, w => safeObject(w).product_id === e.product_id && (parseFloat(safeObject(w).price_per_unit) || 0) > 0);
-        const last = (e.product_id ? lastPrices[e.product_id] : null) || (onCert ? { price_per_unit: onCert.price_per_unit, pricing_method: onCert.pricing_method, discount_percentage: onCert.discount_percentage } : null);
-        const pricing_method = last?.pricing_method || e.pricing_method || 'per_kg';
-        const price_per_unit = Number(last?.price_per_unit) || 0;
-        const discount_percentage = Number(last?.discount_percentage) || 0;
-        const base = pricing_method === 'per_kg' ? (parseFloat(e.net_weight) || 0) * price_per_unit : (parseInt(e.package_count, 10) || 0) * price_per_unit;
-        const item_total = Math.round((discount_percentage > 0 && discount_percentage < 100 ? base * (1 - discount_percentage / 100) : base) * 100) / 100;
-        if (!price_per_unit) unpriced++;
+        const product = safeFind(products, p => safeObject(p).id === e.product_id);
+        const pricing_method = product?.default_pricing_method || 'per_kg';
+        const price_per_unit = 0, discount_percentage = 0, item_total = 0;
         const created = await WeighingItem.create({
           product_id: e.product_id || '',
           product_name: e.product_name || '',
@@ -609,7 +596,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
       }
       toast({
         title: `נוספו ${added} משטחים מתעודות כניסה`,
-        description: unpriced ? `ל-${unpriced} מהם אין מחיר קודם ללקוח — עדכן מחיר בעריכת הפריט.` : undefined,
+        description: "המשטחים נוספו בלי מחיר — עדכן מחיר בעריכת פריט (המחיר יוחל על כל שורות המוצר שבלי מחיר).",
       });
       setEntryPickerOpen(false);
     } catch (error) {
@@ -620,7 +607,7 @@ export default function WeighingDetail({ mode = 'sale' }) {
       setWeigingItems(updatedItems);
       await updateCertificateTotals(updatedItems);
     }
-  }, [certificate, currentFarm, toast, updateCertificateTotals, weighingItems]);
+  }, [certificate, currentFarm, toast, updateCertificateTotals, products]);
 
   const handleDeleteItem = useCallback(async (itemId) => {
     if (!window.confirm("האם אתה בטוח שברצונך למחוק פריט זה?")) return;

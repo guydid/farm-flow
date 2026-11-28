@@ -76,7 +76,7 @@ export default function EntryPalletPicker({ open, farmId, onClose, onConfirm }) 
       <DialogContent dir="rtl" className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>משטחים מתעודות כניסה</DialogTitle>
-          <DialogDescription>משטחים שנקלטו מחקלאים ועוד לא נמכרו. המשקלים והאריזות מועתקים; המחיר נלקח מהמחיר האחרון ללקוח (אם יש) וניתן לעריכה אחר כך.</DialogDescription>
+          <DialogDescription>משטחים שנקלטו מחקלאים ועוד לא נמכרו. המשקלים והאריזות מועתקים; המשטחים נוספים בלי מחיר (מחיר הקנייה לא עובר למכירה) — את מחיר המכירה קובעים בתעודה.</DialogDescription>
         </DialogHeader>
         <div className="relative">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" aria-hidden="true" />
